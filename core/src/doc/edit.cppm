@@ -20,7 +20,7 @@ struct ObjectClip
 {
 	std::vector<Object> objects; // back to front
 	Rect bounds{};               // tight world bounds of the copied objects
-	std::vector<ImageAsset> assets; // the pictures the copied images use (the clip can outlive the board it came from)
+	std::vector<ImageAsset> assets; // the pictures and videos the copied objects use (the clip can outlive the board it came from)
 
 	[[nodiscard]] bool empty() const { return objects.empty(); }
 };
@@ -42,6 +42,9 @@ void flipObjects(Document& p_Document, History& p_History, std::span<const Objec
 
 // Edits the image data of the image objects among p_Ids (one undo step). p_Edit returns false to leave an image alone.
 void editImages(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
+
+// Same for video objects (loop, sound)
+void editVideos(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 
 // The transform a text object needs when its box changes from p_OldSize to p_NewSize so that the part the text is
 // aligned to (left edge, centre line or right edge, and the top) stays where it was on the board

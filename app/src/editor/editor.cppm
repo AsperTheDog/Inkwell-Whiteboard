@@ -111,6 +111,10 @@ public:
 	void flipSelection(bool p_Horizontal);
 	// Puts a picture on the board, centred on p_WorldCenter and sized to look natural at the current zoom, and selects it
 	ObjectId insertPicture(ImageAsset p_Asset, DVec2 p_WorldCenter);
+	// Same for a video (the asset holds the encoded file; its width and height are the picture size)
+	ObjectId insertVideo(ImageAsset p_Asset, DVec2 p_WorldCenter);
+	// Edits one video (one undo step); p_Edit returns false to leave it alone
+	void editVideo(ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
 	void editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
 	// ---- text
@@ -192,6 +196,7 @@ private:
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
 	[[nodiscard]] TextData newTextData() const;
 	void embedFonts();
+	ObjectId insertMedia(ImageAsset p_Asset, DVec2 p_WorldCenter, bool p_Video);
 	void applyTextStyleScaled(const std::function<void(TextData&, double)>& p_Edit);
 
 	Document m_Document;

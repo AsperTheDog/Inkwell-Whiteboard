@@ -240,6 +240,8 @@ bool App::pumpEvents(const bool p_Block)
 		int32_t l_Timeout = m_ShowDebug ? static_cast<int32_t>(DEBUG_REFRESH_NS / 1'000'000ull) : 1000;
 		if (m_Editor.textEditing())
 			l_Timeout = std::min<int32_t>(l_Timeout, 120); // the caret blinks
+		if (m_Canvas.videos().playingInBackground())
+			l_Timeout = std::min<int32_t>(l_Timeout, 100); // a video plays out of sight: it has to loop or stop
 		if (m_ToastUntilNs != 0)
 		{
 			// Wake up when the toast has to disappear
@@ -256,6 +258,12 @@ bool App::pumpEvents(const bool p_Block)
 	if (m_Editor.textEditing() && SDL_GetTicksNS() - m_LastBlinkRedrawNs >= 100'000'000ull)
 	{
 		m_LastBlinkRedrawNs = SDL_GetTicksNS();
+		requestRedraw(1);
+	}
+
+	if (m_Canvas.videos().playingInBackground() && SDL_GetTicksNS() - m_LastVideoWakeNs >= 100'000'000ull)
+	{
+		m_LastVideoWakeNs = SDL_GetTicksNS();
 		requestRedraw(1);
 	}
 
@@ -616,6 +624,7 @@ void App::buildUi()
 		return;
 	}
 	buildCanvasOverlays();
+	buildVideoViewer();
 	buildSelectionBar();
 	buildTextBar();
 	buildTopBar();

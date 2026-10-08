@@ -88,6 +88,21 @@ struct ImageData
 	bool operator==(const ImageData&) const = default;
 };
 
+// A video. Like a picture the object-local rectangle is centred on the origin and p_Size units big; the encoded file is
+// an asset (the video's pictures and sound are decoded while it is on screen). Where it is playing from is not part
+// of the board: a video always opens paused at the start.
+struct VideoData
+{
+	AssetId asset = INVALID_ASSET_ID;
+	Vec2 size{ 0.f };
+	bool loop = false;
+	bool muted = true;
+
+	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
+
+	bool operator==(const VideoData&) const = default;
+};
+
 enum class TextAlign : uint8_t
 {
 	Left,
@@ -120,7 +135,7 @@ struct TextData
 	bool operator==(const TextData&) const = default;
 };
 
-using ObjectPayload = std::variant<StrokeData, ImageData, TextData>;
+using ObjectPayload = std::variant<StrokeData, ImageData, TextData, VideoData>;
 
 struct Object
 {
@@ -144,6 +159,8 @@ struct Object
 	[[nodiscard]] const StrokeData* stroke() const { return std::get_if<StrokeData>(&payload); }
 	[[nodiscard]] ImageData* image() { return std::get_if<ImageData>(&payload); }
 	[[nodiscard]] const ImageData* image() const { return std::get_if<ImageData>(&payload); }
+	[[nodiscard]] VideoData* video() { return std::get_if<VideoData>(&payload); }
+	[[nodiscard]] const VideoData* video() const { return std::get_if<VideoData>(&payload); }
 	[[nodiscard]] TextData* text() { return std::get_if<TextData>(&payload); }
 	[[nodiscard]] const TextData* text() const { return std::get_if<TextData>(&payload); }
 

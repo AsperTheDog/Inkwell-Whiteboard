@@ -27,6 +27,7 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.pipeline;
 import wb.render.image_store;
+import wb.render.video_store;
 import wb.render.text_renderer;
 import wb.text.system;
 
@@ -161,6 +162,7 @@ void CanvasRenderer::init(const gfx::GraphicsContext& p_Context, const VkFormat 
 
 	createPipelines(p_Context, p_ColorFormat);
 	m_Images.init(p_Context, p_ColorFormat);
+	m_Videos.init(p_Context, m_Images);
 	m_Text.init(p_Context, p_ColorFormat);
 
 	m_MaxPoolPoints = p_Context.info().limits.maxStorageBufferRange / sizeof(GpuPoint);
@@ -188,6 +190,7 @@ void CanvasRenderer::createPipelines(const gfx::GraphicsContext& p_Context, cons
 void CanvasRenderer::destroy(const gfx::GraphicsContext& p_Context)
 {
 	detach();
+	m_Videos.destroy(p_Context);
 	m_Images.destroy(p_Context);
 	m_Text.destroy(p_Context);
 	const VkDevice l_Device = p_Context.device();
@@ -245,6 +248,8 @@ void CanvasRenderer::onObjectChanged(const Object& p_Object, const uint32_t p_Ch
 void CanvasRenderer::onObjectRemoved(const Object& p_Object)
 {
 	m_PendingUploads.erase(p_Object.id);
+	if (p_Object.video() != nullptr)
+		m_Videos.forget(p_Object.id);
 	const auto l_It = m_Strokes.find(p_Object.id);
 	if (l_It == m_Strokes.end())
 		return;
@@ -255,6 +260,7 @@ void CanvasRenderer::onObjectRemoved(const Object& p_Object)
 void CanvasRenderer::onDocumentCleared()
 {
 	m_Images.clear();
+	m_Videos.clear();
 	for (const auto& [l_Id, l_Gpu] : m_Strokes)
 		releaseRange(l_Gpu.offset, l_Gpu.count);
 	m_Strokes.clear();
@@ -367,7 +373,9 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 {
 	m_Slot = p_Slot;
 	m_Images.update(p_Context, p_Frames, p_Cmd);
+	m_Videos.update(p_Context, p_Frames, p_Cmd);
 	m_ImageDraws.clear();
+	m_VisibleVideos.clear();
 	m_Text.begin();
 	m_TextGlyphs.clear();
 	m_TextIncomplete = false;
@@ -398,6 +406,16 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
 				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Image->size });
 				m_Animating = m_Animating || l_Lookup.animatedAndPlaying;
+				continue;
+			}
+			if (const VideoData* l_Video = l_Object->video())
+			{
+				if (!l_Object->worldBounds().inflated(2.0 / p_Camera.pixelsPerUnit()).intersects(l_Visible))
+					continue;
+				const VideoLookup l_Lookup = m_Videos.lookup(*m_Document, l_Object->id, *l_Video);
+				m_VisibleVideos.push_back(l_Object->id);
+				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Video->size });
 				continue;
 			}
 			if (const TextData* l_Text = l_Object->text())

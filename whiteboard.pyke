@@ -90,6 +90,8 @@ target whiteboard(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImG
         self.cmake += [
             "include(${PROJECT_SOURCE_DIR}/cmake/Shaders.cmake)",
             "wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)",
+            "include(${PROJECT_SOURCE_DIR}/cmake/FFmpeg.cmake)",
+            "wb_link_ffmpeg(whiteboard)",
             "set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:whiteboard>\")"
         ]
         if compiler == "msvc":

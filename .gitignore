@@ -12,3 +12,6 @@
 imgui.ini
 compile_commands.json
 /.cache/
+
+# Prebuilt FFmpeg (see scripts/fetch_ffmpeg.sh)
+/vendor/ffmpeg/

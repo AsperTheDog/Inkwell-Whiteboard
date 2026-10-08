@@ -126,6 +126,8 @@ private:
 	void buildEraserPopover(ui::Rect2 p_Anchor);
 	void buildSelectPopover(ui::Rect2 p_Anchor);
 	void buildSelectionBar();
+	// Videos (app_video.cpp)
+	void buildVideoViewer();
 	// Text (app_text.cpp)
 	void buildTextOverlay();
 	void buildTextBar();
@@ -263,6 +265,13 @@ private:
 	uint64_t m_CaretActivity = ~0ull;
 	uint64_t m_CaretResetNs = 0;
 	uint64_t m_LastBlinkRedrawNs = 0;
+	// Video viewer
+	ObjectId m_VideoHot = INVALID_OBJECT_ID;   // the video whose viewer is shown
+	ObjectId m_VideoScrub = INVALID_OBJECT_ID; // the video whose progress bar is being dragged
+	bool m_VideoScrubResume = false;           // it was playing when the drag began
+	double m_VideoScrubLastSeek = -1.0;
+	ui::Rect2 m_VideoBarRect{};
+	uint64_t m_LastVideoWakeNs = 0;
 
 	std::array<SDL_Cursor*, tools::CURSOR_KIND_COUNT> m_Cursors{};
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;

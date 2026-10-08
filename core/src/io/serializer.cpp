@@ -47,9 +47,11 @@ enum class ObjectType : uint8_t
 	Stroke = 1,
 	Image = 2,
 	Text = 3,
+	Video = 4,
 };
 
 constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
+constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2;
 constexpr size_t MAX_NAME_BYTES = 1024;
 constexpr size_t MAX_TEXT_BYTES = 64u << 20;
 constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
@@ -303,6 +305,35 @@ bool readImage(Reader& p_Reader, Object& p_Object)
 	return true;
 }
 
+void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Video)
+{
+	p_Writer.u64(p_Object.id);
+	p_Writer.u8(static_cast<uint8_t>(ObjectType::Video));
+	p_Writer.u32(static_cast<uint32_t>(VIDEO_BODY_BYTES));
+	writeTransform(p_Writer, p_Object.transform);
+	p_Writer.u64(p_Video.asset);
+	p_Writer.f32(p_Video.size.x);
+	p_Writer.f32(p_Video.size.y);
+	p_Writer.u8(p_Video.loop ? 1 : 0);
+	p_Writer.u8(p_Video.muted ? 1 : 0);
+}
+
+bool readVideo(Reader& p_Reader, Object& p_Object)
+{
+	if (!readTransform(p_Reader, p_Object.transform))
+		return false;
+	VideoData l_Video;
+	l_Video.asset = p_Reader.u64();
+	l_Video.size.x = p_Reader.f32();
+	l_Video.size.y = p_Reader.f32();
+	l_Video.loop = p_Reader.u8() != 0;
+	l_Video.muted = p_Reader.u8() != 0;
+	if (!p_Reader.ok() || l_Video.asset == INVALID_ASSET_ID || !finite(l_Video.size.x) || !finite(l_Video.size.y) || l_Video.size.x <= 0.f || l_Video.size.y <= 0.f)
+		return false;
+	p_Object.payload = l_Video;
+	return true;
+}
+
 size_t textBodyBytes(const TextData& p_Text)
 {
 	return TRANSFORM_BYTES + 4 + p_Text.family.size() + 1 + sizeof(float) + 4 * sizeof(float) + 1 + sizeof(float) + 2 * sizeof(float) + 4 + p_Text.text.size();
@@ -409,8 +440,9 @@ void writeAssets(Writer& p_Writer, const Document& p_Document)
 	std::unordered_set<AssetId> l_Seen;
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
 	{
-		if (const ImageData* l_Image = l_Object->image(); l_Image != nullptr && l_Seen.insert(l_Image->asset).second)
-			l_Used.push_back(l_Image->asset);
+		const AssetId l_Asset = l_Object->image() != nullptr ? l_Object->image()->asset : (l_Object->video() != nullptr ? l_Object->video()->asset : INVALID_ASSET_ID);
+		if (l_Asset != INVALID_ASSET_ID && l_Seen.insert(l_Asset).second)
+			l_Used.push_back(l_Asset);
 	}
 	p_Writer.beginChunk(TAG_ASET);
 	p_Writer.u32(static_cast<uint32_t>(l_Used.size()));
@@ -483,7 +515,7 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		if (!l_Reader.ok() || l_Id == INVALID_OBJECT_ID || !l_Seen.insert(l_Id).second)
 			return false;
 
-		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke) && l_Type != static_cast<uint8_t>(ObjectType::Image) && l_Type != static_cast<uint8_t>(ObjectType::Text))
+		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke) && l_Type != static_cast<uint8_t>(ObjectType::Image) && l_Type != static_cast<uint8_t>(ObjectType::Text) && l_Type != static_cast<uint8_t>(ObjectType::Video))
 		{
 			++p_Skipped;
 			continue;
@@ -500,6 +532,11 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		else if (l_Type == static_cast<uint8_t>(ObjectType::Text))
 		{
 			if (!readText(l_BodyReader, *l_Object))
+				return false;
+		}
+		else if (l_Type == static_cast<uint8_t>(ObjectType::Video))
+		{
+			if (!readVideo(l_BodyReader, *l_Object))
 				return false;
 		}
 		else if (!readStroke(l_BodyReader, *l_Object, l_Skipped))
@@ -532,6 +569,8 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			l_Estimate += OBJECT_HEADER_BYTES + strokeBodyBytes(*l_Stroke);
 		else if (l_Object->image() != nullptr)
 			l_Estimate += OBJECT_HEADER_BYTES + IMAGE_BODY_BYTES;
+		else if (l_Object->video() != nullptr)
+			l_Estimate += OBJECT_HEADER_BYTES + VIDEO_BODY_BYTES;
 		else if (const TextData* l_Text = l_Object->text())
 			l_Estimate += OBJECT_HEADER_BYTES + textBodyBytes(*l_Text);
 	}
@@ -566,6 +605,8 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			writeStroke(l_Writer, *l_Object, *l_Stroke);
 		else if (const ImageData* l_Image = l_Object->image())
 			writeImage(l_Writer, *l_Object, *l_Image);
+		else if (const VideoData* l_Video = l_Object->video())
+			writeVideo(l_Writer, *l_Object, *l_Video);
 		else if (const TextData* l_Text = l_Object->text())
 			writeText(l_Writer, *l_Object, *l_Text);
 	}
@@ -663,7 +704,8 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 		l_Skipped += static_cast<uint32_t>(std::erase_if(l_Objects, [&](const std::unique_ptr<Object>& p_Object)
 		{
 			const ImageData* l_Image = p_Object->image();
-			return l_Image != nullptr && !l_Known.contains(l_Image->asset);
+			const VideoData* l_Video = p_Object->video();
+			return (l_Image != nullptr && !l_Known.contains(l_Image->asset)) || (l_Video != nullptr && !l_Known.contains(l_Video->asset));
 		}));
 	}
 	if (l_ParsedMeta->objectCount != l_Objects.size() + l_Skipped)

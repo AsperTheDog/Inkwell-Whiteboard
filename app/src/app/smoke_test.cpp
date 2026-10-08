@@ -24,6 +24,7 @@ import wb.doc.selection;
 import wb.doc.history;
 import wb.platform.clipboard;
 import wb.render.image_store;
+import wb.render.video_store;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
@@ -50,6 +51,9 @@ size_t s_SmokeObjectsBefore = 0;
 size_t s_SmokeUndoBefore = 0;
 float s_SmokeWidthBefore = 0.f;
 bool s_SmokeExtraPicture = false;
+ObjectId s_SmokeVideo = INVALID_OBJECT_ID;
+uint32_t s_SmokeVideoWaits = 0;
+uint64_t s_SmokeVideoMarkNs = 0;
 
 void appendPngBytes(void* p_Context, void* p_Data, const int p_Size)
 {
@@ -824,6 +828,151 @@ void App::driveSmokeTest()
 	}
 	case 22:
 	{
+		// Video: the test clip is imported like a dropped file
+		m_Editor.clearSelection();
+		std::filesystem::path l_Path;
+		if (const char* l_Env = SDL_getenv("WB_SMOKE_VIDEO"))
+		{
+			l_Path = pathFromUtf8(l_Env);
+		}
+		else
+		{
+			const char* l_Base = SDL_GetBasePath();
+			l_Path = (l_Base != nullptr ? std::filesystem::path(reinterpret_cast<const char8_t*>(l_Base)) : std::filesystem::current_path()) / "assets" / "test" / "clip.mp4";
+		}
+		platform::ClipboardPicture l_Clip;
+		if (!readFile(l_Path, l_Clip.bytes).ok)
+		{
+			spdlog::error("Smoke test (video): cannot read {}", pathToUtf8(l_Path));
+			m_Failed = true;
+			return;
+		}
+		l_Clip.name = "clip.mp4";
+		s_SmokeObjectsBefore = m_Editor.document().size();
+		std::vector<platform::ClipboardPicture> l_Clips;
+		l_Clips.push_back(std::move(l_Clip));
+		importPictures(std::move(l_Clips), l_C + Vec2{ -300.f * l_S, 140.f * l_S });
+		s_SmokeVideoWaits = 0;
+		return;
+	}
+	case 23:
+	{
+		const Document& l_Document = m_Editor.document();
+		s_SmokeVideo = l_Document.size() == s_SmokeObjectsBefore + 1 ? l_Document.objects().back()->id : INVALID_OBJECT_ID;
+		if (s_SmokeVideo == INVALID_OBJECT_ID || l_Document.find(s_SmokeVideo)->video() == nullptr)
+		{
+			spdlog::error("Smoke test (video): the clip was not imported as a video");
+			m_Failed = true;
+			return;
+		}
+		return;
+	}
+	case 24:
+	{
+		// The player opens on a worker thread: wait for it and for the first picture
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeVideo);
+		if (!l_Status.ready)
+		{
+			if (l_Status.failed || ++s_SmokeVideoWaits > 400)
+			{
+				spdlog::error("Smoke test (video): the video did not open ({})", l_Status.error);
+				m_Failed = true;
+				return;
+			}
+			--m_SmokeStep;
+			return;
+		}
+		if (std::abs(l_Status.duration - 3.0) > 0.2 || l_Status.playing || l_Status.position != 0.0 || !l_Status.hasAudio)
+		{
+			spdlog::error("Smoke test (video): wrong state after opening (duration {}, playing {}, position {}, audio {})", l_Status.duration, l_Status.playing, l_Status.position, l_Status.hasAudio);
+			m_Failed = true;
+			return;
+		}
+		m_Canvas.videos().setPlaying(s_SmokeVideo, true);
+		s_SmokeVideoMarkNs = SDL_GetTicksNS();
+		return;
+	}
+	case 25:
+	{
+		if (SDL_GetTicksNS() - s_SmokeVideoMarkNs < 600'000'000ull)
+		{
+			--m_SmokeStep;
+			return;
+		}
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeVideo);
+		if (!l_Status.playing || l_Status.position < 0.3 || l_Status.position > 1.5)
+		{
+			spdlog::error("Smoke test (video): playback did not advance as expected (playing {}, position {})", l_Status.playing, l_Status.position);
+			m_Failed = true;
+			return;
+		}
+		if (!m_Canvas.animating())
+		{
+			spdlog::error("Smoke test (video): a playing video should keep frames coming");
+			m_Failed = true;
+			return;
+		}
+		// Seek while playing, pause, and make sure the position holds
+		m_Canvas.videos().seek(s_SmokeVideo, 2.0);
+		m_Canvas.videos().setPlaying(s_SmokeVideo, false);
+		s_SmokeVideoMarkNs = SDL_GetTicksNS();
+		return;
+	}
+	case 26:
+	{
+		if (SDL_GetTicksNS() - s_SmokeVideoMarkNs < 400'000'000ull)
+		{
+			--m_SmokeStep;
+			return;
+		}
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeVideo);
+		if (l_Status.playing || std::abs(l_Status.position - 2.0) > 0.1)
+		{
+			spdlog::error("Smoke test (video): seek and pause went wrong (playing {}, position {})", l_Status.playing, l_Status.position);
+			m_Failed = true;
+			return;
+		}
+		// Loop and sound switches are undoable edits of the object
+		const size_t l_Undo = m_Editor.history().undoCount();
+		m_Editor.editVideo(s_SmokeVideo, "Loop video", [](VideoData& p_Data) { p_Data.loop = true; return true; });
+		const bool l_Looping = m_Editor.document().find(s_SmokeVideo)->video()->loop;
+		m_Editor.undo();
+		const bool l_Undone = !m_Editor.document().find(s_SmokeVideo)->video()->loop;
+		m_Editor.redo();
+		if (!l_Looping || !l_Undone || m_Editor.history().undoCount() != l_Undo + 1)
+		{
+			spdlog::error("Smoke test (video): the loop switch is not an undoable edit");
+			m_Failed = true;
+			return;
+		}
+		// Save and load keeps the video, its settings and its file
+		BoardMeta l_Meta;
+		const std::vector<uint8_t> l_Saved = serializeBoard(m_Editor.document(), l_Meta);
+		Document l_Loaded;
+		BoardMeta l_LoadedMeta;
+		const LoadResult l_Result = deserializeBoard(l_Saved, l_Loaded, l_LoadedMeta);
+		const Object* l_Back = l_Result.ok ? l_Loaded.find(s_SmokeVideo) : nullptr;
+		const ImageAsset* l_Asset = l_Back != nullptr && l_Back->video() != nullptr ? l_Loaded.findAsset(l_Back->video()->asset) : nullptr;
+		const ImageAsset* l_Original = m_Editor.document().findAsset(m_Editor.document().find(s_SmokeVideo)->video()->asset);
+		if (l_Asset == nullptr || !l_Back->video()->loop || l_Asset->bytes != l_Original->bytes)
+		{
+			spdlog::error("Smoke test (video): the video did not survive saving and loading");
+			m_Failed = true;
+			return;
+		}
+		// Deleting a video stops its player, undoing brings it back
+		m_Editor.selection().set(std::vector<ObjectId>{ s_SmokeVideo });
+		m_Canvas.videos().setPlaying(s_SmokeVideo, true);
+		m_Editor.deleteSelection();
+		m_Editor.undo();
+		m_Editor.selection().clear();
+		m_Canvas.videos().setPlaying(s_SmokeVideo, false);
+		if (!m_Failed)
+			spdlog::info("Smoke test: video import, decoding, play, seek, pause, loop switch, save/load and delete OK");
+		return;
+	}
+	case 27:
+	{
 		// Leave a panel open for the screenshot
 		const std::string& l_Ui = m_Options.smokeUi;
 		if (l_Ui == "pen" || l_Ui == "picker")
@@ -859,6 +1008,19 @@ void App::driveSmokeTest()
 			else
 			{
 				openTextPopup(false);
+			}
+		}
+		else if (l_Ui == "video")
+		{
+			// The pointer rests on the video, so its viewer shows
+			m_Editor.setTool(tools::ToolKind::Select);
+			m_Canvas.videos().seek(s_SmokeVideo, 1.0);
+			if (const Object* l_Object = m_Editor.document().find(s_SmokeVideo))
+			{
+				const Vec2 l_Center{ m_Editor.camera().worldToScreen(l_Object->worldBounds().center()) };
+				m_PointerInWindow = true;
+				m_CursorOverUi = false;
+				m_LastPointer = platform::PointerEvent{ .phase = platform::PointerPhase::Move, .device = platform::PointerDevice::Mouse, .position = l_Center };
 			}
 		}
 		else if (l_Ui == "oriented")

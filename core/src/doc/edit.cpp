@@ -61,9 +61,10 @@ ObjectClip copyObjects(const Document& p_Document, const std::span<const ObjectI
 	{
 		l_Clip.objects.push_back(*l_Object);
 		l_Clip.bounds.expand(tightWorldBounds(*l_Object));
-		if (const ImageData* l_Image = l_Object->image(); l_Image != nullptr && l_Assets.insert(l_Image->asset).second)
+		const AssetId l_Used = l_Object->image() != nullptr ? l_Object->image()->asset : (l_Object->video() != nullptr ? l_Object->video()->asset : INVALID_ASSET_ID);
+		if (l_Used != INVALID_ASSET_ID && l_Assets.insert(l_Used).second)
 		{
-			if (const ImageAsset* l_Asset = p_Document.findAsset(l_Image->asset))
+			if (const ImageAsset* l_Asset = p_Document.findAsset(l_Used))
 				l_Clip.assets.push_back(*l_Asset);
 		}
 	}
@@ -84,10 +85,15 @@ std::vector<ObjectId> pasteObjects(Document& p_Document, History& p_History, con
 	for (const Object& l_Object : p_Clip.objects)
 	{
 		l_Sources.push_back(std::make_unique<Object>(l_Object));
+		AssetId* l_Asset = nullptr;
 		if (ImageData* l_Image = l_Sources.back()->image())
+			l_Asset = &l_Image->asset;
+		else if (VideoData* l_Video = l_Sources.back()->video())
+			l_Asset = &l_Video->asset;
+		if (l_Asset != nullptr)
 		{
-			if (const auto l_It = l_AssetMap.find(l_Image->asset); l_It != l_AssetMap.end())
-				l_Image->asset = l_It->second;
+			if (const auto l_It = l_AssetMap.find(*l_Asset); l_It != l_AssetMap.end())
+				*l_Asset = l_It->second;
 		}
 	}
 	return insertCopies(p_Document, p_History, l_Sources, l_Shift, p_Name);
@@ -148,6 +154,22 @@ void editImages(Document& p_Document, History& p_History, const std::span<const 
 	}
 	if (!l_Entries.empty())
 		p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), p_Name));
+}
+
+void editVideos(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
+{
+	std::vector<SetVideoDataCommand::Entry> l_Entries;
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	{
+		const VideoData* l_Video = l_Object->video();
+		if (l_Video == nullptr)
+			continue;
+		VideoData l_After = *l_Video;
+		if (p_Edit(l_After) && !(l_After == *l_Video))
+			l_Entries.push_back(SetVideoDataCommand::Entry{ .id = l_Object->id, .before = *l_Video, .after = l_After });
+	}
+	if (!l_Entries.empty())
+		p_History.execute(p_Document, std::make_unique<SetVideoDataCommand>(std::move(l_Entries), p_Name));
 }
 
 Affine2 anchoredTextTransform(const Affine2& p_Old, const Vec2 p_OldSize, const Vec2 p_NewSize, const TextAlign p_Align)

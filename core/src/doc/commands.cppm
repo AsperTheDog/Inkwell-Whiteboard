@@ -158,6 +158,28 @@ private:
 	std::string m_Name;
 };
 
+// Replaces the data of video objects (loop and sound switches)
+class SetVideoDataCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		VideoData before{};
+		VideoData after{};
+	};
+
+	SetVideoDataCommand(std::vector<Entry> p_Entries, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
 // Replaces the data of text objects. The transform changes with it: a box that grows keeps its anchored corner or
 // edge in place, which moves the object's origin (see anchoredTextTransform).
 class SetTextCommand final : public Command

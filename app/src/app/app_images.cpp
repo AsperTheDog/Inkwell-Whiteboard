@@ -35,6 +35,7 @@ import wb.render.canvas_renderer;
 import wb.render.image_store;
 import wb.session;
 import wb.tools.tool;
+import wb.video.media;
 import wb.view.camera;
 
 namespace wb
@@ -43,6 +44,7 @@ namespace
 {
 constexpr double CASCADE_POINTS = 28.0; // offset between several pictures inserted together
 constexpr uint64_t MAX_PICTURE_BYTES = 512ull << 20;
+constexpr uint64_t MAX_VIDEO_BYTES = 256ull << 20; // videos are embedded in the board file
 
 std::string formatSize(const size_t p_Bytes)
 {
@@ -65,12 +67,33 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 
 	std::vector<ObjectId> l_Inserted;
 	int l_Rejected = 0;
+	int l_TooBig = 0;
 	for (platform::ClipboardPicture& l_Picture : p_Pictures)
 	{
 		const std::optional<image::ImageInfo> l_Info = image::probe(l_Picture.bytes);
 		if (!l_Info)
 		{
-			++l_Rejected;
+			// Not a picture: perhaps a video
+			const std::optional<video::VideoInfo> l_Video = video::probe(l_Picture.bytes);
+			if (!l_Video)
+			{
+				++l_Rejected;
+				continue;
+			}
+			if (l_Picture.bytes.size() > MAX_VIDEO_BYTES)
+			{
+				++l_TooBig;
+				continue;
+			}
+			ImageAsset l_Asset;
+			l_Asset.width = l_Video->width;
+			l_Asset.height = l_Video->height;
+			l_Asset.name = std::move(l_Picture.name);
+			l_Asset.bytes = std::move(l_Picture.bytes);
+			const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
+			const ObjectId l_Id = m_Editor.insertVideo(std::move(l_Asset), l_Center + DVec2{ l_Shift });
+			if (l_Id != INVALID_OBJECT_ID)
+				l_Inserted.push_back(l_Id);
 			continue;
 		}
 		ImageAsset l_Asset;
@@ -89,11 +112,17 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 		m_Editor.selection().set(l_Inserted);
 		m_Editor.setTool(tools::ToolKind::Select); // ready to move and resize it
 		if (l_Rejected > 0)
-			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file was not a picture" : " files were not pictures"));
+			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file was not a picture or video" : " files were not pictures or videos"));
+		else if (l_TooBig > 0)
+			showToast("A video bigger than 256 MB was left out");
+	}
+	else if (l_TooBig > 0)
+	{
+		showToast("Videos can be 256 MB at most, they are saved inside the board");
 	}
 	else if (l_Rejected > 0)
 	{
-		showToast("That is not a picture Whiteboard can read");
+		showToast("That is not a picture or video Whiteboard can read");
 	}
 	requestRedraw();
 }
@@ -135,7 +164,7 @@ void App::showInsertPictureDialog()
 {
 	if (m_DialogKind != DialogKind::None || m_Editor.isBusy())
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures", "png;jpg;jpeg;gif;bmp;tga;psd" }, { "All files", "*" } };
+	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures and videos", "png;jpg;jpeg;gif;bmp;tga;psd;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
 	m_DialogKind = DialogKind::Pictures;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
 }

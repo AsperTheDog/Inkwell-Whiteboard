@@ -55,11 +55,13 @@ bool anySegment(const Object& p_Object, const StrokeData& p_Stroke, Visitor&& p_
 	return false;
 }
 
-// Pictures and text are solid rectangles
+// Pictures, videos and text are solid rectangles
 bool boxBounds(const Object& p_Object, Rect& p_Local)
 {
 	if (const ImageData* l_Image = p_Object.image())
 		p_Local = l_Image->localBounds();
+	else if (const VideoData* l_Video = p_Object.video())
+		p_Local = l_Video->localBounds();
 	else if (const TextData* l_Text = p_Object.text())
 		p_Local = l_Text->localBounds();
 	else

@@ -152,10 +152,15 @@ VkDescriptorSet ImageStore::allocateSet(const gfx::GraphicsContext& p_Context, c
 		}
 		m_PoolUsed = SETS_PER_POOL; // full: the next attempt makes a new pool
 	}
-	const VkDescriptorImageInfo l_ImageInfo{ .sampler = m_Sampler, .imageView = p_View, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-	const VkWriteDescriptorSet l_Write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = l_Set, .dstBinding = 0, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &l_ImageInfo };
-	vkUpdateDescriptorSets(l_Device, 1, &l_Write, 0, nullptr);
+	writeSet(p_Context, l_Set, p_View);
 	return l_Set;
+}
+
+void ImageStore::writeSet(const gfx::GraphicsContext& p_Context, const VkDescriptorSet p_Set, const VkImageView p_View) const
+{
+	const VkDescriptorImageInfo l_ImageInfo{ .sampler = m_Sampler, .imageView = p_View, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	const VkWriteDescriptorSet l_Write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = p_Set, .dstBinding = 0, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &l_ImageInfo };
+	vkUpdateDescriptorSets(p_Context.device(), 1, &l_Write, 0, nullptr);
 }
 
 bool ImageStore::upload(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, const VkCommandBuffer p_Cmd, const image::Decoded& p_Decoded, gfx::Image& p_Image, VkDescriptorSet& p_Set)

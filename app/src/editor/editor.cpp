@@ -633,6 +633,16 @@ void Editor::flipSelection(const bool p_Horizontal)
 
 ObjectId Editor::insertPicture(ImageAsset p_Asset, const DVec2 p_WorldCenter)
 {
+	return insertMedia(std::move(p_Asset), p_WorldCenter, false);
+}
+
+ObjectId Editor::insertVideo(ImageAsset p_Asset, const DVec2 p_WorldCenter)
+{
+	return insertMedia(std::move(p_Asset), p_WorldCenter, true);
+}
+
+ObjectId Editor::insertMedia(ImageAsset p_Asset, const DVec2 p_WorldCenter, const bool p_Video)
+{
 	if (isBusy() || p_Asset.width == 0 || p_Asset.height == 0)
 		return INVALID_OBJECT_ID;
 	const uint32_t l_Width = p_Asset.width;
@@ -647,11 +657,15 @@ ObjectId Editor::insertPicture(ImageAsset p_Asset, const DVec2 p_WorldCenter)
 	auto l_Object = std::make_unique<Object>();
 	l_Object->id = m_Document.allocateId();
 	l_Object->transform = Affine2::translate(p_WorldCenter) * Affine2::scale(DVec2{ l_WorldScale });
-	l_Object->payload = ImageData{ .asset = l_Asset, .size = Vec2{ static_cast<float>(l_Width), static_cast<float>(l_Height) } };
+	const Vec2 l_Size{ static_cast<float>(l_Width), static_cast<float>(l_Height) };
+	if (p_Video)
+		l_Object->payload = VideoData{ .asset = l_Asset, .size = l_Size };
+	else
+		l_Object->payload = ImageData{ .asset = l_Asset, .size = l_Size };
 	const ObjectId l_Id = l_Object->id;
 	std::vector<std::unique_ptr<Object>> l_Objects;
 	l_Objects.push_back(std::move(l_Object));
-	m_History.execute(m_Document, std::make_unique<AddObjectsCommand>(std::move(l_Objects), "Insert picture"));
+	m_History.execute(m_Document, std::make_unique<AddObjectsCommand>(std::move(l_Objects), p_Video ? "Insert video" : "Insert picture"));
 	m_Selection.set(std::vector<ObjectId>{ l_Id });
 	return l_Id;
 }
@@ -661,6 +675,14 @@ void Editor::editSelectedImages(const char* p_Name, const std::function<bool(Ima
 	if (isBusy() || m_Selection.empty())
 		return;
 	editImages(m_Document, m_History, m_Selection.orderedIds(), p_Name, p_Edit);
+}
+
+void Editor::editVideo(const ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
+{
+	if (isBusy())
+		return;
+	const ObjectId l_Ids[]{ p_Id };
+	editVideos(m_Document, m_History, l_Ids, p_Name, p_Edit);
 }
 
 void Editor::nudgeSelection(const Vec2 p_Points)

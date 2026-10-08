@@ -84,6 +84,9 @@ enum class Icon : uint32_t
 	Upload = 0xE19D,
 	ResetTransform = 0xE14B,
 	TransformSpace = 0xE2FD,
+	Repeat = 0xE149,
+	Volume = 0xE1AA,
+	VolumeOff = 0xE1AB,
 };
 
 // Text and Icons are the interface's own faces; addFace() hands out more (the font picker shows each family in itself)

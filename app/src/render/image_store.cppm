@@ -88,6 +88,11 @@ public:
 	void draw(VkCommandBuffer p_Cmd, VkExtent2D p_Extent, const ImageDraw& p_Draw) const;
 	[[nodiscard]] VkDescriptorSet placeholderSet() const { return m_PlaceholderSet; }
 
+	// Descriptor sets that bind a 2D-array texture for the picture pipeline (the video store makes its own textures)
+	VkDescriptorSet allocateSet(const gfx::GraphicsContext& p_Context, VkImageView p_View);
+	// Points an existing set at another texture; the set must not be in use by a frame in flight
+	void writeSet(const gfx::GraphicsContext& p_Context, VkDescriptorSet p_Set, VkImageView p_View) const;
+
 private:
 	struct Job;
 	struct Entry
@@ -119,7 +124,6 @@ private:
 	void startJobs();
 	// Creates the texture for p_Frames and records its upload; returns the descriptor set
 	bool upload(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, VkCommandBuffer p_Cmd, const image::Decoded& p_Decoded, gfx::Image& p_Image, VkDescriptorSet& p_Set);
-	VkDescriptorSet allocateSet(const gfx::GraphicsContext& p_Context, VkImageView p_View);
 	static uint32_t frameFor(const Entry& p_Entry, double p_Seconds);
 
 	std::unordered_map<AssetId, Entry> m_Entries;

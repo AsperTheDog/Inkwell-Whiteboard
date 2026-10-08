@@ -24,6 +24,7 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.buffer;
 import wb.render.image_store;
+import wb.render.video_store;
 import wb.render.text_renderer;
 import wb.text.system;
 
@@ -74,9 +75,13 @@ public:
 
 	[[nodiscard]] const CanvasStats& stats() const { return m_Stats; }
 	// Frames must keep coming: an animated picture is on screen, or pictures are still loading
-	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete; }
+	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete || m_Videos.animating(); }
 	[[nodiscard]] ImageStore& images() { return m_Images; }
 	[[nodiscard]] const ImageStore& images() const { return m_Images; }
+	// The videos drawn in the last frame, back to front
+	[[nodiscard]] std::span<const ObjectId> visibleVideos() const { return m_VisibleVideos; }
+	[[nodiscard]] VideoStore& videos() { return m_Videos; }
+	[[nodiscard]] const VideoStore& videos() const { return m_Videos; }
 
 	// DocumentListener
 	void onObjectAdded(const Object& p_Object) override;
@@ -137,6 +142,8 @@ private:
 	std::vector<Draw> m_Draws;
 	std::vector<ImageDraw> m_ImageDraws;
 	ImageStore m_Images;
+	VideoStore m_Videos;
+	std::vector<ObjectId> m_VisibleVideos;
 	TextRenderer m_Text;
 	text::TextSystem* m_TextSystem = nullptr;
 	std::vector<text::GpuGlyph> m_TextGlyphs;

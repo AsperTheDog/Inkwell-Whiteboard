@@ -32,6 +32,8 @@ target_compile_options(whiteboard PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:MSVC>>:/W4
 target_compile_options(whiteboard PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wall;-Wextra;-Wpedantic>")
 include(${PROJECT_SOURCE_DIR}/cmake/Shaders.cmake)
 wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+include(${PROJECT_SOURCE_DIR}/cmake/FFmpeg.cmake)
+wb_link_ffmpeg(whiteboard)
 set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:whiteboard>")
 if(MSVC)
     target_compile_options(whiteboard PRIVATE
