@@ -17,6 +17,7 @@ export namespace wb::tools
 enum class ToolKind : uint8_t
 {
 	Pen,
+	Eraser,
 };
 
 enum class CursorKind : uint8_t
@@ -34,12 +35,25 @@ struct BrushState
 	float sizePoints = 3.f; // stroke width in logical points on screen
 };
 
+enum class EraserMode : uint8_t
+{
+	Segment, // cuts strokes exactly where the eraser touches them
+	Stroke,  // removes every stroke it touches
+};
+
+struct EraserState
+{
+	EraserMode mode = EraserMode::Segment;
+	float sizePoints = 18.f; // eraser diameter in logical points on screen
+};
+
 struct ToolContext
 {
 	Document& document;
 	History& history;
 	const Camera& camera;
 	BrushState& brush;
+	EraserState& eraser;
 	BrushSettings& brushSettings;
 };
 

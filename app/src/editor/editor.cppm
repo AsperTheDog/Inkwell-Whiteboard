@@ -2,7 +2,7 @@
 //
 // Navigation is handled here, before tools see events, so it behaves the same with every tool:
 //   - right / middle mouse drag, pen barrel button drag, or Space + drag: pan
-//   - wheel: pan (Shift: horizontal); Ctrl + wheel or touchpad pinch: zoom at the pointer
+//   - wheel or touchpad pinch: zoom at the pointer; Ctrl + wheel: scroll (Shift: horizontal)
 //   - Ctrl+0: 100%, Ctrl+= / Ctrl+-: zoom in/out, Home: fit all content
 module;
 #include <cstdint>
@@ -21,9 +21,17 @@ import wb.platform.input;
 import wb.render.canvas_renderer;
 import wb.tools.tool;
 import wb.tools.pen;
+import wb.tools.eraser;
 
 export namespace wb
 {
+// Eraser outline to draw over the canvas (window pixels)
+struct EraserCursor
+{
+	Vec2 center{ 0.f };
+	float radiusPixels = 0.f;
+};
+
 class Editor
 {
 public:
@@ -47,6 +55,11 @@ public:
 	[[nodiscard]] bool isBusy() const;
 	[[nodiscard]] tools::CursorKind cursor() const;
 	[[nodiscard]] std::optional<render::LiveStrokeView> liveStroke() const;
+	// Set while the eraser is the tool in effect (selected, or the pen's eraser end is hovering / pressed)
+	[[nodiscard]] std::optional<EraserCursor> eraserCursor() const;
+
+	void setTool(tools::ToolKind p_Kind);
+	[[nodiscard]] tools::ToolKind selectedTool() const { return m_SelectedTool; }
 
 	void undo();
 	void redo();
@@ -62,6 +75,7 @@ public:
 	[[nodiscard]] History& history() { return m_History; }
 	[[nodiscard]] const Camera& camera() const { return m_Camera; }
 	[[nodiscard]] tools::BrushState& brush() { return m_Brush; }
+	[[nodiscard]] tools::EraserState& eraser() { return m_EraserState; }
 	[[nodiscard]] BrushSettings& brushSettings() { return m_BrushSettings; }
 
 private:
@@ -73,6 +87,8 @@ private:
 	};
 
 	[[nodiscard]] tools::ToolContext toolContext();
+	[[nodiscard]] tools::Tool* toolFor(tools::ToolKind p_Kind);
+	[[nodiscard]] tools::Tool* toolInEffect() const;
 	void startZoom(double p_TargetZoom, DVec2 p_AnchorScreen);
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
 
@@ -80,12 +96,17 @@ private:
 	History m_History;
 	Camera m_Camera;
 	tools::BrushState m_Brush;
+	tools::EraserState m_EraserState;
 	BrushSettings m_BrushSettings;
 	std::unique_ptr<tools::PenTool> m_Pen;
-	tools::Tool* m_ActiveTool = nullptr;
+	std::unique_ptr<tools::EraserTool> m_Eraser;
+	tools::ToolKind m_SelectedTool = tools::ToolKind::Pen;
+	tools::Tool* m_ActiveTool = nullptr; // tool receiving pointer events (the gesture's tool while busy)
+	bool m_HoverEraser = false;          // the pen's eraser end is in use / hovering
 
 	// Panning
 	bool m_SpaceHeld = false;
+	DVec2 m_PendingPan{ 0.0 }; // scroll-wheel pan (pixels) still to be applied, eased in by update()
 	bool m_Panning = false;
 	platform::PointerDevice m_PanDevice = platform::PointerDevice::Mouse;
 	platform::PointerButton m_PanButton = platform::PointerButton::None;

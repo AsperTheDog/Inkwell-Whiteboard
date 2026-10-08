@@ -49,6 +49,7 @@ struct BrushSettings
 	// Pressure -> width: width = size * (minWidth + (1 - minWidth) * pressure^gamma)
 	float pressureGamma = 0.8f;
 	float minWidthFraction = 0.2f;
+	float pressureSensitivity = 1.f; // 0 = constant width, 1 = full pressure response
 	bool simulatePressureForMouse = false; // velocity-based thinning for devices without pressure
 
 	// Geometry

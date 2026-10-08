@@ -248,7 +248,10 @@ void App::handleEvent(const SDL_Event& p_Event)
 	case SDL_EVENT_WINDOW_EXPOSED:
 	case SDL_EVENT_WINDOW_RESTORED:
 	case SDL_EVENT_WINDOW_MAXIMIZED:
+		requestRedraw(1);
+		return;
 	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+		m_PointerInWindow = false;
 		requestRedraw(1);
 		return;
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -308,6 +311,7 @@ void App::handleInput(const platform::InputEvent& p_Event)
 	if (const platform::PointerEvent* l_Pointer = std::get_if<platform::PointerEvent>(&p_Event))
 	{
 		m_LastPointer = *l_Pointer;
+		m_PointerInWindow = true;
 		m_CursorOverUi = l_UiHasPointer;
 		// Releases always reach the editor so no gesture is left hanging
 		const bool l_IsRelease = l_Pointer->phase == platform::PointerPhase::Up || l_Pointer->phase == platform::PointerPhase::Cancel;
@@ -442,8 +446,24 @@ void App::renderFrame()
 void App::buildUi()
 {
 	buildToolbar();
+	drawEraserCursor();
 	if (m_ShowDebug)
 		buildDebugPanel();
+}
+
+// Eraser outline over the canvas (an ImGui overlay until the real UI exists)
+void App::drawEraserCursor()
+{
+	if (m_CursorOverUi || !m_PointerInWindow)
+		return;
+	const std::optional<EraserCursor> l_Cursor = m_Editor.eraserCursor();
+	if (!l_Cursor)
+		return;
+	ImDrawList* l_List = ImGui::GetForegroundDrawList();
+	const float l_Scale = m_Window.displayScale();
+	const ImVec2 l_Center(l_Cursor->center.x, l_Cursor->center.y);
+	l_List->AddCircle(l_Center, l_Cursor->radiusPixels + l_Scale, IM_COL32(0, 0, 0, 90), 0, 1.5f * l_Scale);
+	l_List->AddCircle(l_Center, l_Cursor->radiusPixels, IM_COL32(255, 255, 255, 230), 0, 1.5f * l_Scale);
 }
 
 // Temporary toolbar; replaced by the real UI (wb.ui) in a later milestone
@@ -462,30 +482,84 @@ void App::buildToolbar()
 
 	tools::BrushState& l_Brush = m_Editor.brush();
 	const float l_Swatch = 22.f * l_Scale;
-	for (size_t i = 0; i < PALETTE.size(); ++i)
-	{
-		const Color l_Color = Color::fromRgba8(PALETTE[i]);
-		const bool l_Selected = l_Color == l_Brush.color;
-		ImGui::PushID(static_cast<int>(i));
-		if (l_Selected)
-		{
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.f * l_Scale);
-			ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.6f, 1.f, 1.f));
-		}
-		if (ImGui::ColorButton("##color", toImVec4(l_Color), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(l_Swatch, l_Swatch)))
-			l_Brush.color = l_Color;
-		if (l_Selected)
-		{
-			ImGui::PopStyleColor();
-			ImGui::PopStyleVar();
-		}
-		ImGui::PopID();
-		ImGui::SameLine();
-	}
 
-	ImGui::SameLine(0.f, 16.f * l_Scale);
-	ImGui::SetNextItemWidth(140.f * l_Scale);
-	ImGui::SliderFloat("##size", &l_Brush.sizePoints, 0.5f, 40.f, "size %.1f", ImGuiSliderFlags_Logarithmic);
+	const tools::ToolKind l_Tool = m_Editor.selectedTool();
+	const auto l_ToolButton = [&](const char* p_Label, const tools::ToolKind p_Kind, const char* p_Tip)
+	{
+		const bool l_Selected = l_Tool == p_Kind;
+		if (l_Selected)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+		if (ImGui::Button(p_Label))
+			m_Editor.setTool(p_Kind);
+		if (l_Selected)
+			ImGui::PopStyleColor();
+		ImGui::SetItemTooltip("%s", p_Tip);
+		ImGui::SameLine();
+	};
+	l_ToolButton("Pen", tools::ToolKind::Pen, "Pen (P)");
+	l_ToolButton("Eraser", tools::ToolKind::Eraser, "Eraser (E). The pen's eraser end works too");
+	ImGui::SameLine(0.f, 12.f * l_Scale);
+
+	if (l_Tool == tools::ToolKind::Eraser)
+	{
+		tools::EraserState& l_Eraser = m_Editor.eraser();
+		if (ImGui::RadioButton("Segment", l_Eraser.mode == tools::EraserMode::Segment))
+			l_Eraser.mode = tools::EraserMode::Segment;
+		ImGui::SetItemTooltip("Cuts strokes exactly where the eraser touches them");
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Stroke", l_Eraser.mode == tools::EraserMode::Stroke))
+			l_Eraser.mode = tools::EraserMode::Stroke;
+		ImGui::SetItemTooltip("Removes every whole stroke the eraser touches");
+		ImGui::SameLine(0.f, 16.f * l_Scale);
+		ImGui::SetNextItemWidth(140.f * l_Scale);
+		ImGui::SliderFloat("##erasersize", &l_Eraser.sizePoints, 4.f, 120.f, "eraser %.0f", ImGuiSliderFlags_Logarithmic);
+	}
+	else
+	{
+		for (size_t i = 0; i < PALETTE.size(); ++i)
+		{
+			const Color l_Color = Color::fromRgba8(PALETTE[i]);
+			const bool l_Selected = l_Color == l_Brush.color;
+			ImGui::PushID(static_cast<int>(i));
+			if (l_Selected)
+			{
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.f * l_Scale);
+				ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.6f, 1.f, 1.f));
+			}
+			if (ImGui::ColorButton("##color", toImVec4(l_Color), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(l_Swatch, l_Swatch)))
+				l_Brush.color = l_Color;
+			if (l_Selected)
+			{
+				ImGui::PopStyleColor();
+				ImGui::PopStyleVar();
+			}
+			ImGui::PopID();
+			ImGui::SameLine();
+		}
+
+		// Custom colour: a swatch showing the current custom colour, opens the ImGui picker
+		const ImVec4 l_CustomVec(m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f);
+		if (ImGui::ColorButton("##custom", l_CustomVec, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha, ImVec2(l_Swatch, l_Swatch)))
+		{
+			l_Brush.color = Color{ m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f };
+			ImGui::OpenPopup("##customcolor");
+		}
+		ImGui::SetItemTooltip("Custom colour (click again to edit)");
+		if (ImGui::BeginPopup("##customcolor"))
+		{
+			if (ImGui::ColorPicker3("##picker", m_CustomColor.data(), ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHex))
+				l_Brush.color = Color{ m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f };
+			ImGui::EndPopup();
+		}
+
+		ImGui::SameLine(0.f, 16.f * l_Scale);
+		ImGui::SetNextItemWidth(140.f * l_Scale);
+		ImGui::SliderFloat("##size", &l_Brush.sizePoints, 0.5f, 40.f, "size %.1f", ImGuiSliderFlags_Logarithmic);
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(110.f * l_Scale);
+		ImGui::SliderFloat("##pressure", &m_Editor.brushSettings().pressureSensitivity, 0.f, 1.f, "pressure %.2f");
+		ImGui::SetItemTooltip("How much pen pressure changes the stroke width (0 = constant)");
+	}
 
 	ImGui::SameLine(0.f, 16.f * l_Scale);
 	ImGui::BeginDisabled(!m_Editor.history().canUndo());

@@ -154,6 +154,28 @@ void App::driveSmokeTest()
 		m_Editor.redo();
 		return;
 	case 3:
+	{
+		// Segment eraser: a vertical sweep across the sine wave and the mouse line
+		m_Editor.setTool(tools::ToolKind::Eraser);
+		m_Editor.eraser() = { .mode = tools::EraserMode::Segment, .sizePoints = 24.f };
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(40, [&](const float p_T) { return l_C + Vec2{ -100.f * l_S, (-340.f + p_T * 380.f) * l_S }; }), {});
+		return;
+	}
+	case 4:
+		m_Editor.undo();
+		return;
+	case 5:
+		m_Editor.redo();
+		return;
+	case 6:
+	{
+		// Whole-stroke eraser through the hairlines
+		m_Editor.eraser().mode = tools::EraserMode::Stroke;
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_C + Vec2{ -500.f * l_S, (290.f + p_T * 90.f) * l_S }; }), {});
+		return;
+	}
+	case 7:
+		m_Editor.setTool(tools::ToolKind::Pen);
 		// Final view: zoomed around the drawing
 		m_Editor.flyTo(m_Editor.camera().center(), m_Options.smokeZoom);
 		return;

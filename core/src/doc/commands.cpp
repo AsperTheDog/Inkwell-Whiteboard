@@ -79,4 +79,44 @@ void RemoveObjectsCommand::revert(Document& p_Document)
 		p_Document.insert(std::move(l_Removed.object), l_Removed.zIndex);
 	m_Removed.clear();
 }
+
+void ReplaceObjectsCommand::replace(Document& p_Document, const ObjectId p_Id, std::vector<std::unique_ptr<Object>> p_Added)
+{
+	Document::Removed l_Removed = p_Document.take(p_Id);
+	if (!l_Removed.object)
+		return;
+
+	Step l_Step{ .removedId = p_Id, .zIndex = l_Removed.zIndex, .removed = std::move(l_Removed.object) };
+	size_t l_Index = l_Step.zIndex;
+	for (std::unique_ptr<Object>& l_Object : p_Added)
+	{
+		l_Step.addedIds.push_back(l_Object->id);
+		p_Document.insert(std::move(l_Object), l_Index++);
+	}
+	m_Steps.push_back(std::move(l_Step));
+}
+
+void ReplaceObjectsCommand::apply(Document& p_Document)
+{
+	for (Step& l_Step : m_Steps)
+	{
+		l_Step.removed = p_Document.take(l_Step.removedId).object;
+		size_t l_Index = l_Step.zIndex;
+		for (std::unique_ptr<Object>& l_Object : l_Step.added)
+			p_Document.insert(std::move(l_Object), l_Index++);
+		l_Step.added.clear();
+	}
+}
+
+void ReplaceObjectsCommand::revert(Document& p_Document)
+{
+	for (auto l_It = m_Steps.rbegin(); l_It != m_Steps.rend(); ++l_It)
+	{
+		Step& l_Step = *l_It;
+		l_Step.added.clear();
+		for (const ObjectId l_Id : l_Step.addedIds)
+			l_Step.added.push_back(p_Document.take(l_Id).object);
+		p_Document.insert(std::move(l_Step.removed), l_Step.zIndex);
+	}
+}
 } // namespace wb

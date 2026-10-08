@@ -227,7 +227,7 @@ FrameStatus FrameScheduler::end(const GraphicsContext& p_Context, const Swapchai
 
 void FrameScheduler::deferDestroy(std::move_only_function<void()> p_Destroy)
 {
-	m_PendingDestroys.push_back(PendingDestroy{ .afterValue = m_TimelineValue, .destroy = std::move(p_Destroy) });
+	m_PendingDestroys.push_back(PendingDestroy{ .afterValue = m_TimelineValue + 1, .destroy = std::move(p_Destroy) });
 }
 
 void FrameScheduler::collectGarbage(const GraphicsContext& p_Context)

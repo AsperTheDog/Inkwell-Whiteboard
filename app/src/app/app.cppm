@@ -60,6 +60,7 @@ private:
 	void renderFrame();
 	void buildUi();
 	void buildToolbar();
+	void drawEraserCursor();
 	void buildDebugPanel();
 	void addStressStrokes(uint32_t p_Count);
 	void addStressStrokes(uint32_t p_Count, const Rect& p_Area);
@@ -96,6 +97,7 @@ private:
 	bool m_ShowDebug = false;
 	bool m_DarkTheme = false;
 	bool m_ShowGrid = true;
+	std::array<float, 4> m_CustomColor{ 0.2f, 0.5f, 0.9f, 1.f }; // last colour picked in the custom colour popup
 	uint32_t m_RedrawFrames = 2; // frames still to draw after the last change (ImGui needs one extra to settle)
 	uint64_t m_LastDebugRefreshNs = 0;
 	uint64_t m_LastUpdateNs = 0;
@@ -110,5 +112,6 @@ private:
 	std::array<SDL_Cursor*, 4> m_Cursors{};
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;
 	bool m_CursorOverUi = false;
+	bool m_PointerInWindow = false;
 };
 } // namespace wb

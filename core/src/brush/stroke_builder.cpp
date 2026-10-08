@@ -198,7 +198,8 @@ float StrokeBuilder::widthFactor(const float p_Pressure) const
 {
 	const float l_MinWidth = std::clamp(m_Settings.minWidthFraction, 0.f, 1.f);
 	const float l_Curve = std::pow(std::clamp(p_Pressure, 0.f, 1.f), std::max(m_Settings.pressureGamma, 0.05f));
-	return l_MinWidth + (1.f - l_MinWidth) * l_Curve;
+	const float l_Sensitivity = std::clamp(m_Settings.pressureSensitivity, 0.f, 1.f);
+	return 1.f + (l_MinWidth + (1.f - l_MinWidth) * l_Curve - 1.f) * l_Sensitivity;
 }
 
 StrokePoint StrokeBuilder::toStrokePoint(const Vec2 p_Screen, const float p_Pressure) const

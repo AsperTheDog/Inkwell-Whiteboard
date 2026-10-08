@@ -7,7 +7,7 @@
 //   ... record ...
 //   end()                    -- submits and presents
 //
-// deferDestroy() queues a cleanup that runs once the GPU is past every frame submitted so far.
+// deferDestroy() queues a cleanup that runs once the GPU has finished every frame submitted so far and the one being recorded.
 module;
 #include <array>
 #include <cstdint>
