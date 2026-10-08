@@ -1,0 +1,14 @@
+# Build output
+/build/
+/build-*/
+/out/
+/.pyke/
+
+# IDE / tooling
+/.vs/
+/.vscode/
+/.idea/
+*.user
+imgui.ini
+compile_commands.json
+/.cache/

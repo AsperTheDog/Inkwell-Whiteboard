@@ -1,0 +1,115 @@
+# Whiteboard: infinite-canvas vector whiteboard (Vulkan 1.3 + SDL3, C++23 modules)
+#
+# Windows: `pyke build` (Visual Studio generator) or open build/Whiteboard.slnx
+# Linux:   `scripts/build_linux.sh` (clang + Ninja)
+
+from github import "libsdl-org/SDL" as sdl3_src, tag="release-3.4.16", options={"SDL_TEST_LIBRARY": False, "SDL_TESTS": False, "SDL_EXAMPLES": False, "SDL_SHARED": True, "SDL_STATIC": False}
+from github import "KhronosGroup/Vulkan-Headers" as vulkan_headers, tag="vulkan-sdk-1.4.357.0"
+from github import "zeux/volk" as volk, tag="vulkan-sdk-1.4.357.0", options={"VOLK_INSTALL": False, "VULKAN_HEADERS_INSTALL_DIR": "${CMAKE_BINARY_DIR}/_deps/vulkan_headers-src"}
+from github import "GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator" as vma, tag="v3.4.0", options={"VMA_BUILD_SAMPLES": False, "VMA_BUILD_DOCUMENTATION": False}
+from github import "g-truc/glm" as glm_src, tag="1.0.3", options={"GLM_BUILD_TESTS": False, "GLM_BUILD_LIBRARY": False, "GLM_ENABLE_CXX_20": True}
+from github import "gabime/spdlog" as spdlog, tag="v1.17.0", options={"SPDLOG_BUILD_EXAMPLE": False, "SPDLOG_INSTALL": False}
+from github import "google/googletest" as GTest, tag="v1.18.0", options={"INSTALL_GTEST": False, "BUILD_GMOCK": False, "gtest_force_shared_crt": True}
+
+project("Whiteboard", version="0.1.0", lang="c++23", presets=True)
+
+# Shared compile settings for our own targets
+msvc_flags = ["/utf-8", "/permissive-", "/Zc:preprocessor", "/Zc:__cplusplus", "/MP"]
+# Vulkan structs are filled with designated initializers that rely on zero-init for the rest (pNext, ...)
+clang_flags = ["-Wno-missing-designated-field-initializers"]
+
+# ---------------------------------------------------------------------------
+# Third-party wrappers
+# ---------------------------------------------------------------------------
+
+@HeaderOnly("libs/SDL3")
+target SDL3():
+    def configure(self):
+        self.link += ["SDL3::SDL3-shared"]
+
+@HeaderOnly("libs/Vulkan")
+target VulkanDeps():
+    def configure(self):
+        self.link += ["Vulkan::Headers", "volk::volk", "GPUOpen::VulkanMemoryAllocator"]
+        self.exports.definitions = {"VK_NO_PROTOTYPES": 1}
+
+@HeaderOnly("libs/glm")
+target GLM():
+    def configure(self):
+        self.link += ["glm::glm-header-only"]
+        self.exports.definitions = {"GLM_FORCE_XYZW_ONLY": 1, "GLM_FORCE_DEPTH_ZERO_TO_ONE": 1, "GLM_ENABLE_EXPERIMENTAL": 1}
+
+@HeaderOnly("libs/stb")
+target STB():
+    def configure(self):
+        self.exports.includes = ["//vendor/stb"]
+
+@StaticLibrary("libs/ImGui", source_groups=False)
+target ImGui(PUBLIC SDL3, PUBLIC VulkanDeps):
+    def configure(self):
+        self.sources = [
+            "//vendor/imgui/imgui.cpp",
+            "//vendor/imgui/imgui_demo.cpp",
+            "//vendor/imgui/imgui_draw.cpp",
+            "//vendor/imgui/imgui_tables.cpp",
+            "//vendor/imgui/imgui_widgets.cpp",
+            "//vendor/imgui/backends/imgui_impl_sdl3.cpp",
+            "//vendor/imgui/backends/imgui_impl_vulkan.cpp"
+        ]
+        self.exports.includes = ["//vendor/imgui", "//vendor/imgui/backends"]
+        self.exports.definitions = {"IMGUI_IMPL_VULKAN_USE_VOLK": 1, "IMGUI_DISABLE_OBSOLETE_FUNCTIONS": 1}
+
+# ---------------------------------------------------------------------------
+# wb_core: platform-independent model (math, document, brush geometry, eraser, commands, serialization).
+# No SDL or Vulkan here so it can be unit-tested headless.
+# ---------------------------------------------------------------------------
+
+@StaticLibrary("core")
+target wb_core(PUBLIC GLM):
+    def configure(self):
+        self.sources = ["src/**/*.cpp"]
+        self.exports.modules = ["src/**/*.cppm"]
+        self.warnings = "strict"
+        if compiler == "msvc":
+            self.flags += msvc_flags
+        if compiler == "clang":
+            self.flags += clang_flags
+
+# ---------------------------------------------------------------------------
+# whiteboard: the application
+# ---------------------------------------------------------------------------
+
+@Executable("app", copy_dlls=True)
+target whiteboard(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui, PRIVATE STB, PRIVATE spdlog):
+    def configure(self):
+        self.sources = ["src/**/*.cpp", "src/**/*.hpp"]
+        self.modules = ["src/**/*.cppm"]
+        self.includes = ["src/"]
+        self.assets = ["assets"]
+        self.warnings = "strict"
+        self.cmake += [
+            "include(${PROJECT_SOURCE_DIR}/cmake/Shaders.cmake)",
+            "wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)",
+            "set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:whiteboard>\")"
+        ]
+        if compiler == "msvc":
+            self.flags += msvc_flags
+        if compiler == "clang":
+            self.flags += clang_flags
+        self.definitions["SDL_MAIN_HANDLED"] = 1
+        if build_type == "debug":
+            self.definitions["WB_DEBUG"] = 1
+
+# ---------------------------------------------------------------------------
+# Unit tests for wb_core
+# ---------------------------------------------------------------------------
+
+@Executable("tests", test=True)
+target wb_tests(PRIVATE wb_core, PRIVATE GTest.gtest_main):
+    def configure(self):
+        self.sources = ["src/**/*.cpp"]
+        self.warnings = "strict"
+        if compiler == "msvc":
+            self.flags += msvc_flags
+        if compiler == "clang":
+            self.flags += clang_flags

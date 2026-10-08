@@ -1,0 +1,19 @@
+---
+Language: Cpp
+BasedOnStyle: Microsoft
+Standard: Latest
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 0
+BreakBeforeBraces: Allman
+AccessModifierOffset: -4
+NamespaceIndentation: None
+FixNamespaceComments: true
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: Inline
+SortIncludes: Never
+IndentPPDirectives: None
+...
