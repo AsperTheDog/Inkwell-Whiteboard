@@ -1,4 +1,7 @@
-// The one translation unit that compiles the stb implementations.
+#pragma once
+// stb_truetype declarations for the global module fragment of the UI font module. The implementation lives in
+// stb_impl.cpp.
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -10,10 +13,6 @@
 #pragma GCC diagnostic ignored "-Wextra"
 #endif
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
-#define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)

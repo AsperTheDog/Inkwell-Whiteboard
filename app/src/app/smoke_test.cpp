@@ -7,6 +7,7 @@ module;
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <string>
 #include <variant>
 #include <vector>
 #include <SDL3/SDL.h>
@@ -384,6 +385,55 @@ void App::driveSmokeTest()
 		// Final view: zoomed around the drawing
 		m_Editor.flyTo(m_Editor.camera().center(), m_Options.smokeZoom);
 		return;
+	case 15:
+	{
+		// Leave a panel open for the screenshot
+		const std::string& l_Ui = m_Options.smokeUi;
+		if (l_Ui == "pen" || l_Ui == "picker")
+		{
+			m_Editor.setTool(tools::ToolKind::Pen);
+			openPopup(Popup::Pen);
+			m_PickerOpen = l_Ui == "picker";
+			m_RecentColors[0] = 0x8E24AAFFu;
+			m_RecentColors[1] = 0x26A69AFFu;
+		}
+		else if (l_Ui == "eraser")
+		{
+			m_Editor.setTool(tools::ToolKind::Eraser);
+			openPopup(Popup::Eraser);
+		}
+		else if (l_Ui == "select")
+		{
+			m_Editor.setTool(tools::ToolKind::Select);
+			openPopup(Popup::Select);
+		}
+		else if (l_Ui == "selection" || l_Ui == "selcolor")
+		{
+			m_Editor.setTool(tools::ToolKind::Select);
+			m_Editor.selectAll();
+			if (l_Ui == "selcolor")
+				openPopup(Popup::SelectionColor);
+		}
+		else if (l_Ui == "menu")
+		{
+			openPopup(Popup::Menu);
+			m_MenuSection = 1;
+		}
+		else if (l_Ui == "shortcuts")
+		{
+			m_ShowShortcuts = true;
+		}
+		else if (l_Ui == "dialog")
+		{
+			m_PromptOpen = true;
+			m_PromptAction = Action::Quit;
+		}
+		else if (l_Ui == "toast")
+		{
+			showToast("Saved Untitled");
+		}
+		return;
+	}
 	default:
 		return;
 	}

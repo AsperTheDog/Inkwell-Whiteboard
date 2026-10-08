@@ -27,6 +27,11 @@ import wb.platform.window;
 import wb.render.canvas_renderer;
 import wb.session;
 import wb.tools.tool;
+import wb.ui.context;
+import wb.ui.draw;
+import wb.ui.font;
+import wb.ui.renderer;
+import wb.ui.theme;
 
 namespace wb
 {
@@ -47,6 +52,9 @@ struct AppOptions
 	std::string screenshotPath;
 	// Zoom of the final view in the smoke scenario
 	double smokeZoom = 1.0;
+	// Smoke scenario: dark theme, and a panel to leave open in the final frame (pen, eraser, select, picker, menu, shortcuts, dialog)
+	bool smokeDark = false;
+	std::string smokeUi;
 };
 
 class App
@@ -74,6 +82,16 @@ private:
 		Open,
 		Save,
 	};
+	// The floating panel that is open, if any
+	enum class Popup : uint8_t
+	{
+		None,
+		Pen,
+		Eraser,
+		Select,
+		Menu,
+		SelectionColor,
+	};
 
 	void init();
 	void shutdown();
@@ -89,14 +107,32 @@ private:
 	void recreateSwapchain();
 	void renderFrame();
 	void buildUi();
+	void updateTheme(double p_Dt);
+	void buildDebugPanel();
+
+	// The user interface (app_ui.cpp, app_popovers.cpp, app_menu.cpp, app_selection.cpp)
+	void buildCanvasOverlays();
+	void buildTopBar();
 	void buildToolbar();
-	void buildMenuBar();
-	void buildShortcutsWindow();
+	void buildZoomPill();
+	void buildPopover();
+	void buildPenPopover(ui::Rect2 p_Anchor);
+	void buildEraserPopover(ui::Rect2 p_Anchor);
+	void buildSelectPopover(ui::Rect2 p_Anchor);
+	void buildSelectionBar();
+	void buildMenu();
+	void buildShortcuts();
 	void buildDialogs();
 	void buildToast();
-	void buildSelectionUi();
-	void drawEraserCursor();
-	void buildDebugPanel();
+	void openPopup(Popup p_Popup);
+	void closePopup();
+	void togglePopup(Popup p_Popup);
+	void pushRecentColor(Color p_Color);
+	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen; }
+	// Keyboard input that belongs to dialogs and popups; returns true when it was used
+	bool handleUiKey(const SDL_KeyboardEvent& p_Event);
+	// Colour grid shared by the pen popover and the selection bar. Returns true when a swatch was clicked.
+	bool paletteGrid(ui::Rect2 p_Area, float p_Diameter, int p_Columns, const std::optional<Color>& p_Selected, Color& p_Picked);
 	void addStressStrokes(uint32_t p_Count);
 	void addStressStrokes(uint32_t p_Count, const Rect& p_Area);
 
@@ -156,7 +192,6 @@ private:
 	bool m_DarkTheme = false;
 	bool m_ShowGrid = true;
 	bool m_ShowShortcuts = false;
-	std::array<float, 4> m_CustomColor{ 0.2f, 0.5f, 0.9f, 1.f }; // last colour picked in the custom colour popup
 	uint32_t m_RedrawFrames = 2; // frames still to draw after the last change (ImGui needs one extra to settle)
 	uint64_t m_LastDebugRefreshNs = 0;
 	uint64_t m_LastUpdateNs = 0;
@@ -168,6 +203,23 @@ private:
 	uint64_t m_SmokeTimeNs = 0;
 	uint32_t m_SmokeStep = 0;
 
+	// User interface
+	ui::FontAtlas m_FontAtlas;
+	ui::Context m_Ui;
+	ui::UiRenderer m_UiRenderer;
+	ui::Theme m_Theme{};
+	float m_ThemeBlend = 0.f; // 0 light .. 1 dark, eased
+	uint64_t m_LastUiNs = 0;
+	Popup m_Popup = Popup::None;
+	bool m_PickerOpen = false;  // the pen popover shows the custom colour page
+	ui::Hsv m_PickerHsv{ 0.6f, 0.7f, 0.9f };
+	std::array<uint32_t, 5> m_RecentColors{}; // RGBA8, 0 = empty, most recent first
+	int m_MenuSection = 0;
+	std::array<ui::Rect2, tools::TOOL_KIND_COUNT> m_ToolRects{};
+	ui::Rect2 m_ToolbarRect{};
+	ui::Rect2 m_MenuAnchor{};
+	ui::Rect2 m_SelectionBarRect{};
+
 	std::array<SDL_Cursor*, tools::CURSOR_KIND_COUNT> m_Cursors{};
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;
 	bool m_CursorOverUi = false;
@@ -175,12 +227,12 @@ private:
 
 	// Unsaved-changes / recovery / error dialogs and the file dialog hand-off (dialogs run on SDL's own threads)
 	Action m_PromptAction = Action::None;
-	bool m_PromptRequested = false;
+	bool m_PromptOpen = false;
 	bool m_QuitDiscard = false;
 	std::optional<RecoveryInfo> m_Recovery;
-	bool m_RecoveryRequested = false;
+	bool m_RecoveryOpen = false;
 	std::string m_Message;
-	bool m_MessageRequested = false;
+	bool m_MessageOpen = false;
 	std::string m_Toast;
 	uint64_t m_ToastUntilNs = 0;
 	std::string m_LastTitle;

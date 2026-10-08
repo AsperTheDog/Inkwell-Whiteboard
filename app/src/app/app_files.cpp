@@ -8,7 +8,6 @@ module;
 #include <string>
 #include <utility>
 #include <SDL3/SDL.h>
-#include <imgui.h>
 #include <spdlog/spdlog.h>
 
 module wb.app;
@@ -30,17 +29,6 @@ namespace
 constexpr const char* FILE_EXTENSION = ".wbrd";
 constexpr uint64_t TOAST_NS = 2'200'000'000ull;
 
-std::string describeAge(const int64_t p_Seconds)
-{
-	const auto l_Count = [](const int64_t p_Value, const char* p_Unit) { return std::to_string(p_Value) + " " + p_Unit + (p_Value == 1 ? "" : "s") + " ago"; };
-	if (p_Seconds < 60)
-		return "less than a minute ago";
-	if (p_Seconds < 3600)
-		return l_Count(p_Seconds / 60, "minute");
-	if (p_Seconds < 86400)
-		return l_Count(p_Seconds / 3600, "hour");
-	return l_Count(p_Seconds / 86400, "day");
-}
 } // namespace
 
 // ------------------------------------------------------------------------------------------------ startup / shutdown
@@ -65,7 +53,7 @@ void App::initPersistence()
 	loadSettings();
 
 	m_Recovery = m_Session.peekRecovery();
-	m_RecoveryRequested = m_Recovery.has_value();
+	m_RecoveryOpen = m_Recovery.has_value();
 	updateTitle();
 }
 
@@ -87,8 +75,8 @@ void App::loadSettings()
 	m_DarkTheme = l_S.getBool("ui.dark", m_DarkTheme);
 	m_ShowGrid = l_S.getBool("ui.grid", m_ShowGrid);
 	m_LastDirectory = l_S.getString("files.lastDirectory");
-	for (size_t i = 0; i < m_CustomColor.size(); ++i)
-		m_CustomColor[i] = l_S.getFloat("brush.custom" + std::to_string(i), m_CustomColor[i]);
+	for (size_t i = 0; i < m_RecentColors.size(); ++i)
+		m_RecentColors[i] = static_cast<uint32_t>(l_S.getInt("brush.recent" + std::to_string(i), 0));
 
 	tools::BrushState& l_Brush = m_Editor.brush();
 	l_Brush.color = Color{ l_S.getFloat("brush.r", l_Brush.color.r), l_S.getFloat("brush.g", l_Brush.color.g), l_S.getFloat("brush.b", l_Brush.color.b), 1.f };
@@ -129,8 +117,8 @@ void App::saveSettings()
 	l_S.setBool("ui.dark", m_DarkTheme);
 	l_S.setBool("ui.grid", m_ShowGrid);
 	l_S.set("files.lastDirectory", m_LastDirectory);
-	for (size_t i = 0; i < m_CustomColor.size(); ++i)
-		l_S.setFloat("brush.custom" + std::to_string(i), m_CustomColor[i]);
+	for (size_t i = 0; i < m_RecentColors.size(); ++i)
+		l_S.setInt("brush.recent" + std::to_string(i), static_cast<long long>(m_RecentColors[i]));
 
 	const tools::BrushState& l_Brush = m_Editor.brush();
 	l_S.setFloat("brush.r", l_Brush.color.r);
@@ -176,7 +164,7 @@ void App::requestAction(const Action p_Action)
 		return;
 	}
 	m_PromptAction = p_Action;
-	m_PromptRequested = true;
+	m_PromptOpen = true;
 }
 
 void App::performAction(const Action p_Action)
@@ -356,276 +344,8 @@ void App::showMessage(std::string p_Text)
 {
 	spdlog::warn("{}", p_Text);
 	m_Message = std::move(p_Text);
-	m_MessageRequested = true;
+	m_MessageOpen = true;
 	requestRedraw();
 }
 
-// ------------------------------------------------------------------------------------------------ UI (temporary ImGui)
-
-void App::buildMenuBar()
-{
-	if (!ImGui::BeginMainMenuBar())
-		return;
-	const bool l_Idle = !m_Editor.isBusy();
-	if (ImGui::BeginMenu("File"))
-	{
-		if (ImGui::MenuItem("New", "Ctrl+N", false, l_Idle))
-			requestAction(Action::NewBoard);
-		if (ImGui::MenuItem("Open...", "Ctrl+O", false, l_Idle))
-			requestAction(Action::OpenFile);
-		ImGui::Separator();
-		if (ImGui::MenuItem("Save", "Ctrl+S", false, l_Idle))
-			requestSave(false, Action::None);
-		if (ImGui::MenuItem("Save as...", "Ctrl+Shift+S", false, l_Idle))
-			requestSave(true, Action::None);
-		ImGui::Separator();
-		if (ImGui::MenuItem("Exit", "Alt+F4"))
-			requestAction(Action::Quit);
-		ImGui::EndMenu();
-	}
-	if (ImGui::BeginMenu("Edit"))
-	{
-		if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_Editor.history().canUndo()))
-			m_Editor.undo();
-		if (ImGui::MenuItem("Redo", "Ctrl+Y / Ctrl+Shift+Z", false, m_Editor.history().canRedo()))
-			m_Editor.redo();
-		ImGui::Separator();
-		const bool l_HasSelection = m_Editor.hasSelection() && l_Idle;
-		if (ImGui::MenuItem("Cut", "Ctrl+X", false, l_HasSelection))
-			m_Editor.cutSelection();
-		if (ImGui::MenuItem("Copy", "Ctrl+C", false, l_HasSelection))
-			m_Editor.copySelection();
-		if (ImGui::MenuItem("Paste", "Ctrl+V", false, m_Editor.canPaste() && l_Idle))
-			m_Editor.paste();
-		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, l_HasSelection))
-			m_Editor.duplicateSelection();
-		if (ImGui::MenuItem("Delete", "Del", false, l_HasSelection))
-			m_Editor.deleteSelection();
-		if (ImGui::MenuItem("Select all", "Ctrl+A", false, l_Idle && !m_Editor.document().empty()))
-			m_Editor.selectAll();
-		ImGui::Separator();
-		if (ImGui::MenuItem("Bring to front", "Ctrl+Shift+]", false, l_HasSelection))
-			m_Editor.reorderSelection(ZOrderMove::ToFront);
-		if (ImGui::MenuItem("Bring forward", "Ctrl+]", false, l_HasSelection))
-			m_Editor.reorderSelection(ZOrderMove::Forward);
-		if (ImGui::MenuItem("Send backward", "Ctrl+[", false, l_HasSelection))
-			m_Editor.reorderSelection(ZOrderMove::Backward);
-		if (ImGui::MenuItem("Send to back", "Ctrl+Shift+[", false, l_HasSelection))
-			m_Editor.reorderSelection(ZOrderMove::ToBack);
-		ImGui::EndMenu();
-	}
-	if (ImGui::BeginMenu("Tools"))
-	{
-		const auto l_Tool = [&](const char* p_Label, const char* p_Shortcut, const tools::ToolKind p_Kind)
-		{
-			if (ImGui::MenuItem(p_Label, p_Shortcut, m_Editor.selectedTool() == p_Kind))
-				m_Editor.setTool(p_Kind);
-		};
-		l_Tool("Pen", "P", tools::ToolKind::Pen);
-		l_Tool("Eraser", "E", tools::ToolKind::Eraser);
-		l_Tool("Select", "V", tools::ToolKind::Select);
-		l_Tool("Hand", "H", tools::ToolKind::Hand);
-		ImGui::Separator();
-		ImGui::TextDisabled("Applies to the device in use (%s).", m_Editor.activeDevice() == platform::PointerDevice::Pen ? "pen" : (m_Editor.activeDevice() == platform::PointerDevice::Touch ? "touch" : "mouse"));
-		ImGui::TextDisabled("Hold Alt + a tool key to borrow it.");
-		ImGui::EndMenu();
-	}
-	if (ImGui::BeginMenu("View"))
-	{
-		if (ImGui::MenuItem("Zoom in", "Ctrl+=  or  wheel"))
-			m_Editor.zoomAroundCenter(1.25);
-		if (ImGui::MenuItem("Zoom out", "Ctrl+-  or  wheel"))
-			m_Editor.zoomAroundCenter(1.0 / 1.25);
-		if (ImGui::MenuItem("Actual size (100%)", "Ctrl+0"))
-			m_Editor.resetZoom();
-		if (ImGui::MenuItem("Fit all content", "Home"))
-			m_Editor.fitContent();
-		ImGui::Separator();
-		ImGui::MenuItem("Grid", nullptr, &m_ShowGrid);
-		ImGui::MenuItem("Dark theme", nullptr, &m_DarkTheme);
-		if (ImGui::MenuItem("Fullscreen", "F11"))
-		{
-			const bool l_Fullscreen = (SDL_GetWindowFlags(m_Window.handle()) & SDL_WINDOW_FULLSCREEN) != 0;
-			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
-		}
-		ImGui::MenuItem("Debug panel", "F3", &m_ShowDebug);
-		ImGui::EndMenu();
-	}
-	if (ImGui::BeginMenu("Help"))
-	{
-		ImGui::MenuItem("Keyboard shortcuts", "F1", &m_ShowShortcuts);
-		ImGui::EndMenu();
-	}
-	ImGui::EndMainMenuBar();
-}
-
-void App::buildShortcutsWindow()
-{
-	if (!m_ShowShortcuts)
-		return;
-	const ImGuiViewport* l_Viewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(l_Viewport->WorkPos.x + l_Viewport->WorkSize.x * 0.5f, l_Viewport->WorkPos.y + l_Viewport->WorkSize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	if (!ImGui::Begin("Keyboard shortcuts", &m_ShowShortcuts, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
-	{
-		ImGui::End();
-		return;
-	}
-	const auto l_Section = [](const char* p_Title) { ImGui::SeparatorText(p_Title); };
-	const auto l_Row = [](const char* p_Keys, const char* p_What)
-	{
-		ImGui::TextUnformatted(p_Keys);
-		ImGui::SameLine(ImGui::GetFontSize() * 17.f);
-		ImGui::TextUnformatted(p_What);
-	};
-	l_Section("File");
-	l_Row("Ctrl+N / Ctrl+O", "New board / open a board");
-	l_Row("Ctrl+S / Ctrl+Shift+S", "Save / save as");
-	l_Section("Tools");
-	l_Row("P / E / V / H", "Pen / eraser / select / hand (for the device in use)");
-	l_Row("Alt + P / E / V / H", "Borrow that tool while the keys are held");
-	l_Row("Pen eraser end", "Erases whatever tool the pen has");
-	l_Section("Editing");
-	l_Row("Ctrl+Z", "Undo");
-	l_Row("Ctrl+Y / Ctrl+Shift+Z", "Redo");
-	l_Row("Ctrl+A", "Select all");
-	l_Row("Ctrl+C / X / V", "Copy / cut / paste");
-	l_Row("Ctrl+D", "Duplicate");
-	l_Row("Delete", "Delete the selection");
-	l_Row("Arrow keys (+Shift)", "Nudge by 1 (10) points");
-	l_Row("Ctrl+] / Ctrl+[", "Bring forward / send backward");
-	l_Row("Ctrl+Shift+] / [", "Bring to front / send to back");
-	l_Row("Escape", "Cancel a drag, or deselect");
-	l_Section("Selection");
-	l_Row("Click / box / lasso", "Select. Shift adds to the selection");
-	l_Row("Drag inside the box", "Move");
-	l_Row("Drag a handle", "Scale. Shift keeps proportions, Alt scales from the centre");
-	l_Row("Drag the top circle", "Rotate. Shift snaps to 15 degrees");
-	l_Section("Navigation");
-	l_Row("Mouse wheel", "Zoom at the pointer");
-	l_Row("Ctrl+wheel (+Shift)", "Scroll vertically (horizontally)");
-	l_Row("Space+drag / right or middle drag", "Pan");
-	l_Row("Ctrl+= / Ctrl+-", "Zoom in / out");
-	l_Row("Ctrl+0", "Actual size (100%)");
-	l_Row("Home", "Fit all content");
-	l_Section("Window");
-	l_Row("F1", "This list");
-	l_Row("F3", "Debug panel");
-	l_Row("F11", "Fullscreen");
-	ImGui::End();
-}
-
-void App::buildToast()
-{
-	if (m_Toast.empty())
-		return;
-	if (SDL_GetTicksNS() >= m_ToastUntilNs)
-	{
-		m_Toast.clear();
-		return;
-	}
-	const ImGuiViewport* l_Viewport = ImGui::GetMainViewport();
-	const float l_Scale = m_Window.displayScale();
-	ImGui::SetNextWindowPos(ImVec2(l_Viewport->WorkPos.x + l_Viewport->WorkSize.x * 0.5f, l_Viewport->WorkPos.y + 18.f * l_Scale), ImGuiCond_Always, ImVec2(0.5f, 0.f));
-	ImGui::SetNextWindowBgAlpha(0.88f);
-	constexpr ImGuiWindowFlags l_Flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
-	if (ImGui::Begin("##toast", nullptr, l_Flags))
-		ImGui::TextUnformatted(m_Toast.c_str());
-	ImGui::End();
-}
-
-void App::buildDialogs()
-{
-	const ImGuiViewport* l_Viewport = ImGui::GetMainViewport();
-	const ImVec2 l_Center(l_Viewport->WorkPos.x + l_Viewport->WorkSize.x * 0.5f, l_Viewport->WorkPos.y + l_Viewport->WorkSize.y * 0.5f);
-	const float l_Scale = m_Window.displayScale();
-	constexpr ImGuiWindowFlags l_Flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
-
-	if (m_PromptRequested)
-	{
-		ImGui::OpenPopup("Unsaved changes");
-		m_PromptRequested = false;
-	}
-	ImGui::SetNextWindowPos(l_Center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	if (ImGui::BeginPopupModal("Unsaved changes", nullptr, l_Flags))
-	{
-		ImGui::Text("\"%s\" has changes that are not saved.", m_Session.displayName().c_str());
-		ImGui::Spacing();
-		const Action l_Action = m_PromptAction;
-		if (ImGui::Button("Save", ImVec2(110.f * l_Scale, 0.f)))
-		{
-			ImGui::CloseCurrentPopup();
-			m_PromptAction = Action::None;
-			requestSave(false, l_Action);
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Don't save", ImVec2(110.f * l_Scale, 0.f)))
-		{
-			ImGui::CloseCurrentPopup();
-			m_PromptAction = Action::None;
-			m_QuitDiscard = l_Action == Action::Quit;
-			performAction(l_Action);
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Cancel", ImVec2(110.f * l_Scale, 0.f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-		{
-			ImGui::CloseCurrentPopup();
-			m_PromptAction = Action::None;
-		}
-		ImGui::EndPopup();
-	}
-
-	if (m_RecoveryRequested)
-	{
-		ImGui::OpenPopup("Recover unsaved work");
-		m_RecoveryRequested = false;
-	}
-	ImGui::SetNextWindowPos(l_Center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	if (m_Recovery && ImGui::BeginPopupModal("Recover unsaved work", nullptr, l_Flags))
-	{
-		const std::string l_Name = m_Recovery->sourcePath.empty() ? std::string("an untitled board") : "\"" + pathToUtf8(pathFromUtf8(m_Recovery->sourcePath).filename()) + "\"";
-		ImGui::TextWrapped("Whiteboard closed before %s was saved.", l_Name.c_str());
-		ImGui::Text("%llu objects, last autosaved %s.", static_cast<unsigned long long>(m_Recovery->objectCount), describeAge(m_Recovery->ageSeconds).c_str());
-		ImGui::Spacing();
-		if (ImGui::Button("Recover", ImVec2(130.f * l_Scale, 0.f)))
-		{
-			ImGui::CloseCurrentPopup();
-			m_Recovery.reset();
-			if (const IoResult l_Result = m_Session.recover(); l_Result.ok)
-			{
-				updateTitle();
-				showToast("Recovered unsaved work");
-			}
-			else
-			{
-				showMessage("The unsaved work could not be recovered.\n\n" + l_Result.error);
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Discard", ImVec2(130.f * l_Scale, 0.f)))
-		{
-			ImGui::CloseCurrentPopup();
-			m_Recovery.reset();
-			m_Session.discardRecovery();
-		}
-		ImGui::EndPopup();
-	}
-
-	if (m_MessageRequested)
-	{
-		ImGui::OpenPopup("Whiteboard##message");
-		m_MessageRequested = false;
-	}
-	ImGui::SetNextWindowPos(l_Center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(520.f * l_Scale, 400.f * l_Scale));
-	if (ImGui::BeginPopupModal("Whiteboard##message", nullptr, l_Flags))
-	{
-		ImGui::PushTextWrapPos(480.f * l_Scale);
-		ImGui::TextUnformatted(m_Message.c_str());
-		ImGui::PopTextWrapPos();
-		ImGui::Spacing();
-		if (ImGui::Button("OK", ImVec2(110.f * l_Scale, 0.f)) || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter))
-			ImGui::CloseCurrentPopup();
-		ImGui::EndPopup();
-	}
-}
 } // namespace wb

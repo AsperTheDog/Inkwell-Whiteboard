@@ -3,9 +3,11 @@ module;
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -34,18 +36,17 @@ import wb.platform.input;
 import wb.platform.window;
 import wb.render.canvas_renderer;
 import wb.tools.tool;
+import wb.ui.context;
+import wb.ui.draw;
+import wb.ui.font;
+import wb.ui.renderer;
+import wb.ui.theme;
 import wb.view.camera;
 
 namespace wb
 {
 namespace
 {
-// Canvas and grid colors per theme (proper theming arrives with wb.ui)
-constexpr Color LIGHT_CANVAS = Color::fromRgba8(0xF5F5F2FFu);
-constexpr Color DARK_CANVAS = Color::fromRgba8(0x1F2023FFu);
-constexpr Color LIGHT_GRID = Color::fromRgba8(0x00000030u);
-constexpr Color DARK_GRID = Color::fromRgba8(0xFFFFFF22u);
-
 // While idle with the debug overlay open, refresh its numbers at this interval
 constexpr uint64_t DEBUG_REFRESH_NS = 250'000'000ull;
 constexpr VkDeviceSize STAGING_CHUNK_BYTES = 4ull * 1024 * 1024;
@@ -97,9 +98,11 @@ const char* gpuTypeName(const VkPhysicalDeviceType p_Type)
 	}
 }
 
-ImVec4 toImVec4(const Color p_Color)
+std::filesystem::path fontDirectory()
 {
-	return ImVec4(p_Color.r, p_Color.g, p_Color.b, p_Color.a);
+	const char* l_Base = SDL_GetBasePath();
+	const std::filesystem::path l_Root = l_Base != nullptr ? std::filesystem::path(reinterpret_cast<const char8_t*>(l_Base)) : std::filesystem::current_path();
+	return l_Root / "assets" / "fonts";
 }
 } // namespace
 
@@ -164,7 +167,16 @@ void App::init()
 	m_Canvas.init(m_Context, m_Swapchain.format());
 	m_Canvas.attach(m_Editor.document());
 	m_ImGui.init(m_Context, m_Window, m_Swapchain);
+	{
+		std::string l_Error;
+		if (!m_FontAtlas.load(fontDirectory(), l_Error))
+			throw std::runtime_error(l_Error);
+		m_Ui.init(m_FontAtlas);
+		m_UiRenderer.init(m_Context, m_Swapchain.format());
+	}
 	initPersistence();
+	m_DarkTheme = m_DarkTheme || m_Options.smokeDark;
+	m_ThemeBlend = m_DarkTheme ? 1.f : 0.f;
 
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Default)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Crosshair)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -194,6 +206,7 @@ void App::shutdown()
 	}
 	gfx::destroyBuffer(m_Context, m_ScreenshotBuffer);
 	m_ImGui.shutdown();
+	m_UiRenderer.destroy(m_Context);
 	m_Canvas.destroy(m_Context);
 	m_Staging.destroy(m_Context);
 	m_Frames.destroy(m_Context);
@@ -299,6 +312,8 @@ void App::handleEvent(const SDL_Event& p_Event)
 			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
 			return;
 		}
+		if (handleUiKey(p_Event.key))
+			return;
 		if (!m_ImGui.wantsKeyboard() && !handleFileShortcut(p_Event.key))
 			m_Editor.handleKeyDown(p_Event.key);
 		return;
@@ -334,13 +349,18 @@ void App::handleInput(const platform::InputEvent& p_Event)
 	if (m_Options.smokeTestFrames > 0)
 		return; // the scripted scenario owns the input; a real mouse over the window must not interfere
 
-	const bool l_UiHasPointer = m_ImGui.wantsPointer() && !m_Editor.isBusy();
+	const bool l_ImGuiHasPointer = m_ImGui.wantsPointer();
 
 	if (const platform::PointerEvent* l_Pointer = std::get_if<platform::PointerEvent>(&p_Event))
 	{
 		m_LastPointer = *l_Pointer;
 		m_PointerInWindow = true;
 		m_Editor.notePointerDevice(l_Pointer->device); // the toolbar shows the tool of the device in use, even over the UI
+		const bool l_UiOwns = m_Ui.pointerEvent(*l_Pointer);
+		const bool l_UiHasPointer = (l_UiOwns || l_ImGuiHasPointer) && !m_Editor.isBusy();
+		// A click on the board closes whatever popup is open (the click itself still reaches the board)
+		if (l_Pointer->phase == platform::PointerPhase::Down && !l_UiHasPointer && m_Popup != Popup::None)
+			closePopup();
 		m_CursorOverUi = l_UiHasPointer;
 		// Releases always reach the editor so no gesture is left hanging
 		const bool l_IsRelease = l_Pointer->phase == platform::PointerPhase::Up || l_Pointer->phase == platform::PointerPhase::Cancel;
@@ -349,6 +369,7 @@ void App::handleInput(const platform::InputEvent& p_Event)
 	}
 	else if (const platform::WheelEvent* l_Wheel = std::get_if<platform::WheelEvent>(&p_Event))
 	{
+		const bool l_UiHasPointer = (m_Ui.wantsPointer(l_Wheel->position) || l_ImGuiHasPointer) && !m_Editor.isBusy();
 		if (!l_UiHasPointer)
 			m_Editor.handleWheel(*l_Wheel);
 	}
@@ -360,7 +381,7 @@ void App::handleInput(const platform::InputEvent& p_Event)
 
 void App::updateCursor()
 {
-	const tools::CursorKind l_Wanted = m_CursorOverUi ? tools::CursorKind::Default : m_Editor.cursor();
+	const tools::CursorKind l_Wanted = m_CursorOverUi ? (m_Ui.overInteractive() ? tools::CursorKind::Pointer : tools::CursorKind::Default) : m_Editor.cursor();
 	if (l_Wanted == m_CurrentCursor)
 		return;
 	m_CurrentCursor = l_Wanted;
@@ -388,7 +409,18 @@ void App::renderFrame()
 {
 	const uint64_t l_CpuStart = SDL_GetTicksNS();
 
-	m_ImGui.buildFrame([this] { buildUi(); });
+	if (m_FontAtlas.beginFrame())
+		requestRedraw(2); // the glyph atlas overflowed and was cleared: draw again with the glyphs it now holds
+	const double l_UiDt = m_LastUiNs == 0 ? 0.0 : std::min(static_cast<double>(l_CpuStart - m_LastUiNs) * 1e-9, 0.05);
+	m_LastUiNs = l_CpuStart;
+	updateTheme(l_UiDt);
+	{
+		const VkExtent2D l_Size = m_Swapchain.extent();
+		m_Ui.beginFrame(ui::FrameParams{ .viewport = Vec2{ static_cast<float>(l_Size.width), static_cast<float>(l_Size.height) }, .scale = m_Window.displayScale(), .dt = l_UiDt, .theme = m_Theme });
+		buildUi();
+		m_Ui.endFrame();
+	}
+	m_ImGui.buildFrame([this] { if (m_ShowDebug) buildDebugPanel(); });
 
 	gfx::FrameStatus l_Status = gfx::FrameStatus::Ok;
 	const std::optional<gfx::FrameTarget> l_Target = m_Frames.begin(m_Context, m_Swapchain, l_Status);
@@ -406,6 +438,7 @@ void App::renderFrame()
 	{
 		const gfx::DebugLabel l_Label(l_Cmd, "canvas uploads");
 		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, l_Live ? &*l_Live : nullptr);
+		m_UiRenderer.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, m_FontAtlas, m_Ui.draw());
 	}
 
 	gfx::transitionImage(l_Cmd, l_Target->image, {
@@ -417,11 +450,12 @@ void App::renderFrame()
 		.dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 	});
 
-	const Color l_Background = m_DarkTheme ? DARK_CANVAS : LIGHT_CANVAS;
+	const Color l_Background = m_Theme.canvas;
 	{
 		const gfx::DebugLabel l_Label(l_Cmd, "frame");
 		gfx::beginColorRendering(l_Cmd, l_Target->view, l_Target->extent, VK_ATTACHMENT_LOAD_OP_CLEAR, VkClearColorValue{ .float32 = { l_Background.r, l_Background.g, l_Background.b, 1.f } });
-		m_Canvas.record(l_Cmd, l_Camera, render::GridStyle{ .enabled = m_ShowGrid, .dotColor = m_DarkTheme ? DARK_GRID : LIGHT_GRID });
+		m_Canvas.record(l_Cmd, l_Camera, render::GridStyle{ .enabled = m_ShowGrid, .dotColor = m_Theme.grid });
+		m_UiRenderer.record(l_Cmd, l_Target->extent);
 		{
 			const gfx::DebugLabel l_UiLabel(l_Cmd, "imgui");
 			m_ImGui.record(l_Cmd);
@@ -453,6 +487,8 @@ void App::renderFrame()
 	if (l_Capture)
 		writeScreenshot(l_Target->extent);
 
+	if (m_Ui.animating() || m_ThemeBlend != (m_DarkTheme ? 1.f : 0.f))
+		requestRedraw(2); // keep frames coming while something eases
 	if (m_RedrawFrames > 0)
 		--m_RedrawFrames;
 	if (l_LastSmokeFrame)
@@ -472,184 +508,37 @@ void App::renderFrame()
 
 // ------------------------------------------------------------------------------------------------ UI
 
+void App::updateTheme(const double p_Dt)
+{
+	const float l_Target = m_DarkTheme ? 1.f : 0.f;
+	if (m_ThemeBlend != l_Target)
+	{
+		m_ThemeBlend += (l_Target - m_ThemeBlend) * (1.f - std::exp(-14.f * static_cast<float>(p_Dt)));
+		if (std::abs(l_Target - m_ThemeBlend) < 0.004f)
+			m_ThemeBlend = l_Target;
+	}
+	m_Theme = ui::blendThemes(ui::lightTheme(), ui::darkTheme(), m_ThemeBlend);
+}
+
+// Order matters: later things are drawn on top and block the pointer for everything below
 void App::buildUi()
 {
-	buildMenuBar();
-	buildSelectionUi();
+	buildCanvasOverlays();
+	buildSelectionBar();
+	buildTopBar();
+	buildZoomPill();
 	buildToolbar();
+	buildPopover();
+	buildMenu();
 	buildToast();
-	buildShortcutsWindow();
+	buildShortcuts();
 	buildDialogs();
-	drawEraserCursor();
-	if (m_ShowDebug)
-		buildDebugPanel();
-}
-
-// Eraser outline over the canvas (an ImGui overlay until the real UI exists)
-void App::drawEraserCursor()
-{
-	if (m_CursorOverUi || !m_PointerInWindow)
-		return;
-	const std::optional<EraserCursor> l_Cursor = m_Editor.eraserCursor();
-	if (!l_Cursor)
-		return;
-	ImDrawList* l_List = ImGui::GetForegroundDrawList();
-	const float l_Scale = m_Window.displayScale();
-	const ImVec2 l_Center(l_Cursor->center.x, l_Cursor->center.y);
-	l_List->AddCircle(l_Center, l_Cursor->radiusPixels + l_Scale, IM_COL32(0, 0, 0, 90), 0, 1.5f * l_Scale);
-	l_List->AddCircle(l_Center, l_Cursor->radiusPixels, IM_COL32(255, 255, 255, 230), 0, 1.5f * l_Scale);
-}
-
-// Temporary toolbar; replaced by the real UI (wb.ui) in a later milestone
-void App::buildToolbar()
-{
-	const ImGuiViewport* l_Viewport = ImGui::GetMainViewport();
-	const float l_Scale = m_Window.displayScale();
-	ImGui::SetNextWindowPos(ImVec2(l_Viewport->WorkPos.x + l_Viewport->WorkSize.x * 0.5f, l_Viewport->WorkPos.y + l_Viewport->WorkSize.y - 16.f * l_Scale), ImGuiCond_Always, ImVec2(0.5f, 1.f));
-	ImGui::SetNextWindowBgAlpha(0.9f);
-	constexpr ImGuiWindowFlags l_Flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
-	if (!ImGui::Begin("##toolbar", nullptr, l_Flags))
-	{
-		ImGui::End();
-		return;
-	}
-
-	tools::BrushState& l_Brush = m_Editor.brush();
-	const float l_Swatch = 22.f * l_Scale;
-
-	const tools::ToolKind l_Tool = m_Editor.selectedTool();
-	const auto l_ToolButton = [&](const char* p_Label, const tools::ToolKind p_Kind, const char* p_Tip)
-	{
-		const bool l_Selected = l_Tool == p_Kind;
-		if (l_Selected)
-			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-		if (ImGui::Button(p_Label))
-			m_Editor.setTool(p_Kind);
-		if (l_Selected)
-			ImGui::PopStyleColor();
-		ImGui::SetItemTooltip("%s", p_Tip);
-		ImGui::SameLine();
-	};
-	l_ToolButton("Pen", tools::ToolKind::Pen, "Pen (P)");
-	l_ToolButton("Eraser", tools::ToolKind::Eraser, "Eraser (E). The pen's eraser end works too");
-	l_ToolButton("Select", tools::ToolKind::Select, "Select (V): click, drag a box or lasso, then move, scale and rotate");
-	l_ToolButton("Hand", tools::ToolKind::Hand, "Hand (H): drag to move the view");
-	ImGui::TextDisabled("%s%s", deviceName(m_Editor.activeDevice()), m_Editor.toolIsBorrowed() ? " (held)" : "");
-	ImGui::SetItemTooltip("Mouse, pen and touch each remember their own tool; this is the device in use.\nHold Alt with a tool key (P, E, V, H) to borrow that tool while the key is down.");
-	ImGui::SameLine(0.f, 12.f * l_Scale);
-
-	if (l_Tool == tools::ToolKind::Eraser)
-	{
-		tools::EraserState& l_Eraser = m_Editor.eraser();
-		if (ImGui::RadioButton("Segment", l_Eraser.mode == tools::EraserMode::Segment))
-			l_Eraser.mode = tools::EraserMode::Segment;
-		ImGui::SetItemTooltip("Cuts strokes exactly where the eraser touches them");
-		ImGui::SameLine();
-		if (ImGui::RadioButton("Stroke", l_Eraser.mode == tools::EraserMode::Stroke))
-			l_Eraser.mode = tools::EraserMode::Stroke;
-		ImGui::SetItemTooltip("Removes every whole stroke the eraser touches");
-		ImGui::SameLine(0.f, 16.f * l_Scale);
-		ImGui::SetNextItemWidth(140.f * l_Scale);
-		ImGui::SliderFloat("##erasersize", &l_Eraser.sizePoints, 4.f, 120.f, "eraser %.0f", ImGuiSliderFlags_Logarithmic);
-	}
-	else if (l_Tool == tools::ToolKind::Pen)
-	{
-		for (size_t i = 0; i < PALETTE.size(); ++i)
-		{
-			const Color l_Color = Color::fromRgba8(PALETTE[i]);
-			const bool l_Selected = l_Color == l_Brush.color;
-			ImGui::PushID(static_cast<int>(i));
-			if (l_Selected)
-			{
-				ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.f * l_Scale);
-				ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.6f, 1.f, 1.f));
-			}
-			if (ImGui::ColorButton("##color", toImVec4(l_Color), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(l_Swatch, l_Swatch)))
-				l_Brush.color = l_Color;
-			if (l_Selected)
-			{
-				ImGui::PopStyleColor();
-				ImGui::PopStyleVar();
-			}
-			ImGui::PopID();
-			ImGui::SameLine();
-		}
-
-		// Custom colour: a swatch showing the current custom colour, opens the ImGui picker
-		const ImVec4 l_CustomVec(m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f);
-		if (ImGui::ColorButton("##custom", l_CustomVec, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha, ImVec2(l_Swatch, l_Swatch)))
-		{
-			l_Brush.color = Color{ m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f };
-			ImGui::OpenPopup("##customcolor");
-		}
-		ImGui::SetItemTooltip("Custom colour (click again to edit)");
-		if (ImGui::BeginPopup("##customcolor"))
-		{
-			if (ImGui::ColorPicker3("##picker", m_CustomColor.data(), ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHex))
-				l_Brush.color = Color{ m_CustomColor[0], m_CustomColor[1], m_CustomColor[2], 1.f };
-			ImGui::EndPopup();
-		}
-
-		ImGui::SameLine(0.f, 16.f * l_Scale);
-		ImGui::SetNextItemWidth(140.f * l_Scale);
-		ImGui::SliderFloat("##size", &l_Brush.sizePoints, 0.5f, 40.f, "size %.1f", ImGuiSliderFlags_Logarithmic);
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(110.f * l_Scale);
-		ImGui::SliderFloat("##pressure", &m_Editor.brushSettings().pressureSensitivity, 0.f, 1.f, "pressure %.2f");
-		ImGui::SetItemTooltip("How much pen pressure changes the stroke width (0 = constant)");
-	}
-	else if (l_Tool == tools::ToolKind::Select)
-	{
-		tools::SelectState& l_Select = m_Editor.selectState();
-		if (ImGui::RadioButton("Box", l_Select.mode == tools::SelectMode::Box))
-			l_Select.mode = tools::SelectMode::Box;
-		ImGui::SetItemTooltip("Drag a rectangle around what to select");
-		ImGui::SameLine();
-		if (ImGui::RadioButton("Lasso", l_Select.mode == tools::SelectMode::Lasso))
-			l_Select.mode = tools::SelectMode::Lasso;
-		ImGui::SetItemTooltip("Draw around what to select. Anything the line touches is selected.");
-		if (m_Editor.hasSelection())
-		{
-			ImGui::SameLine(0.f, 12.f * l_Scale);
-			ImGui::TextDisabled("%zu selected", m_Editor.selection().size());
-		}
-	}
-	else
-	{
-		ImGui::TextDisabled("Drag to move the view");
-	}
-
-	ImGui::SameLine(0.f, 16.f * l_Scale);
-	ImGui::BeginDisabled(!m_Editor.history().canUndo());
-	if (ImGui::Button("Undo"))
-		m_Editor.undo();
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!m_Editor.history().canRedo());
-	if (ImGui::Button("Redo"))
-		m_Editor.redo();
-	ImGui::EndDisabled();
-
-	ImGui::SameLine(0.f, 16.f * l_Scale);
-	if (ImGui::Button("-"))
-		m_Editor.zoomAroundCenter(1.0 / 1.25);
-	ImGui::SameLine();
-	if (ImGui::Button((std::to_string(static_cast<int>(std::round(m_Editor.camera().zoom() * 100.0))) + "%###zoom").c_str()))
-		m_Editor.resetZoom();
-	ImGui::SameLine();
-	if (ImGui::Button("+"))
-		m_Editor.zoomAroundCenter(1.25);
-	ImGui::SameLine();
-	if (ImGui::Button("Fit"))
-		m_Editor.fitContent();
-
-	ImGui::End();
 }
 
 void App::buildDebugPanel()
 {
 	const float l_Scale = m_Window.displayScale();
-	ImGui::SetNextWindowPos(ImVec2(12.f * l_Scale, ImGui::GetFrameHeight() + 12.f * l_Scale), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(12.f * l_Scale, 76.f * l_Scale), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSize(ImVec2(400.f * l_Scale, 0.f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("Debug (F3)", &m_ShowDebug))
 	{
