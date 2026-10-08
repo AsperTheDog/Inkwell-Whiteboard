@@ -125,7 +125,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 12, 8, 1 };
+	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 12, 9, 1 };
 	static constexpr std::array<const char*, 4> TITLES{ "Board", "Edit", "View", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -265,6 +265,11 @@ void App::buildMenu()
 				m_ShowGrid = !m_ShowGrid;
 			if (l_Row(ui::Icon::Moon, "Dark theme", "", true, m_DarkTheme))
 				m_DarkTheme = !m_DarkTheme;
+			if (l_Row(ui::Icon::Layers, "Hide interface", "F2"))
+			{
+				toggleInterface();
+				l_Close = true;
+			}
 			if (l_Row(ui::Icon::Fullscreen, "Fullscreen", "F11"))
 			{
 				const bool l_Fullscreen = (SDL_GetWindowFlags(m_Window.handle()) & SDL_WINDOW_FULLSCREEN) != 0;
@@ -330,6 +335,7 @@ const std::vector<ShortcutSection>& leftSections()
 		} },
 		{ "Window", {
 			{ "F1", "This list" },
+			{ "F2", "Hide or show the interface" },
 			{ "F3", "Debug panel" },
 			{ "F11", "Fullscreen" },
 		} },

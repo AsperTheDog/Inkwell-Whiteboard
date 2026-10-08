@@ -92,6 +92,16 @@ const char* deviceLabel(const platform::PointerDevice p_Device)
 
 // ------------------------------------------------------------------------------------------------ popups
 
+void App::toggleInterface()
+{
+	m_HideUi = !m_HideUi;
+	closePopup("interface hidden");
+	m_ShowShortcuts = false;
+	if (m_HideUi)
+		showToast("Interface hidden. Press F2 to bring it back");
+	requestRedraw();
+}
+
 void App::openPopup(const Popup p_Popup)
 {
 	if (m_Popup == p_Popup)

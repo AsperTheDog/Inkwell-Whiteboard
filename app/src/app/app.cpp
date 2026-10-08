@@ -301,6 +301,11 @@ void App::handleEvent(const SDL_Event& p_Event)
 			m_ShowDebug = !m_ShowDebug;
 			return;
 		}
+		if (p_Event.key.key == SDLK_F2 && !p_Event.key.repeat && !modalOpen())
+		{
+			toggleInterface();
+			return;
+		}
 		if (p_Event.key.key == SDLK_F1 && !p_Event.key.repeat)
 		{
 			m_ShowShortcuts = !m_ShowShortcuts;
@@ -523,6 +528,14 @@ void App::updateTheme(const double p_Dt)
 // Order matters: later things are drawn on top and block the pointer for everything below
 void App::buildUi()
 {
+	if (m_HideUi)
+	{
+		// Only the board: selection handles and dialogs stay, the panels do not
+		buildCanvasOverlays();
+		buildToast();
+		buildDialogs();
+		return;
+	}
 	buildCanvasOverlays();
 	buildSelectionBar();
 	buildTopBar();

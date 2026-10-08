@@ -124,6 +124,7 @@ private:
 	void buildShortcuts();
 	void buildDialogs();
 	void buildToast();
+	void toggleInterface();
 	void openPopup(Popup p_Popup);
 	void closePopup(const char* p_Why = "");
 	void togglePopup(Popup p_Popup);
@@ -192,6 +193,7 @@ private:
 	bool m_DarkTheme = false;
 	bool m_ShowGrid = true;
 	bool m_ShowShortcuts = false;
+	bool m_HideUi = false; // F2: only the board is drawn
 	uint32_t m_RedrawFrames = 2; // frames still to draw after the last change (ImGui needs one extra to settle)
 	uint64_t m_LastDebugRefreshNs = 0;
 	uint64_t m_LastUpdateNs = 0;
