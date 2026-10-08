@@ -14,6 +14,8 @@ module;
 
 module wb.image.codec;
 
+import wb.io.gif;
+
 namespace wb::image
 {
 namespace
@@ -92,6 +94,36 @@ std::optional<Decoded> decode(const std::span<const uint8_t> p_Bytes, const Deco
 		return std::nullopt;
 	}
 	const int l_Size = static_cast<int>(p_Bytes.size());
+
+	if (l_Info->gif)
+	{
+		// stb_image only handles the simplest GIFs (it drops frames of many animations), so GIFs have their own decoder
+		GifHeader l_GifHeader;
+		if (readGifHeader(p_Bytes, l_GifHeader) && l_GifHeader.width > 0 && l_GifHeader.height > 0)
+		{
+			Decoded l_Gif;
+			fitWithin(l_GifHeader.width, l_GifHeader.height, p_Limits.maxDimension, l_Gif.width, l_Gif.height);
+			const size_t l_GifFrameBytes = static_cast<size_t>(l_Gif.width) * l_Gif.height * 4;
+			const size_t l_GifMaxFrames = std::max<size_t>(1, p_Limits.maxBytes / std::max<size_t>(l_GifFrameBytes, 1));
+			const bool l_Resize = l_Gif.width != l_GifHeader.width || l_Gif.height != l_GifHeader.height;
+			const bool l_Decoded = decodeGif(p_Bytes, [&](const std::span<const uint8_t> p_Rgba, const uint32_t p_DelayMs)
+			{
+				if (l_Gif.frames.size() >= l_GifMaxFrames)
+				{
+					l_Gif.truncated = true;
+					return false;
+				}
+				std::vector<uint8_t> l_Frame = l_Resize ? resizeRgba(p_Rgba.data(), l_GifHeader.width, l_GifHeader.height, l_Gif.width, l_Gif.height) : std::vector<uint8_t>(p_Rgba.begin(), p_Rgba.end());
+				premultiply(l_Frame);
+				l_Gif.frames.push_back(std::move(l_Frame));
+				// Browsers play delays of 0 or 10 ms as 100 ms
+				l_Gif.delaysMs.push_back(p_DelayMs <= 10 ? DEFAULT_DELAY_MS : p_DelayMs);
+				return true;
+			});
+			if (l_Decoded && !l_Gif.frames.empty())
+				return l_Gif;
+		}
+	}
 
 	std::vector<const uint8_t*> l_Sources; // one pointer per frame into the decoded block
 	StbiPixels l_Block;

@@ -45,6 +45,7 @@ constexpr size_t EVENTS_PER_FRAME = 6;
 Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
 std::vector<ObjectId> s_SmokePictures;
 size_t s_SmokeObjectsBefore = 0;
+bool s_SmokeExtraPicture = false;
 
 void appendPngBytes(void* p_Context, void* p_Data, const int p_Size)
 {
@@ -498,6 +499,17 @@ void App::driveSmokeTest()
 		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = makeTestPng(320, 200), .name = "gradient.png" });
 		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = makeTestGif(96, 6), .name = "mover.gif" });
 		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = { 1, 2, 3 }, .name = "garbage.bin" });
+		// WB_SMOKE_PICTURE=<file>: also insert a real picture (to check a particular file by eye)
+		if (const char* l_Extra = SDL_getenv("WB_SMOKE_PICTURE"))
+		{
+			platform::ClipboardPicture l_Real;
+			if (readFile(pathFromUtf8(l_Extra), l_Real.bytes).ok)
+			{
+				l_Real.name = "real";
+				l_Pictures.push_back(std::move(l_Real));
+				s_SmokeExtraPicture = true;
+			}
+		}
 		importPictures(std::move(l_Pictures), l_C + Vec2{ 330.f * l_S, 90.f * l_S });
 		return;
 	}
@@ -507,7 +519,7 @@ void App::driveSmokeTest()
 		s_SmokePictures.clear();
 		for (const ObjectId l_Id : m_Editor.selection().ids())
 			s_SmokePictures.push_back(l_Id);
-		if (l_Document.size() != s_SmokeObjectsBefore + 2 || s_SmokePictures.size() != 2 || l_Document.assets().size() < 2)
+		if (l_Document.size() != s_SmokeObjectsBefore + 2 + (s_SmokeExtraPicture ? 1 : 0) || s_SmokePictures.size() != 2 + (s_SmokeExtraPicture ? 1u : 0u) || l_Document.assets().size() < 2)
 		{
 			spdlog::error("Smoke test (pictures): expected two pictures, found {} new objects", l_Document.size() - s_SmokeObjectsBefore);
 			m_Failed = true;
@@ -531,6 +543,12 @@ void App::driveSmokeTest()
 			const render::ImageInfo l_Info = m_Canvas.images().info(l_Object->image()->asset);
 			if (!l_Info.ready)
 				l_Ok = false;
+		}
+		if (s_SmokeExtraPicture)
+		{
+			const render::ImageInfo l_Real = m_Canvas.images().info(m_Editor.document().find(s_SmokePictures.back())->image()->asset);
+			spdlog::info("Smoke test: the extra picture has {} frames, {} ms, {}x{}", l_Real.frames, l_Real.durationMs, l_Real.width, l_Real.height);
+			s_SmokePictures.pop_back();
 		}
 		const render::ImageInfo l_Gif = m_Canvas.images().info(m_Editor.document().find(s_SmokePictures.back())->image()->asset);
 		if (!l_Ok || l_Gif.frames != 6 || l_Gif.durationMs != 1200)
