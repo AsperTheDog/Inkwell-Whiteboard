@@ -1010,10 +1010,15 @@ void App::driveSmokeTest()
 				openTextPopup(false);
 			}
 		}
-		else if (l_Ui == "video")
+		else if (l_Ui == "video" || l_Ui == "videovolume")
 		{
-			// The pointer rests on the video, so its viewer shows
+			// The pointer rests on the video, so its viewer shows; turned and selected, the selection bar lands on it too
 			m_Editor.setTool(tools::ToolKind::Select);
+			m_Editor.document().modify(s_SmokeVideo, [&](Object& p_Object)
+			{
+				p_Object.transform = Affine2::around(p_Object.transform.translation, Affine2::rotate(0.6)) * Affine2::around(p_Object.transform.translation, Affine2::scale(DVec2{ 2.2 })) * p_Object.transform;
+			}, ObjectChange::Transform);
+			m_Editor.selection().set(std::vector<ObjectId>{ s_SmokeVideo });
 			m_Canvas.videos().seek(s_SmokeVideo, 1.0);
 			if (const Object* l_Object = m_Editor.document().find(s_SmokeVideo))
 			{
@@ -1062,6 +1067,20 @@ void App::driveSmokeTest()
 		else if (l_Ui == "toast")
 		{
 			showToast("Saved Untitled");
+		}
+		return;
+	}
+	case 28:
+	{
+		// A few frames later the viewer's bar is known: rest the pointer on its speaker
+		if (m_Options.smokeUi == "videovolume" && m_VideoBarRect.max.x > m_VideoBarRect.min.x)
+		{
+			m_LastPointer = platform::PointerEvent{ .phase = platform::PointerPhase::Move, .device = platform::PointerDevice::Mouse, .position = Vec2{ m_VideoBarRect.max.x - 20.f * l_S, m_VideoBarRect.center().y } };
+			m_PointerInWindow = true;
+		}
+		else if (m_Options.smokeUi == "videovolume")
+		{
+			--m_SmokeStep;
 		}
 		return;
 	}

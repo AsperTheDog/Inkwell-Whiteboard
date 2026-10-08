@@ -46,7 +46,7 @@ public:
 	{
 		uint32_t maxDimension = 1920; // longer side of the decoded pictures; bigger videos are scaled down
 		bool loop = false;
-		bool muted = true;
+		float volume = 0.f; // sound gain, 0 = silent
 	};
 
 	~Player();
@@ -62,12 +62,11 @@ public:
 	void pause();
 	void seek(double p_Seconds);
 	void setLoop(bool p_Loop);
-	void setMuted(bool p_Muted);
+	void setVolume(float p_Gain);
 
 	[[nodiscard]] bool playing() const;
 	[[nodiscard]] bool ended() const; // stopped at the end of the video
 	[[nodiscard]] bool looping() const;
-	[[nodiscard]] bool muted() const;
 	[[nodiscard]] bool audioWorks() const; // the sound plays (the video has sound and a device took it)
 	[[nodiscard]] double position() const;
 	[[nodiscard]] double duration() const;

@@ -352,7 +352,6 @@ struct Player::Impl
 	std::atomic<bool> audioFlushing{ false }; // a seek is waiting for the audio thread to empty the device queue
 	std::atomic<bool> audioEof{ false };
 	std::atomic<double> audioEnd{ 0.0 };      // time of the end of the last sound handed to the device
-	std::atomic<bool> muted{ true };
 	std::atomic<bool> looping{ false };
 
 	// Video decoder state handed to its thread
@@ -846,7 +845,6 @@ std::unique_ptr<Player> Player::open(Blob p_Data, const Options& p_Options, std:
 	Impl& l_Impl = *l_Player->m_Impl;
 	l_Impl.blob = std::move(p_Data);
 	l_Impl.options = p_Options;
-	l_Impl.muted.store(p_Options.muted);
 	l_Impl.looping.store(p_Options.loop);
 
 	l_Impl.videoInput = std::make_unique<Input>();
@@ -884,7 +882,7 @@ std::unique_ptr<Player> Player::open(Blob p_Data, const Options& p_Options, std:
 		if (l_Impl.audioStream == nullptr)
 			spdlog::info("No sound for this video: {}", SDL_GetError());
 		else
-			SDL_SetAudioStreamGain(l_Impl.audioStream, p_Options.muted ? 0.f : 1.f);
+			SDL_SetAudioStreamGain(l_Impl.audioStream, p_Options.volume);
 	}
 	l_Impl.audioActive.store(l_Impl.audioStream != nullptr);
 
@@ -964,11 +962,10 @@ void Player::setLoop(const bool p_Loop)
 	m_Impl->looping.store(p_Loop);
 }
 
-void Player::setMuted(const bool p_Muted)
+void Player::setVolume(const float p_Gain)
 {
-	m_Impl->muted.store(p_Muted);
 	if (m_Impl->audioStream != nullptr)
-		SDL_SetAudioStreamGain(m_Impl->audioStream, p_Muted ? 0.f : 1.f);
+		SDL_SetAudioStreamGain(m_Impl->audioStream, std::clamp(p_Gain, 0.f, 1.f));
 }
 
 bool Player::playing() const
@@ -986,11 +983,6 @@ bool Player::ended() const
 bool Player::looping() const
 {
 	return m_Impl->looping.load();
-}
-
-bool Player::muted() const
-{
-	return m_Impl->muted.load();
 }
 
 bool Player::audioWorks() const

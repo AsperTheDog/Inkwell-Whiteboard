@@ -23,6 +23,7 @@ module;
 
 module wb.app;
 
+import wb.doc.commands;
 import wb.doc.document;
 import wb.doc.object;
 import wb.editor;
@@ -127,7 +128,7 @@ void App::buildVideoViewer()
 	}
 	else if (!l_Quiet)
 	{
-		if (m_VideoHot != INVALID_OBJECT_ID && l_HavePointer && m_VideoBarRect.contains(l_Pointer))
+		if (m_VideoHot != INVALID_OBJECT_ID && l_HavePointer && (m_VideoBarRect.contains(l_Pointer) || m_VideoVolumeRect.contains(l_Pointer)))
 		{
 			l_Hot = m_VideoHot; // on the bar itself
 		}
@@ -157,6 +158,7 @@ void App::buildVideoViewer()
 		m_VideoHot = l_Hot;
 		m_Ui.setAnim(ui::Context::id("video.show"), 0.f);
 		m_VideoBarRect = Rect2{};
+		m_VideoVolumeRect = Rect2{};
 	}
 	if (m_VideoScrub != INVALID_OBJECT_ID && l_Hot != m_VideoScrub)
 		m_VideoScrub = INVALID_OBJECT_ID;
@@ -200,6 +202,7 @@ void App::buildVideoViewer()
 	if (l_Hot == INVALID_OBJECT_ID)
 	{
 		m_VideoBarRect = Rect2{};
+		m_VideoVolumeRect = Rect2{};
 		return;
 	}
 	const Object* l_Object = m_Editor.document().find(l_Hot);
@@ -216,6 +219,7 @@ void App::buildVideoViewer()
 	if (!l_Screen || !l_Status.ready)
 	{
 		m_VideoBarRect = Rect2{};
+		m_VideoVolumeRect = Rect2{};
 		return;
 	}
 
@@ -226,6 +230,7 @@ void App::buildVideoViewer()
 	if (l_Available < m_Ui.px(MIN_VIEWER_WIDTH) || l_Area.height() < m_Ui.px(BAR_HEIGHT) + 2.f * l_Margin)
 	{
 		m_VideoBarRect = Rect2{};
+		m_VideoVolumeRect = Rect2{};
 		return;
 	}
 
@@ -248,6 +253,19 @@ void App::buildVideoViewer()
 	// Out of the way of the tool bar and the zoom pill, which sit at the bottom of the window
 	if (m_ToolbarRect.max.x > m_ToolbarRect.min.x && l_Bar.max.x > m_ToolbarRect.min.x && l_Bar.min.x < m_ToolbarRect.max.x && l_Bar.max.y > m_ToolbarRect.min.y - m_Ui.px(8.f))
 		l_Bar = l_Bar.translated(Vec2{ 0.f, m_ToolbarRect.min.y - m_Ui.px(8.f) - l_Bar.max.y });
+	// The selection bar (duplicate, flip, reset...) can land on the video too: the viewer steps aside, above it when
+	// the video has room there, below it otherwise
+	if (m_SelectionBarRect.max.x > m_SelectionBarRect.min.x)
+	{
+		const Rect2 l_Keep = m_SelectionBarRect.inflated(m_Ui.px(6.f));
+		if (l_Bar.max.x > l_Keep.min.x && l_Bar.min.x < l_Keep.max.x && l_Bar.max.y > l_Keep.min.y && l_Bar.min.y < l_Keep.max.y)
+		{
+			const float l_Above = l_Keep.min.y - l_Height;
+			const float l_Below = l_Keep.max.y;
+			const float l_Y = l_Above >= l_Area.min.y + l_Margin ? l_Above : (l_Below + l_Height <= l_Viewport.y - m_Ui.px(8.f) ? l_Below : l_Above);
+			l_Bar = Rect2::fromPosSize(Vec2{ l_Bar.min.x, std::max(l_Y, m_Ui.px(8.f)) }, l_Bar.size());
+		}
+	}
 	m_VideoBarRect = l_Bar;
 	m_Ui.panel(l_Bar, l_Height * 0.5f);
 
@@ -327,11 +345,69 @@ void App::buildVideoViewer()
 
 	if (l_ShowLoop && m_Ui.iconButton("video.loop", l_LoopRect, ui::Icon::Repeat, l_Video->loop, true, l_Video->loop ? "Loop is on" : "Loop"))
 		m_Editor.editVideo(l_Hot, l_Video->loop ? "Stop looping" : "Loop video", [](VideoData& p_Data) { p_Data.loop = !p_Data.loop; return true; });
+	m_VideoVolumeRect = Rect2{};
 	if (l_ShowSound)
 	{
-		const char* l_Tip = !l_Status.audioWorks ? "No sound device" : (l_Video->muted ? "Sound is off" : "Sound is on");
-		if (m_Ui.iconButton("video.sound", l_SoundRect, l_Video->muted ? ui::Icon::VolumeOff : ui::Icon::Volume, !l_Video->muted, l_Status.audioWorks, l_Tip))
-			m_Editor.editVideo(l_Hot, l_Video->muted ? "Sound on" : "Sound off", [](VideoData& p_Data) { p_Data.muted = !p_Data.muted; return true; });
+		const bool l_Silent = l_Video->muted || l_Video->volume <= 0.f;
+		const char* l_Tip = !l_Status.audioWorks ? "No sound device" : (l_Silent ? "Sound is off" : "Sound is on");
+		if (m_Ui.iconButton("video.sound", l_SoundRect, l_Silent ? ui::Icon::VolumeOff : ui::Icon::Volume, !l_Silent, l_Status.audioWorks, l_Tip))
+			m_Editor.editVideo(l_Hot, l_Video->muted ? "Sound on" : "Sound off", [](VideoData& p_Data) { p_Data.muted = !p_Data.muted; if (!p_Data.muted && p_Data.volume <= 0.f) p_Data.volume = 0.6f; return true; });
+
+		// The volume slider opens over the speaker while the pointer is on it (or on the slider itself)
+		const bool l_Open = l_Status.audioWorks && (l_SoundRect.contains(l_Pointer) || m_VideoVolumeDrag || (m_VideoVolumeOpenLast && m_VideoVolumeHit.contains(l_Pointer)));
+		m_VideoVolumeOpenLast = l_Open;
+		if (l_Open)
+		{
+			const float l_PanelWidth = m_Ui.px(150.f);
+			const float l_PanelHeight = m_Ui.px(38.f);
+			Rect2 l_Panel = Rect2::fromPosSize(Vec2{ l_SoundRect.center().x - l_PanelWidth + m_Ui.px(22.f), l_Bar.min.y - m_Ui.px(8.f) - l_PanelHeight }, Vec2{ l_PanelWidth, l_PanelHeight });
+			if (l_Panel.min.y < m_Ui.px(8.f))
+				l_Panel = l_Panel.translated(Vec2{ 0.f, l_Bar.max.y + m_Ui.px(8.f) - l_Panel.min.y });
+			m_VideoVolumeHit = Rect2{ l_Panel.min, Vec2{ l_Panel.max.x, l_Panel.min.y < l_Bar.min.y ? l_Bar.min.y : l_Panel.max.y } };
+			m_VideoVolumeRect = m_VideoVolumeHit;
+			m_Ui.panel(l_Panel, m_Ui.px(14.f));
+
+			const Rect2 l_VTrack{ Vec2{ l_Panel.min.x + m_Ui.px(16.f), l_Panel.center().y }, Vec2{ l_Panel.max.x - m_Ui.px(16.f), l_Panel.center().y } };
+			const uint32_t l_VolumeId = ui::Context::id("video.volume");
+			const ui::Interaction l_State = m_Ui.interact(l_VolumeId, Rect2{ Vec2{ l_VTrack.min.x - m_Ui.px(8.f), l_Panel.min.y }, Vec2{ l_VTrack.max.x + m_Ui.px(8.f), l_Panel.max.y } });
+			float l_Value = l_Silent ? 0.f : l_Video->volume;
+			if (l_State.held || l_State.clicked)
+			{
+				if (!m_VideoVolumeDrag)
+				{
+					m_VideoVolumeDrag = true;
+					m_VideoVolumeBefore = *l_Video;
+				}
+				l_Value = std::clamp((m_Ui.pointerPosition().x - l_VTrack.min.x) / std::max(l_VTrack.width(), 1.f), 0.f, 1.f);
+				// Live while dragging (one undo step when the button is released)
+				m_Editor.document().modify(l_Hot, [&](Object& p_Object)
+				{
+					p_Object.video()->volume = l_Value;
+					p_Object.video()->muted = l_Value <= 0.f;
+				}, ObjectChange::Style);
+			}
+			if (m_VideoVolumeDrag && !l_State.held)
+			{
+				m_VideoVolumeDrag = false;
+				if (const Object* l_Now = m_Editor.document().find(l_Hot); l_Now != nullptr && l_Now->video() != nullptr && !(*l_Now->video() == m_VideoVolumeBefore))
+				{
+					std::vector<SetVideoDataCommand::Entry> l_Entries;
+					l_Entries.push_back(SetVideoDataCommand::Entry{ .id = l_Hot, .before = m_VideoVolumeBefore, .after = *l_Now->video() });
+					m_Editor.history().push(std::make_unique<SetVideoDataCommand>(std::move(l_Entries), "Change volume"));
+				}
+			}
+
+			const float l_Active = m_Ui.anim(l_VolumeId + 1, (l_State.hovered || l_State.held) ? 1.f : 0.f, 22.f);
+			const float l_Half = m_Ui.px(2.f + 1.2f * l_Active);
+			const float l_Y = l_VTrack.min.y;
+			const float l_KnobX = l_VTrack.min.x + l_VTrack.width() * l_Value;
+			l_Draw.rect(Rect2{ Vec2{ l_VTrack.min.x, l_Y - l_Half }, Vec2{ l_VTrack.max.x, l_Y + l_Half } }, l_Half, l_Theme.track);
+			l_Draw.rect(Rect2{ Vec2{ l_VTrack.min.x, l_Y - l_Half }, Vec2{ std::max(l_KnobX, l_VTrack.min.x + l_Half * 2.f), l_Y + l_Half } }, l_Half, l_Theme.accent);
+			const float l_Knob = m_Ui.px(5.f + 2.f * l_Active);
+			l_Draw.shadow(Rect2::fromCenter(Vec2{ l_KnobX, l_Y }, Vec2{ l_Knob * 2.f }), l_Knob, m_Ui.px(4.f), Vec2{ 0.f, m_Ui.px(1.f) }, ui::withAlpha(l_Theme.shadow, 0.5f));
+			l_Draw.circle(Vec2{ l_KnobX, l_Y }, l_Knob, Color{ 1.f, 1.f, 1.f, 1.f });
+			l_Draw.ring(Vec2{ l_KnobX, l_Y }, l_Knob, l_Theme.accent, m_Ui.px(1.75f));
+		}
 	}
 }
 } // namespace wb

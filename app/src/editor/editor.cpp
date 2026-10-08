@@ -713,6 +713,16 @@ std::vector<uint8_t> Editor::saveBoard(const std::string& p_SourcePath)
 	return serializeBoard(m_Document, l_Meta);
 }
 
+SplitBoard Editor::saveBoardSplit(const std::string& p_SourcePath, const size_t p_BigAssetBytes)
+{
+	embedFonts();
+	BoardMeta l_Meta;
+	l_Meta.viewCenter = m_Camera.center();
+	l_Meta.viewZoom = m_Camera.zoom();
+	l_Meta.sourcePath = p_SourcePath;
+	return serializeBoardSplit(m_Document, l_Meta, p_BigAssetBytes);
+}
+
 LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta)
 {
 	cancelGestures();

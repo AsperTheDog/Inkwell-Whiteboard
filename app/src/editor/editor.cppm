@@ -152,6 +152,8 @@ public:
 	// Whole-board operations (used by the session: save, open, new). Loading and new end any gesture in progress and
 	// clear the undo history.
 	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath);
+	// For a background write: big files are referenced, not copied (see serializeBoardSplit)
+	[[nodiscard]] SplitBoard saveBoardSplit(const std::string& p_SourcePath, size_t p_BigAssetBytes);
 	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta);
 	void newBoard();
 

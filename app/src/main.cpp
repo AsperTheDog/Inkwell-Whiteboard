@@ -63,7 +63,7 @@ int videoSelfTest(const std::string& p_Path)
 	};
 	l_Poll(0.3);
 	spdlog::info("paused: position {:.3f}, frames shown {}", l_Player->position(), l_Distinct);
-	l_Player->setMuted(false);
+	l_Player->setVolume(1.f);
 	l_Player->play();
 	l_Distinct = 0;
 	l_Poll(1.0);

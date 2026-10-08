@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -12,6 +13,7 @@ import wb.doc.document;
 import wb.doc.history;
 import wb.doc.hit;
 import wb.doc.edit;
+import wb.io.file;
 import wb.io.serializer;
 
 namespace
@@ -97,4 +99,40 @@ TEST(Video, EditsAreUndoable)
 	EXPECT_TRUE(l_Doc.find(l_Id)->video()->loop);
 	l_History.undo(l_Doc);
 	EXPECT_FALSE(l_Doc.find(l_Id)->video()->loop);
+}
+
+TEST(Video, BigFilesAreWrittenFromTheDocumentWithoutCopying)
+{
+	wb::Document l_Doc;
+	wb::ImageAsset l_Big;
+	l_Big.bytes.assign(300000, 7);
+	l_Big.bytes[12345] = 99;
+	l_Big.width = 16;
+	l_Big.height = 9;
+	const wb::AssetId l_BigId = l_Doc.addAsset(std::move(l_Big));
+	const wb::ObjectId l_Id = addVideo(l_Doc, l_BigId, { 0.0, 0.0 });
+	const wb::ObjectId l_Small = addVideo(l_Doc, addFile(l_Doc, 5), { 300.0, 0.0 });
+
+	const wb::SplitBoard l_Split = wb::serializeBoardSplit(l_Doc, {}, 100000);
+	ASSERT_EQ(l_Split.big.size(), 1u);
+	EXPECT_EQ(l_Split.big[0].data, l_Doc.findAsset(l_BigId)->bytes.data()); // not copied
+	EXPECT_LT(l_Split.head.size(), 10000u);
+
+	const std::filesystem::path l_Path = std::filesystem::temp_directory_path() / "wb_split_test.wbrd";
+	ASSERT_TRUE(wb::writeSplitBoardAtomic(l_Path, l_Split).ok);
+	std::vector<uint8_t> l_Bytes;
+	ASSERT_TRUE(wb::readFile(l_Path, l_Bytes).ok);
+	wb::removeFileQuiet(l_Path);
+
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	ASSERT_TRUE(wb::deserializeBoard(l_Bytes, l_Loaded, l_Meta).ok);
+	ASSERT_NE(l_Loaded.find(l_Id), nullptr);
+	ASSERT_NE(l_Loaded.find(l_Small), nullptr);
+	EXPECT_EQ(l_Loaded.findAsset(l_Loaded.find(l_Id)->video()->asset)->bytes, l_Doc.findAsset(l_BigId)->bytes);
+
+	// A flipped bit inside the big file is caught by its checksum
+	l_Bytes[l_Bytes.size() / 2] ^= 1;
+	wb::Document l_Damaged;
+	EXPECT_FALSE(wb::deserializeBoard(l_Bytes, l_Damaged, l_Meta).ok);
 }

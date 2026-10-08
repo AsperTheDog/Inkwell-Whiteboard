@@ -271,6 +271,11 @@ private:
 	bool m_VideoScrubResume = false;           // it was playing when the drag began
 	double m_VideoScrubLastSeek = -1.0;
 	ui::Rect2 m_VideoBarRect{};
+	ui::Rect2 m_VideoVolumeRect{};  // the volume slider that opens over the sound button (empty when closed)
+	bool m_VideoVolumeDrag = false;
+	bool m_VideoVolumeOpenLast = false;
+	ui::Rect2 m_VideoVolumeHit{};
+	VideoData m_VideoVolumeBefore{};
 	uint64_t m_LastVideoWakeNs = 0;
 
 	std::array<SDL_Cursor*, tools::CURSOR_KIND_COUNT> m_Cursors{};

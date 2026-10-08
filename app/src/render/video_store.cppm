@@ -111,7 +111,7 @@ private:
 		bool wantPlay = false;
 		std::optional<double> wantSeek;
 		bool loop = false;
-		bool muted = true;
+		float gain = 0.f;
 		uint64_t seenTick = 0;
 		std::chrono::steady_clock::time_point seenTime{};
 		double resumeAt = 0.0;

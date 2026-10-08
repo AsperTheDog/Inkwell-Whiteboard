@@ -97,6 +97,7 @@ struct VideoData
 	Vec2 size{ 0.f };
 	bool loop = false;
 	bool muted = true;
+	float volume = 1.f; // 0..1 on the volume slider; the sound plays at volume squared
 
 	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
 

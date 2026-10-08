@@ -23,6 +23,7 @@ namespace wb
 namespace
 {
 constexpr uint64_t AUTOSAVE_INTERVAL_NS = 30'000'000'000ull;
+constexpr size_t BIG_ASSET_BYTES = 2u << 20;
 constexpr uint64_t ALWAYS_DIRTY = std::numeric_limits<uint64_t>::max();
 // Matches no real history state: forces the next autosave attempt
 constexpr uint64_t NOTHING_AUTOSAVED = ALWAYS_DIRTY - 1;
@@ -68,6 +69,7 @@ IoResult Session::saveTo(const std::filesystem::path& p_Path)
 
 IoResult Session::open(const std::filesystem::path& p_Path)
 {
+	waitForAutosave(); // the write may still be reading assets of the board that is about to be replaced
 	std::vector<uint8_t> l_Bytes;
 	if (const IoResult l_Read = readFile(p_Path, l_Bytes); !l_Read.ok)
 		return l_Read;
@@ -88,6 +90,7 @@ IoResult Session::open(const std::filesystem::path& p_Path)
 
 void Session::newBoard()
 {
+	waitForAutosave();
 	m_Editor.newBoard();
 	m_Path.reset();
 	m_SavedState = m_Editor.history().stateId();
@@ -106,11 +109,13 @@ void Session::tick(const uint64_t p_NowNs)
 	if (m_Editor.isBusy() || p_NowNs - m_LastAutosaveNs < AUTOSAVE_INTERVAL_NS)
 		return;
 
-	// Serialize here (the document belongs to this thread), write on a worker so large boards do not stall drawing
-	std::vector<uint8_t> l_Bytes = m_Editor.saveBoard(m_Path ? pathToUtf8(*m_Path) : std::string{});
+	// Serialize here (the document belongs to this thread), write on a worker so large boards do not stall drawing.
+	// Big files (videos, large pictures) are not copied: the worker reads them from the document's assets, which never
+	// change once added. Nothing may clear the document while the job runs (waitForAutosave guards that).
+	SplitBoard l_Board = m_Editor.saveBoardSplit(m_Path ? pathToUtf8(*m_Path) : std::string{}, BIG_ASSET_BYTES);
 	m_AutosavedState = l_State;
 	m_LastAutosaveNs = p_NowNs;
-	m_AutosaveJob = std::async(std::launch::async, [l_Path = recoveryPath(), l_Data = std::move(l_Bytes)] { return writeFileAtomic(l_Path, l_Data); });
+	m_AutosaveJob = std::async(std::launch::async, [l_Path = recoveryPath(), l_Data = std::move(l_Board)] { return writeSplitBoardAtomic(l_Path, l_Data); });
 }
 
 void Session::reapAutosave()
@@ -170,6 +175,7 @@ std::optional<RecoveryInfo> Session::peekRecovery()
 
 IoResult Session::recover()
 {
+	waitForAutosave();
 	std::vector<uint8_t> l_Bytes;
 	if (const IoResult l_Read = readFile(recoveryPath(), l_Bytes); !l_Read.ok)
 		return l_Read;

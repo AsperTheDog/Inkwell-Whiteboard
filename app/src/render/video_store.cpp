@@ -277,7 +277,7 @@ void VideoStore::update(const gfx::GraphicsContext& p_Context, gfx::FrameSchedul
 				{
 					l_Entry.state = Entry::State::Ready;
 					l_Entry.player->setLoop(l_Entry.loop);
-					l_Entry.player->setMuted(l_Entry.muted);
+					l_Entry.player->setVolume(l_Entry.gain);
 					if (const auto l_Resume = m_Resume.find(l_It->first); l_Resume != m_Resume.end())
 					{
 						l_Entry.player->seek(l_Resume->second);
@@ -353,11 +353,11 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 	l_Entry.seenTick = m_Tick;
 	l_Entry.seenTime = std::chrono::steady_clock::now();
 	l_Entry.loop = p_Video.loop;
-	l_Entry.muted = p_Video.muted;
+	l_Entry.gain = p_Video.muted ? 0.f : p_Video.volume * p_Video.volume;
 	if (l_Entry.state == Entry::State::Ready)
 	{
 		l_Entry.player->setLoop(p_Video.loop);
-		l_Entry.player->setMuted(p_Video.muted);
+		l_Entry.player->setVolume(l_Entry.gain);
 		if (l_Entry.shown >= 0)
 		{
 			l_Result.set = l_Entry.textures[static_cast<size_t>(l_Entry.shown)].set;

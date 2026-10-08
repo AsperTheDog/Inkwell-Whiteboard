@@ -1,10 +1,14 @@
 module;
 #include <array>
 #include <bit>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <memory>
 #include <optional>
 #include <span>
@@ -20,6 +24,7 @@ module wb.io.serializer;
 import wb.math;
 import wb.doc.document;
 import wb.doc.object;
+import wb.io.file;
 
 static_assert(std::endian::native == std::endian::little, "the .wbrd reader/writer assumes a little endian host");
 
@@ -40,6 +45,7 @@ constexpr uint32_t TAG_VIEW = tag("VIEW");
 constexpr uint32_t TAG_OBJS = tag("OBJS");
 constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_FONT = tag("FONT");
+constexpr uint32_t TAG_ABIG = tag("ABIG"); // one big asset, written by a background save
 constexpr uint32_t TAG_END = tag("END ");
 
 enum class ObjectType : uint8_t
@@ -51,7 +57,7 @@ enum class ObjectType : uint8_t
 };
 
 constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
-constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2;
+constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float);
 constexpr size_t MAX_NAME_BYTES = 1024;
 constexpr size_t MAX_TEXT_BYTES = 64u << 20;
 constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
@@ -75,6 +81,44 @@ constexpr std::array<uint32_t, 256> makeCrcTable()
 	return l_Table;
 }
 constexpr std::array<uint32_t, 256> CRC_TABLE = makeCrcTable();
+
+// Slicing-by-8 tables: eight bytes per step (big videos are checksummed, so the plain loop is too slow)
+constexpr std::array<std::array<uint32_t, 256>, 8> makeCrcSlices()
+{
+	std::array<std::array<uint32_t, 256>, 8> l_Slices{};
+	l_Slices[0] = CRC_TABLE;
+	for (size_t i = 0; i < 256; ++i)
+	{
+		uint32_t l_Value = l_Slices[0][i];
+		for (size_t k = 1; k < 8; ++k)
+		{
+			l_Value = l_Slices[0][l_Value & 0xFFu] ^ (l_Value >> 8);
+			l_Slices[k][i] = l_Value;
+		}
+	}
+	return l_Slices;
+}
+constexpr std::array<std::array<uint32_t, 256>, 8> CRC_SLICES = makeCrcSlices();
+
+// Continues a checksum (start with 0xFFFFFFFF, finish with ~)
+uint32_t crcUpdate(uint32_t p_Crc, const uint8_t* p_Data, size_t p_Size)
+{
+	while (p_Size >= 8)
+	{
+		uint32_t l_Low;
+		uint32_t l_High;
+		std::memcpy(&l_Low, p_Data, 4);
+		std::memcpy(&l_High, p_Data + 4, 4);
+		l_Low ^= p_Crc;
+		p_Crc = CRC_SLICES[7][l_Low & 0xFFu] ^ CRC_SLICES[6][(l_Low >> 8) & 0xFFu] ^ CRC_SLICES[5][(l_Low >> 16) & 0xFFu] ^ CRC_SLICES[4][l_Low >> 24]
+			^ CRC_SLICES[3][l_High & 0xFFu] ^ CRC_SLICES[2][(l_High >> 8) & 0xFFu] ^ CRC_SLICES[1][(l_High >> 16) & 0xFFu] ^ CRC_SLICES[0][l_High >> 24];
+		p_Data += 8;
+		p_Size -= 8;
+	}
+	while (p_Size-- > 0)
+		p_Crc = CRC_TABLE[(p_Crc ^ *p_Data++) & 0xFFu] ^ (p_Crc >> 8);
+	return p_Crc;
+}
 
 class Writer
 {
@@ -316,6 +360,7 @@ void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Vid
 	p_Writer.f32(p_Video.size.y);
 	p_Writer.u8(p_Video.loop ? 1 : 0);
 	p_Writer.u8(p_Video.muted ? 1 : 0);
+	p_Writer.f32(p_Video.volume);
 }
 
 bool readVideo(Reader& p_Reader, Object& p_Object)
@@ -328,6 +373,13 @@ bool readVideo(Reader& p_Reader, Object& p_Object)
 	l_Video.size.y = p_Reader.f32();
 	l_Video.loop = p_Reader.u8() != 0;
 	l_Video.muted = p_Reader.u8() != 0;
+	if (p_Reader.remaining() >= sizeof(float)) // boards saved before the volume slider end here
+	{
+		l_Video.volume = p_Reader.f32();
+		if (!finite(l_Video.volume))
+			return false;
+		l_Video.volume = std::clamp(l_Video.volume, 0.f, 1.f);
+	}
 	if (!p_Reader.ok() || l_Video.asset == INVALID_ASSET_ID || !finite(l_Video.size.x) || !finite(l_Video.size.y) || l_Video.size.x <= 0.f || l_Video.size.y <= 0.f)
 		return false;
 	p_Object.payload = l_Video;
@@ -433,7 +485,7 @@ bool parseFonts(const std::span<const uint8_t> p_Payload, std::vector<FontAsset>
 	return l_Reader.ok();
 }
 
-void writeAssets(Writer& p_Writer, const Document& p_Document)
+void writeAssets(Writer& p_Writer, const Document& p_Document, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big)
 {
 	// Only assets some object still uses are saved (undone or deleted images do not bloat the file)
 	std::vector<AssetId> l_Used;
@@ -443,6 +495,18 @@ void writeAssets(Writer& p_Writer, const Document& p_Document)
 		const AssetId l_Asset = l_Object->image() != nullptr ? l_Object->image()->asset : (l_Object->video() != nullptr ? l_Object->video()->asset : INVALID_ASSET_ID);
 		if (l_Asset != INVALID_ASSET_ID && l_Seen.insert(l_Asset).second)
 			l_Used.push_back(l_Asset);
+	}
+	// Big assets are not copied: the caller writes them from the document's memory
+	if (p_Big != nullptr)
+	{
+		std::erase_if(l_Used, [&](const AssetId p_Id)
+		{
+			const ImageAsset* l_Asset = p_Document.findAsset(p_Id);
+			if (l_Asset == nullptr || l_Asset->bytes.size() < p_BigAssetBytes)
+				return false;
+			p_Big->push_back(BigAssetRef{ .id = p_Id, .width = l_Asset->width, .height = l_Asset->height, .name = l_Asset->name, .data = l_Asset->bytes.data(), .size = l_Asset->bytes.size() });
+			return true;
+		});
 	}
 	p_Writer.beginChunk(TAG_ASET);
 	p_Writer.u32(static_cast<uint32_t>(l_Used.size()));
@@ -460,26 +524,32 @@ void writeAssets(Writer& p_Writer, const Document& p_Document)
 	p_Writer.endChunk();
 }
 
-bool parseAssets(const std::span<const uint8_t> p_Payload, std::vector<ImageAsset>& p_Assets)
+bool parseOneAsset(Reader& p_Reader, std::vector<ImageAsset>& p_Assets, std::unordered_set<AssetId>& p_Seen)
+{
+	ImageAsset l_Asset;
+	l_Asset.id = p_Reader.u64();
+	l_Asset.width = p_Reader.u32();
+	l_Asset.height = p_Reader.u32();
+	l_Asset.name = p_Reader.string(MAX_NAME_BYTES);
+	const uint64_t l_Size = p_Reader.u64();
+	if (!p_Reader.ok() || l_Size > MAX_ASSET_BYTES || l_Size > p_Reader.remaining() || l_Asset.id == INVALID_ASSET_ID || !p_Seen.insert(l_Asset.id).second)
+		return false;
+	const std::span<const uint8_t> l_Bytes = p_Reader.take(static_cast<size_t>(l_Size));
+	l_Asset.bytes.assign(l_Bytes.begin(), l_Bytes.end());
+	p_Assets.push_back(std::move(l_Asset));
+	return true;
+}
+
+bool parseAssets(const std::span<const uint8_t> p_Payload, std::vector<ImageAsset>& p_Assets, std::unordered_set<AssetId>& p_Seen)
 {
 	Reader l_Reader(p_Payload);
 	const uint32_t l_Count = l_Reader.u32();
 	if (!l_Reader.ok())
 		return false;
-	std::unordered_set<AssetId> l_Seen;
 	for (uint32_t i = 0; i < l_Count; ++i)
 	{
-		ImageAsset l_Asset;
-		l_Asset.id = l_Reader.u64();
-		l_Asset.width = l_Reader.u32();
-		l_Asset.height = l_Reader.u32();
-		l_Asset.name = l_Reader.string(MAX_NAME_BYTES);
-		const uint64_t l_Size = l_Reader.u64();
-		if (!l_Reader.ok() || l_Size > MAX_ASSET_BYTES || l_Size > l_Reader.remaining() || l_Asset.id == INVALID_ASSET_ID || !l_Seen.insert(l_Asset.id).second)
+		if (!parseOneAsset(l_Reader, p_Assets, p_Seen))
 			return false;
-		const std::span<const uint8_t> l_Bytes = l_Reader.take(static_cast<size_t>(l_Size));
-		l_Asset.bytes.assign(l_Bytes.begin(), l_Bytes.end());
-		p_Assets.push_back(std::move(l_Asset));
 	}
 	return l_Reader.ok();
 }
@@ -554,13 +624,13 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 
 uint32_t crc32(const std::span<const uint8_t> p_Bytes)
 {
-	uint32_t l_Crc = 0xFFFFFFFFu;
-	for (const uint8_t l_Byte : p_Bytes)
-		l_Crc = CRC_TABLE[(l_Crc ^ l_Byte) & 0xFFu] ^ (l_Crc >> 8);
-	return ~l_Crc;
+	return ~crcUpdate(0xFFFFFFFFu, p_Bytes.data(), p_Bytes.size());
 }
 
-std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta& p_Meta)
+namespace
+{
+// Everything but the closing chunk; big assets (when p_Big is set) are left out and listed there
+std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big)
 {
 	size_t l_Estimate = 256 + p_Meta.sourcePath.size();
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
@@ -575,7 +645,7 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			l_Estimate += OBJECT_HEADER_BYTES + textBodyBytes(*l_Text);
 	}
 	for (const auto& [l_Id, l_Asset] : p_Document.assets())
-		l_Estimate += l_Asset.bytes.size() + 64;
+		l_Estimate += (p_Big != nullptr && l_Asset.bytes.size() >= p_BigAssetBytes ? 0 : l_Asset.bytes.size()) + 64;
 
 	Writer l_Writer;
 	l_Writer.reserve(l_Estimate);
@@ -594,7 +664,7 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 	l_Writer.f64(p_Meta.viewZoom);
 	l_Writer.endChunk();
 
-	writeAssets(l_Writer, p_Document);
+	writeAssets(l_Writer, p_Document, p_BigAssetBytes, p_Big);
 	writeFonts(l_Writer, p_Document);
 
 	l_Writer.beginChunk(TAG_OBJS);
@@ -611,10 +681,84 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			writeText(l_Writer, *l_Object, *l_Text);
 	}
 	l_Writer.endChunk();
+	return l_Writer.take();
+}
 
+std::vector<uint8_t> closingChunk()
+{
+	Writer l_Writer;
 	l_Writer.beginChunk(TAG_END);
 	l_Writer.endChunk();
 	return l_Writer.take();
+}
+} // namespace
+
+std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta& p_Meta)
+{
+	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, 0, nullptr);
+	const std::vector<uint8_t> l_End = closingChunk();
+	l_Bytes.insert(l_Bytes.end(), l_End.begin(), l_End.end());
+	return l_Bytes;
+}
+
+SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes)
+{
+	SplitBoard l_Board;
+	l_Board.head = serializeBody(p_Document, p_Meta, p_BigAssetBytes, &l_Board.big);
+	l_Board.tail = closingChunk();
+	return l_Board;
+}
+
+IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitBoard& p_Board)
+{
+	std::error_code l_Error;
+	if (p_Path.has_parent_path())
+		std::filesystem::create_directories(p_Path.parent_path(), l_Error);
+	std::filesystem::path l_Temp = p_Path;
+	l_Temp += ".tmp";
+	{
+		std::ofstream l_File(l_Temp, std::ios::binary | std::ios::trunc);
+		if (!l_File)
+			return IoResult::failure("Cannot create " + pathToUtf8(l_Temp));
+		const auto l_Write = [&](const uint8_t* p_Data, const size_t p_Size) { l_File.write(reinterpret_cast<const char*>(p_Data), static_cast<std::streamsize>(p_Size)); };
+		l_Write(p_Board.head.data(), p_Board.head.size());
+		for (const BigAssetRef& l_Ref : p_Board.big)
+		{
+			// One chunk per big asset: header fields first, then the file itself (the checksum covers both)
+			Writer l_Fields;
+			l_Fields.u64(l_Ref.id);
+			l_Fields.u32(l_Ref.width);
+			l_Fields.u32(l_Ref.height);
+			l_Fields.string(l_Ref.name);
+			l_Fields.u64(l_Ref.size);
+			const std::vector<uint8_t> l_Prefix = l_Fields.take();
+			uint32_t l_Crc = crcUpdate(0xFFFFFFFFu, l_Prefix.data(), l_Prefix.size());
+			l_Crc = ~crcUpdate(l_Crc, l_Ref.data, l_Ref.size);
+			const uint64_t l_Length = l_Prefix.size() + l_Ref.size;
+			const uint32_t l_Tag = TAG_ABIG;
+			l_Write(reinterpret_cast<const uint8_t*>(&l_Tag), sizeof(l_Tag));
+			l_Write(reinterpret_cast<const uint8_t*>(&l_Length), sizeof(l_Length));
+			l_Write(reinterpret_cast<const uint8_t*>(&l_Crc), sizeof(l_Crc));
+			l_Write(l_Prefix.data(), l_Prefix.size());
+			l_Write(l_Ref.data, l_Ref.size);
+		}
+		l_Write(p_Board.tail.data(), p_Board.tail.size());
+		l_File.flush();
+		if (!l_File)
+		{
+			l_File.close();
+			std::filesystem::remove(l_Temp, l_Error);
+			return IoResult::failure("Cannot write " + pathToUtf8(p_Path) + " (disk full or no permission?)");
+		}
+	}
+	std::filesystem::rename(l_Temp, p_Path, l_Error);
+	if (l_Error)
+	{
+		std::error_code l_Ignored;
+		std::filesystem::remove(l_Temp, l_Ignored);
+		return IoResult::failure("Cannot replace " + pathToUtf8(p_Path) + ": " + l_Error.message());
+	}
+	return {};
 }
 
 LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_Document, BoardMeta& p_Meta)
@@ -634,6 +778,8 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	std::vector<std::unique_ptr<Object>> l_Objects;
 	std::vector<ImageAsset> l_Assets;
 	std::vector<FontAsset> l_Fonts;
+	std::unordered_set<AssetId> l_SeenAssets;
+	bool l_HaveAssets = false;
 	bool l_HaveObjects = false;
 	bool l_HaveEnd = false;
 	uint32_t l_Skipped = 0;
@@ -677,7 +823,12 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 			l_HaveObjects = true;
 			break;
 		case TAG_ASET:
-			if (!l_Assets.empty() || !parseAssets(l_Payload, l_Assets))
+			if (l_HaveAssets || !parseAssets(l_Payload, l_Assets, l_SeenAssets))
+				return failure("The file is damaged (bad image data).");
+			l_HaveAssets = true;
+			break;
+		case TAG_ABIG:
+			if (!parseOneAsset(l_Reader, l_Assets, l_SeenAssets))
 				return failure("The file is damaged (bad image data).");
 			break;
 		case TAG_FONT:
