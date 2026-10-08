@@ -83,7 +83,7 @@ void drawStrokePreview(ui::Context& p_Ui, const Rect2& p_Box, const Color p_Colo
 		const float l_T = static_cast<float>(i) / static_cast<float>(SEGMENTS);
 		const Vec2 l_Point{ l_Left + (l_Right - l_Left) * l_T, p_Box.center().y - std::sin(l_T * 2.f * static_cast<float>(PI)) * l_Amplitude };
 		const float l_Pressure = std::max(std::pow(std::sin(l_T * static_cast<float>(PI)), 0.7f), 0.12f);
-		const float l_Radius = std::max(p_SizePoints * p_Ui.scale() * 0.5f * (1.f - p_Sensitivity + p_Sensitivity * l_Pressure), 0.5f);
+		const float l_Radius = std::max(std::min(p_SizePoints * p_Ui.scale(), p_Box.height() * 0.55f) * 0.5f * (1.f - p_Sensitivity + p_Sensitivity * l_Pressure), 0.5f);
 		if (i > 0)
 			l_Draw.line(l_Previous, l_Point, (l_Radius + l_PreviousRadius), p_Color);
 		l_Previous = l_Point;
@@ -313,7 +313,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	l_Y += l_SliderHeight;
 	const Rect2 l_Preview = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_PreviewHeight });
 	l_Draw.rect(l_Preview, m_Ui.px(12.f), l_Theme.hover);
-	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.effectivePoints(m_Editor.camera().zoom()), l_Settings.pressureSensitivity);
+	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.sizePoints * l_Brush.sizeScale, l_Settings.pressureSensitivity);
 	l_Y += l_PreviewHeight + m_Ui.px(10.f);
 
 	// Size multiplier and how the size follows the zoom

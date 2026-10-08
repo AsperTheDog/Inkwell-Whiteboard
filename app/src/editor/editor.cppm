@@ -72,6 +72,8 @@ public:
 	[[nodiscard]] std::optional<render::LiveStrokeView> liveStroke() const;
 	// Set while the eraser is the tool in effect (selected, or the pen's eraser end is hovering / pressed)
 	[[nodiscard]] std::optional<EraserCursor> eraserCursor() const;
+	// Set while the pen is the tool in effect: the outline of the stroke width at the pointer
+	[[nodiscard]] std::optional<EraserCursor> brushCursor() const;
 
 	// ---- tools. The selected tool belongs to the device used last (what the toolbar shows).
 	void setTool(tools::ToolKind p_Kind);

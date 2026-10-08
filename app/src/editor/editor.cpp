@@ -151,6 +151,13 @@ std::optional<EraserCursor> Editor::eraserCursor() const
 	return EraserCursor{ .center = m_LastPointer, .radiusPixels = m_EraserState.sizePoints * 0.5f * static_cast<float>(m_Camera.pixelScale()) };
 }
 
+std::optional<EraserCursor> Editor::brushCursor() const
+{
+	if (m_Panning || m_SpaceHeld || toolInEffect() != m_Pen.get())
+		return std::nullopt;
+	return EraserCursor{ .center = m_LastPointer, .radiusPixels = m_Brush.effectivePoints(m_Camera.zoom()) * 0.5f * static_cast<float>(m_Camera.pixelScale()) };
+}
+
 bool Editor::isBusy() const
 {
 	return m_Panning || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());

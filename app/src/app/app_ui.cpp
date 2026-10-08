@@ -251,6 +251,17 @@ void App::buildCanvasOverlays()
 		}
 	}
 
+	// Brush outline under the pointer: how wide the stroke is on the board right now
+	if (!m_CursorOverUi && m_PointerInWindow)
+	{
+		if (const std::optional<EraserCursor> l_Cursor = m_Editor.brushCursor())
+		{
+			const float l_Radius = std::max(l_Cursor->radiusPixels, 1.5f * l_Scale);
+			l_Draw.ring(l_Cursor->center, l_Radius + l_Scale, Color{ 0.f, 0.f, 0.f, 0.3f }, 1.25f * l_Scale);
+			l_Draw.ring(l_Cursor->center, l_Radius, Color{ 1.f, 1.f, 1.f, 0.85f }, 1.25f * l_Scale);
+		}
+	}
+
 	// Eraser outline under the pointer
 	if (!m_CursorOverUi && m_PointerInWindow)
 	{
