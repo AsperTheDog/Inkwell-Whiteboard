@@ -1,5 +1,6 @@
 // Tool interface. The editor routes pointer events to the active tool after handling navigation.
 module;
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -8,6 +9,7 @@ export module wb.tools.tool;
 import wb.math;
 import wb.doc.document;
 import wb.doc.history;
+import wb.doc.selection;
 import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
@@ -18,7 +20,11 @@ enum class ToolKind : uint8_t
 {
 	Pen,
 	Eraser,
+	Select,
+	Hand, // drags the view around, like the scroll wheel does with a pointer
 };
+
+inline constexpr size_t TOOL_KIND_COUNT = 4;
 
 enum class CursorKind : uint8_t
 {
@@ -26,7 +32,14 @@ enum class CursorKind : uint8_t
 	Crosshair,
 	Move,
 	Pointer,
+	ResizeEW,
+	ResizeNS,
+	ResizeNWSE,
+	ResizeNESW,
+	Rotate,
 };
+
+inline constexpr size_t CURSOR_KIND_COUNT = 9;
 
 // What the user picked in the toolbar for drawing
 struct BrushState
@@ -47,10 +60,23 @@ struct EraserState
 	float sizePoints = 18.f; // eraser diameter in logical points on screen
 };
 
+enum class SelectMode : uint8_t
+{
+	Box,   // drag a rectangle
+	Lasso, // draw around the objects
+};
+
+struct SelectState
+{
+	SelectMode mode = SelectMode::Box;
+};
+
 struct ToolContext
 {
 	Document& document;
 	History& history;
+	Selection& selection;
+	SelectState& select;
 	const Camera& camera;
 	BrushState& brush;
 	EraserState& eraser;

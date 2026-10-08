@@ -17,6 +17,9 @@ module;
 
 module wb.app;
 
+import wb.doc.document;
+import wb.doc.object;
+import wb.doc.selection;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
@@ -24,6 +27,7 @@ import wb.io.file;
 import wb.session;
 import wb.math;
 import wb.platform.input;
+import wb.tools.select;
 import wb.tools.tool;
 import wb.view.camera;
 
@@ -33,6 +37,8 @@ namespace
 {
 constexpr uint64_t EVENT_INTERVAL_NS = 4'000'000; // 250 Hz, like a typical pen
 constexpr size_t EVENTS_PER_FRAME = 6;
+
+Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
 
 std::vector<Vec2> sampleCurve(const int p_Count, const auto& p_Function)
 {
@@ -206,6 +212,174 @@ void App::driveSmokeTest()
 		return;
 	}
 	case 8:
+	{
+		// Every device keeps its own tool; Alt+key borrows a tool while held; the hand tool pans
+		const auto l_Check = [&](const bool p_Ok, const char* p_What)
+		{
+			if (!p_Ok)
+			{
+				spdlog::error("Smoke test (tools): {}", p_What);
+				m_Failed = true;
+			}
+		};
+		const auto l_Move = [&](const platform::PointerDevice p_Device)
+		{
+			m_Editor.handlePointer(platform::PointerEvent{ .phase = platform::PointerPhase::Move, .device = p_Device, .position = l_C });
+		};
+		const auto l_Key = [&](const SDL_Keycode p_Key, const SDL_Keymod p_Mod, const bool p_Repeat) -> SDL_KeyboardEvent
+		{
+			SDL_KeyboardEvent l_Event{};
+			l_Event.key = p_Key;
+			l_Event.mod = p_Mod;
+			l_Event.repeat = p_Repeat;
+			return l_Event;
+		};
+
+		l_Move(platform::PointerDevice::Mouse);
+		m_Editor.setTool(tools::ToolKind::Pen);
+		m_Editor.setDeviceTool(platform::PointerDevice::Pen, tools::ToolKind::Select);
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Pen, "setting the pen's tool changed the mouse's");
+		l_Move(platform::PointerDevice::Pen);
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Select, "the pen did not keep its own tool");
+		l_Move(platform::PointerDevice::Mouse);
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Pen, "the mouse lost its tool when the pen was used");
+		m_Editor.setDeviceTool(platform::PointerDevice::Pen, tools::ToolKind::Pen);
+
+		m_Editor.handleKeyDown(l_Key(SDLK_E, SDL_KMOD_LALT, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Eraser && m_Editor.toolIsBorrowed(), "Alt+E did not borrow the eraser");
+		m_Editor.handleKeyDown(l_Key(SDLK_E, SDL_KMOD_LALT, true));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Eraser, "key repeat changed the borrowed tool");
+		m_Editor.handleKeyUp(l_Key(SDLK_E, SDL_KMOD_NONE, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Pen && !m_Editor.toolIsBorrowed(), "releasing E did not give the pen back");
+		m_Editor.handleKeyDown(l_Key(SDLK_V, SDL_KMOD_LALT, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Select, "Alt+V did not borrow the select tool");
+		m_Editor.handleKeyUp(l_Key(SDLK_LALT, SDL_KMOD_NONE, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Pen, "releasing Alt did not give the pen back");
+		m_Editor.handleKeyDown(l_Key(SDLK_E, SDL_KMOD_NONE, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Eraser && !m_Editor.toolIsBorrowed(), "plain E should switch for good");
+		m_Editor.handleKeyUp(l_Key(SDLK_E, SDL_KMOD_NONE, false));
+		l_Check(m_Editor.selectedTool() == tools::ToolKind::Eraser, "releasing a plain tool key must not change the tool");
+
+		// Hand tool: dragging moves the view like the wheel does, and draws nothing
+		m_Editor.setTool(tools::ToolKind::Hand);
+		const size_t l_Objects = m_Editor.document().size();
+		const DVec2 l_Before = m_Editor.camera().center();
+		const double l_Ppu = m_Editor.camera().pixelsPerUnit();
+		m_Editor.handlePointer(platform::PointerEvent{ .phase = platform::PointerPhase::Down, .device = platform::PointerDevice::Mouse, .button = platform::PointerButton::Primary, .buttons = platform::ButtonMask::Primary, .position = l_C });
+		m_Editor.handlePointer(platform::PointerEvent{ .phase = platform::PointerPhase::Move, .device = platform::PointerDevice::Mouse, .buttons = platform::ButtonMask::Primary, .position = l_C + Vec2{ 100.f * l_S, 50.f * l_S } });
+		m_Editor.handlePointer(platform::PointerEvent{ .phase = platform::PointerPhase::Up, .device = platform::PointerDevice::Mouse, .button = platform::PointerButton::Primary, .position = l_C + Vec2{ 100.f * l_S, 50.f * l_S } });
+		const DVec2 l_Moved = m_Editor.camera().center() - l_Before;
+		l_Check(std::abs(l_Moved.x + 100.f * l_S / l_Ppu) < 1e-3 && std::abs(l_Moved.y + 50.f * l_S / l_Ppu) < 1e-3, "the hand tool did not pan the view with the pointer");
+		l_Check(m_Editor.document().size() == l_Objects, "the hand tool changed the board");
+		m_Editor.lookAt(l_Before, m_Editor.camera().zoom());
+		if (!m_Failed)
+			spdlog::info("Smoke test: per-device tools, Alt+key borrowing and the hand tool OK");
+		return;
+	}
+	case 9:
+		// Box-select the sine wave and the mouse line
+		m_Editor.setTool(tools::ToolKind::Select);
+		m_Editor.selectState().mode = tools::SelectMode::Box;
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(30, [&](const float p_T) { return l_C + Vec2{ (-640.f + p_T * 1280.f) * l_S, (-330.f + p_T * 270.f) * l_S }; }), {});
+		return;
+	case 10:
+	{
+		static const auto s_Frame = [](const tools::SelectionOverlay& p_Overlay) { return (p_Overlay.corners[0] + p_Overlay.corners[2]) * 0.5f; };
+		if (m_Editor.selection().empty())
+		{
+			spdlog::error("Smoke test (selection): the box selected nothing");
+			m_Failed = true;
+			return;
+		}
+		spdlog::info("Smoke test: box selected {} objects", m_Editor.selection().size());
+		s_SmokeBounds = m_Editor.selection().bounds();
+		// Move: grab inside the box and drag
+		const Vec2 l_From = s_Frame(m_Editor.selectionOverlay());
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_From + Vec2{ 80.f * l_S, 60.f * l_S } * p_T; }), {});
+		return;
+	}
+	case 11:
+	{
+		const double l_Ppu = m_Editor.camera().pixelsPerUnit();
+		const DVec2 l_Delta = m_Editor.selection().bounds().center() - s_SmokeBounds.center();
+		if (std::abs(l_Delta.x - 80.0 * l_S / l_Ppu) > 1e-2 || std::abs(l_Delta.y - 60.0 * l_S / l_Ppu) > 1e-2)
+		{
+			spdlog::error("Smoke test (selection): moved by ({:.3f}, {:.3f}) instead of ({:.3f}, {:.3f})", l_Delta.x, l_Delta.y, 80.0 * l_S / l_Ppu, 60.0 * l_S / l_Ppu);
+			m_Failed = true;
+		}
+		const size_t l_Undo = m_Editor.history().undoCount();
+		m_Editor.undo();
+		const DVec2 l_Back = m_Editor.selection().bounds().center() - s_SmokeBounds.center();
+		if (std::abs(l_Back.x) > 1e-2 || std::abs(l_Back.y) > 1e-2 || m_Editor.history().undoCount() + 1 != l_Undo)
+		{
+			spdlog::error("Smoke test (selection): undoing the move did not restore the objects");
+			m_Failed = true;
+		}
+		m_Editor.redo();
+		s_SmokeBounds = m_Editor.selection().bounds();
+		// Scale: drag the south-east handle outwards
+		const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
+		const Vec2 l_Handle = l_Overlay.handles[3];
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_Handle + Vec2{ 120.f * l_S, 60.f * l_S } * p_T; }), {});
+		return;
+	}
+	case 12:
+	{
+		const DVec2 l_Before = s_SmokeBounds.size();
+		const DVec2 l_After = m_Editor.selection().bounds().size();
+		if (l_After.x < l_Before.x * 1.05 || l_After.y < l_Before.y * 1.05)
+		{
+			spdlog::error("Smoke test (selection): scaling did not grow the selection ({:.1f}x{:.1f} -> {:.1f}x{:.1f})", l_Before.x, l_Before.y, l_After.x, l_After.y);
+			m_Failed = true;
+		}
+		s_SmokeBounds = m_Editor.selection().bounds();
+		// Rotate: drag the rotate handle sideways
+		const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
+		const Vec2 l_Handle = l_Overlay.rotateHandle;
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_Handle + Vec2{ 160.f * l_S, 40.f * l_S } * p_T; }), {});
+		return;
+	}
+	case 13:
+	{
+		bool l_Rotated = false;
+		for (const ObjectId l_Id : m_Editor.selection().ids())
+		{
+			if (const Object* l_Object = m_Editor.document().find(l_Id))
+				l_Rotated = l_Rotated || std::abs(l_Object->transform.linear[0].y) > 0.05;
+		}
+		if (!l_Rotated)
+		{
+			spdlog::error("Smoke test (selection): the rotate handle did not rotate the objects");
+			m_Failed = true;
+		}
+		// Edit commands
+		const size_t l_Total = m_Editor.document().size();
+		const size_t l_Selected = m_Editor.selection().size();
+		m_Editor.duplicateSelection();
+		if (m_Editor.document().size() != l_Total + l_Selected || m_Editor.selection().size() != l_Selected)
+		{
+			spdlog::error("Smoke test (selection): duplicate produced the wrong objects");
+			m_Failed = true;
+		}
+		m_Editor.deleteSelection();
+		if (m_Editor.document().size() != l_Total || !m_Editor.selection().empty())
+		{
+			spdlog::error("Smoke test (selection): deleting the duplicates left something behind");
+			m_Failed = true;
+		}
+		m_Editor.undo(); // brings the duplicates back
+		m_Editor.undo(); // removes them again
+		if (m_Editor.document().size() != l_Total)
+		{
+			spdlog::error("Smoke test (selection): undo after duplicate and delete is off");
+			m_Failed = true;
+		}
+		if (!m_Failed)
+			spdlog::info("Smoke test: select, move, scale, rotate, duplicate, delete and undo OK");
+		return;
+	}
+	case 14:
+		m_Editor.clearSelection();
 		m_Editor.setTool(tools::ToolKind::Pen);
 		// Final view: zoomed around the drawing
 		m_Editor.flyTo(m_Editor.camera().center(), m_Options.smokeZoom);

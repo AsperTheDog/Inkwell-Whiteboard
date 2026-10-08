@@ -66,6 +66,8 @@ public:
 	void modify(ObjectId p_Id, const std::function<void(Object&)>& p_Edit, uint32_t p_Changes = ObjectChange::All);
 	// Moves an object to a new z-index (clamped)
 	void moveTo(ObjectId p_Id, size_t p_ZIndex);
+	// Reorders every object: p_Order must list each existing id exactly once (back to front). Ignored otherwise.
+	void setOrder(std::span<const ObjectId> p_Order);
 	void clear();
 
 	[[nodiscard]] const Object* find(ObjectId p_Id) const;

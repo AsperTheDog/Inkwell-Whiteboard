@@ -1,6 +1,7 @@
 // Standard document commands. Each restores the exact z-order on undo.
 module;
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -9,6 +10,7 @@ module;
 
 export module wb.doc.commands;
 
+import wb.math;
 import wb.doc.document;
 import wb.doc.history;
 import wb.doc.object;
@@ -78,6 +80,76 @@ private:
 		std::vector<std::unique_ptr<Object>> added; // owned while the step is reverted
 	};
 	std::vector<Step> m_Steps;
+	std::string m_Name;
+};
+// Gives objects new transforms. Used for drags (already applied live, then pushed) and for nudges, which merge
+// into one undo step while the history allows it.
+class TransformObjectsCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		Affine2 before{};
+		Affine2 after{};
+	};
+
+	TransformObjectsCommand(std::vector<Entry> p_Entries, std::string p_Name, bool p_Mergeable = false);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	bool mergeWith(Command& p_Next) override;
+	[[nodiscard]] bool changesAnything() const;
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+	bool m_Mergeable = false;
+};
+
+enum class ZOrderMove : uint8_t
+{
+	ToFront,
+	ToBack,
+	Forward,  // one step up past the next object that is not part of the move
+	Backward,
+};
+
+// Changes the stacking order of some objects, keeping their relative order
+class ReorderObjectsCommand final : public Command
+{
+public:
+	ReorderObjectsCommand(std::vector<ObjectId> p_Ids, ZOrderMove p_Move, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	// After apply(): whether the order really changed (moving the top object forward changes nothing)
+	[[nodiscard]] bool changedOrder() const { return m_Changed; }
+
+private:
+	std::vector<ObjectId> m_Ids;
+	ZOrderMove m_Move;
+	bool m_Changed = false;
+	std::vector<std::pair<ObjectId, size_t>> m_OldPositions; // ascending by position
+	std::string m_Name;
+};
+
+// Recolours strokes (the alpha channel of each stroke is kept)
+class SetStrokeColorCommand final : public Command
+{
+public:
+	SetStrokeColorCommand(std::vector<ObjectId> p_Ids, Color p_Color, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<ObjectId> m_Ids;
+	std::vector<Color> m_Old;
+	Color m_New{};
 	std::string m_Name;
 };
 } // namespace wb

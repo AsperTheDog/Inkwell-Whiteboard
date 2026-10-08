@@ -5,6 +5,7 @@
 module;
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
@@ -95,4 +96,13 @@ private:
 	Rect m_LocalBounds{};
 	Rect m_WorldBounds{};
 };
+
+// Deep copy under a new id (duplicate, paste)
+[[nodiscard]] inline std::unique_ptr<Object> cloneObject(const Object& p_Source, const ObjectId p_NewId)
+{
+	auto l_Copy = std::make_unique<Object>(p_Source);
+	l_Copy->id = p_NewId;
+	l_Copy->version = 0;
+	return l_Copy;
+}
 } // namespace wb

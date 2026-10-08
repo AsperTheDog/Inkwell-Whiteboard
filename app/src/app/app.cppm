@@ -28,6 +28,15 @@ import wb.render.canvas_renderer;
 import wb.session;
 import wb.tools.tool;
 
+namespace wb
+{
+// Swatches offered by the toolbar and the selection bar (RGBA8). Module-internal: shared by the app's source files.
+inline constexpr std::array<uint32_t, 12> PALETTE{
+	0x1F1F1FFFu, 0x757575FFu, 0xFFFFFFFFu, 0xE53935FFu, 0xFB8C00FFu, 0xFDD835FFu,
+	0x43A047FFu, 0x00ACC1FFu, 0x1E88E5FFu, 0x5E35B1FFu, 0xD81B60FFu, 0x6D4C41FFu,
+};
+} // namespace wb
+
 export namespace wb
 {
 struct AppOptions
@@ -85,6 +94,7 @@ private:
 	void buildShortcutsWindow();
 	void buildDialogs();
 	void buildToast();
+	void buildSelectionUi();
 	void drawEraserCursor();
 	void buildDebugPanel();
 	void addStressStrokes(uint32_t p_Count);
@@ -158,7 +168,7 @@ private:
 	uint64_t m_SmokeTimeNs = 0;
 	uint32_t m_SmokeStep = 0;
 
-	std::array<SDL_Cursor*, 4> m_Cursors{};
+	std::array<SDL_Cursor*, tools::CURSOR_KIND_COUNT> m_Cursors{};
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;
 	bool m_CursorOverUi = false;
 	bool m_PointerInWindow = false;

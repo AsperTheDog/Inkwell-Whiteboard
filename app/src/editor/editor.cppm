@@ -4,7 +4,12 @@
 //   - right / middle mouse drag, pen barrel button drag, or Space + drag: pan
 //   - wheel or touchpad pinch: zoom at the pointer; Ctrl + wheel: scroll (Shift: horizontal)
 //   - Ctrl+0: 100%, Ctrl+= / Ctrl+-: zoom in/out, Home: fit all content
+//
+// Every input device (mouse, pen, touch) remembers its own tool: picking the Pen for the mouse and the Select tool
+// for the tablet leaves each of them with its choice. Holding Alt while pressing a tool key borrows that tool for as
+// long as the key is held.
 module;
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,7 +22,10 @@ export module wb.editor;
 
 import wb.math;
 import wb.doc.document;
+import wb.doc.commands;
+import wb.doc.edit;
 import wb.doc.history;
+import wb.doc.selection;
 import wb.io.serializer;
 import wb.view.camera;
 import wb.brush.stroke_builder;
@@ -26,6 +34,7 @@ import wb.render.canvas_renderer;
 import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
+import wb.tools.select;
 
 export namespace wb
 {
@@ -44,6 +53,8 @@ public:
 	void setViewport(Vec2 p_SizePixels, float p_PixelScale);
 
 	void handlePointer(const platform::PointerEvent& p_Event);
+	// A pointer event that is not delivered to the tools (the UI has it) still tells which device is in use
+	void notePointerDevice(platform::PointerDevice p_Device);
 	void handleWheel(const platform::WheelEvent& p_Event);
 	void handlePinch(const platform::PinchEvent& p_Event);
 	// Returns true when the key was used
@@ -62,8 +73,33 @@ public:
 	// Set while the eraser is the tool in effect (selected, or the pen's eraser end is hovering / pressed)
 	[[nodiscard]] std::optional<EraserCursor> eraserCursor() const;
 
+	// ---- tools. The selected tool belongs to the device used last (what the toolbar shows).
 	void setTool(tools::ToolKind p_Kind);
-	[[nodiscard]] tools::ToolKind selectedTool() const { return m_SelectedTool; }
+	[[nodiscard]] tools::ToolKind selectedTool() const;
+	[[nodiscard]] platform::PointerDevice activeDevice() const { return m_LastDevice; }
+	void setDeviceTool(platform::PointerDevice p_Device, tools::ToolKind p_Kind);
+	[[nodiscard]] tools::ToolKind deviceTool(platform::PointerDevice p_Device) const { return m_DeviceTools[static_cast<size_t>(p_Device)]; }
+	// A tool borrowed with Alt+key and given back when the key is released
+	[[nodiscard]] bool toolIsBorrowed() const { return m_Momentary.has_value(); }
+
+	// ---- selection and object editing (each edit is one undo step)
+	[[nodiscard]] Selection& selection() { return m_Selection; }
+	[[nodiscard]] const Selection& selection() const { return m_Selection; }
+	[[nodiscard]] tools::SelectState& selectState() { return m_SelectState; }
+	[[nodiscard]] tools::SelectionOverlay selectionOverlay();
+	[[nodiscard]] bool hasSelection() const { return !m_Selection.empty(); }
+	[[nodiscard]] bool canPaste() const { return !m_Clip.empty(); }
+	void selectAll();
+	void clearSelection();
+	void deleteSelection();
+	void duplicateSelection();
+	void copySelection();
+	void cutSelection();
+	void paste();
+	void reorderSelection(ZOrderMove p_Move);
+	void recolorSelection(Color p_Color);
+	// Moves the selection by p_Points logical points on screen (zoom independent)
+	void nudgeSelection(Vec2 p_Points);
 
 	// Whole-board operations (used by the session: save, open, new). Loading and new end any gesture in progress and
 	// clear the undo history.
@@ -96,24 +132,43 @@ private:
 		FlyTo,        // fit/recenter: moves center and zoom together
 	};
 
+	struct BorrowedTool
+	{
+		tools::ToolKind kind = tools::ToolKind::Pen;
+		SDL_Keycode key = SDLK_UNKNOWN;
+	};
+
 	[[nodiscard]] tools::ToolContext toolContext();
-	[[nodiscard]] tools::Tool* toolFor(tools::ToolKind p_Kind);
+	[[nodiscard]] tools::Tool* toolFor(tools::ToolKind p_Kind) const;
 	[[nodiscard]] tools::Tool* toolInEffect() const;
+	void borrowTool(tools::ToolKind p_Kind, SDL_Keycode p_Key);
+	void returnTool();
 	void cancelGestures();
 	void startZoom(double p_TargetZoom, DVec2 p_AnchorScreen);
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
 
 	Document m_Document;
 	History m_History;
+	Selection m_Selection{ m_Document };
 	Camera m_Camera;
 	tools::BrushState m_Brush;
 	tools::EraserState m_EraserState;
+	tools::SelectState m_SelectState;
 	BrushSettings m_BrushSettings;
 	std::unique_ptr<tools::PenTool> m_Pen;
 	std::unique_ptr<tools::EraserTool> m_Eraser;
-	tools::ToolKind m_SelectedTool = tools::ToolKind::Pen;
+	std::unique_ptr<tools::SelectTool> m_Select;
+	std::unique_ptr<tools::HandTool> m_Hand;
+	std::array<tools::ToolKind, 3> m_DeviceTools{ tools::ToolKind::Pen, tools::ToolKind::Pen, tools::ToolKind::Hand }; // mouse, pen, touch
+	platform::PointerDevice m_LastDevice = platform::PointerDevice::Mouse;
+	std::optional<BorrowedTool> m_Momentary;
 	tools::Tool* m_ActiveTool = nullptr; // tool receiving pointer events (the gesture's tool while busy)
 	bool m_HoverEraser = false;          // the pen's eraser end is in use / hovering
+
+	ObjectClip m_Clip;
+	DVec2 m_LastPasteCenter{ 0.0 };
+	int m_PasteRepeat = 0;
+	uint64_t m_LastNudgeNs = 0;
 
 	// Panning
 	bool m_SpaceHeld = false;

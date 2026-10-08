@@ -5,7 +5,9 @@ module;
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -87,6 +89,40 @@ void Document::moveTo(const ObjectId p_Id, const size_t p_ZIndex)
 	m_Objects.insert(m_Objects.begin() + static_cast<std::ptrdiff_t>(l_To), std::move(l_Object));
 	++m_Revision;
 
+	for (DocumentListener* l_Listener : m_Listeners)
+		l_Listener->onObjectsReordered();
+}
+
+void Document::setOrder(const std::span<const ObjectId> p_Order)
+{
+	if (p_Order.size() != m_Objects.size())
+		return;
+
+	// Validate before touching anything: every id must be known and used once
+	std::unordered_map<const Object*, size_t> l_Slots;
+	l_Slots.reserve(m_Objects.size());
+	for (size_t i = 0; i < m_Objects.size(); ++i)
+		l_Slots.emplace(m_Objects[i].get(), i);
+	std::vector<size_t> l_Sources;
+	l_Sources.reserve(p_Order.size());
+	for (const ObjectId l_Id : p_Order)
+	{
+		const auto l_ById = m_ById.find(l_Id);
+		if (l_ById == m_ById.end())
+			return;
+		const auto l_Slot = l_Slots.find(l_ById->second);
+		if (l_Slot == l_Slots.end())
+			return;
+		l_Sources.push_back(l_Slot->second);
+		l_Slots.erase(l_Slot); // a repeated id then fails the lookup above
+	}
+
+	std::vector<std::unique_ptr<Object>> l_Reordered;
+	l_Reordered.reserve(m_Objects.size());
+	for (const size_t l_Source : l_Sources)
+		l_Reordered.push_back(std::move(m_Objects[l_Source]));
+	m_Objects = std::move(l_Reordered);
+	++m_Revision;
 	for (DocumentListener* l_Listener : m_Listeners)
 		l_Listener->onObjectsReordered();
 }

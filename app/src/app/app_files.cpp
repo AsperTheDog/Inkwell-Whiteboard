@@ -14,10 +14,12 @@ module;
 module wb.app;
 
 import wb.brush.stroke_builder;
+import wb.doc.commands;
 import wb.editor;
 import wb.io.file;
 import wb.io.settings;
 import wb.math;
+import wb.platform.input;
 import wb.session;
 import wb.tools.tool;
 
@@ -92,6 +94,16 @@ void App::loadSettings()
 	l_Brush.color = Color{ l_S.getFloat("brush.r", l_Brush.color.r), l_S.getFloat("brush.g", l_Brush.color.g), l_S.getFloat("brush.b", l_Brush.color.b), 1.f };
 	l_Brush.sizePoints = std::clamp(l_S.getFloat("brush.size", l_Brush.sizePoints), 0.5f, 40.f);
 
+	static constexpr const char* TOOL_KEYS[3] = { "tool.mouse", "tool.pen", "tool.touch" };
+	for (size_t i = 0; i < 3; ++i)
+	{
+		const auto l_Device = static_cast<platform::PointerDevice>(i);
+		const long long l_Tool = l_S.getInt(TOOL_KEYS[i], static_cast<long long>(m_Editor.deviceTool(l_Device)));
+		if (l_Tool >= 0 && l_Tool < static_cast<long long>(tools::TOOL_KIND_COUNT))
+			m_Editor.setDeviceTool(l_Device, static_cast<tools::ToolKind>(l_Tool));
+	}
+	m_Editor.selectState().mode = l_S.getInt("select.mode", 0) == 1 ? tools::SelectMode::Lasso : tools::SelectMode::Box;
+
 	tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_Eraser.sizePoints = std::clamp(l_S.getFloat("eraser.size", l_Eraser.sizePoints), 4.f, 120.f);
 	l_Eraser.mode = l_S.getInt("eraser.mode", static_cast<long long>(l_Eraser.mode)) == 1 ? tools::EraserMode::Stroke : tools::EraserMode::Segment;
@@ -125,6 +137,11 @@ void App::saveSettings()
 	l_S.setFloat("brush.g", l_Brush.color.g);
 	l_S.setFloat("brush.b", l_Brush.color.b);
 	l_S.setFloat("brush.size", l_Brush.sizePoints);
+
+	static constexpr const char* TOOL_KEYS[3] = { "tool.mouse", "tool.pen", "tool.touch" };
+	for (size_t i = 0; i < 3; ++i)
+		l_S.setInt(TOOL_KEYS[i], static_cast<long long>(m_Editor.deviceTool(static_cast<platform::PointerDevice>(i))));
+	l_S.setInt("select.mode", m_Editor.selectState().mode == tools::SelectMode::Lasso ? 1 : 0);
 
 	const tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_S.setFloat("eraser.size", l_Eraser.sizePoints);
@@ -373,10 +390,44 @@ void App::buildMenuBar()
 		if (ImGui::MenuItem("Redo", "Ctrl+Y / Ctrl+Shift+Z", false, m_Editor.history().canRedo()))
 			m_Editor.redo();
 		ImGui::Separator();
-		if (ImGui::MenuItem("Pen", "P", m_Editor.selectedTool() == tools::ToolKind::Pen))
-			m_Editor.setTool(tools::ToolKind::Pen);
-		if (ImGui::MenuItem("Eraser", "E", m_Editor.selectedTool() == tools::ToolKind::Eraser))
-			m_Editor.setTool(tools::ToolKind::Eraser);
+		const bool l_HasSelection = m_Editor.hasSelection() && l_Idle;
+		if (ImGui::MenuItem("Cut", "Ctrl+X", false, l_HasSelection))
+			m_Editor.cutSelection();
+		if (ImGui::MenuItem("Copy", "Ctrl+C", false, l_HasSelection))
+			m_Editor.copySelection();
+		if (ImGui::MenuItem("Paste", "Ctrl+V", false, m_Editor.canPaste() && l_Idle))
+			m_Editor.paste();
+		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, l_HasSelection))
+			m_Editor.duplicateSelection();
+		if (ImGui::MenuItem("Delete", "Del", false, l_HasSelection))
+			m_Editor.deleteSelection();
+		if (ImGui::MenuItem("Select all", "Ctrl+A", false, l_Idle && !m_Editor.document().empty()))
+			m_Editor.selectAll();
+		ImGui::Separator();
+		if (ImGui::MenuItem("Bring to front", "Ctrl+Shift+]", false, l_HasSelection))
+			m_Editor.reorderSelection(ZOrderMove::ToFront);
+		if (ImGui::MenuItem("Bring forward", "Ctrl+]", false, l_HasSelection))
+			m_Editor.reorderSelection(ZOrderMove::Forward);
+		if (ImGui::MenuItem("Send backward", "Ctrl+[", false, l_HasSelection))
+			m_Editor.reorderSelection(ZOrderMove::Backward);
+		if (ImGui::MenuItem("Send to back", "Ctrl+Shift+[", false, l_HasSelection))
+			m_Editor.reorderSelection(ZOrderMove::ToBack);
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("Tools"))
+	{
+		const auto l_Tool = [&](const char* p_Label, const char* p_Shortcut, const tools::ToolKind p_Kind)
+		{
+			if (ImGui::MenuItem(p_Label, p_Shortcut, m_Editor.selectedTool() == p_Kind))
+				m_Editor.setTool(p_Kind);
+		};
+		l_Tool("Pen", "P", tools::ToolKind::Pen);
+		l_Tool("Eraser", "E", tools::ToolKind::Eraser);
+		l_Tool("Select", "V", tools::ToolKind::Select);
+		l_Tool("Hand", "H", tools::ToolKind::Hand);
+		ImGui::Separator();
+		ImGui::TextDisabled("Applies to the device in use (%s).", m_Editor.activeDevice() == platform::PointerDevice::Pen ? "pen" : (m_Editor.activeDevice() == platform::PointerDevice::Touch ? "touch" : "mouse"));
+		ImGui::TextDisabled("Hold Alt + a tool key to borrow it.");
 		ImGui::EndMenu();
 	}
 	if (ImGui::BeginMenu("View"))
@@ -429,10 +480,26 @@ void App::buildShortcutsWindow()
 	l_Section("File");
 	l_Row("Ctrl+N / Ctrl+O", "New board / open a board");
 	l_Row("Ctrl+S / Ctrl+Shift+S", "Save / save as");
-	l_Section("Drawing");
-	l_Row("P / E", "Pen / eraser (the pen's eraser end works too)");
+	l_Section("Tools");
+	l_Row("P / E / V / H", "Pen / eraser / select / hand (for the device in use)");
+	l_Row("Alt + P / E / V / H", "Borrow that tool while the keys are held");
+	l_Row("Pen eraser end", "Erases whatever tool the pen has");
+	l_Section("Editing");
 	l_Row("Ctrl+Z", "Undo");
 	l_Row("Ctrl+Y / Ctrl+Shift+Z", "Redo");
+	l_Row("Ctrl+A", "Select all");
+	l_Row("Ctrl+C / X / V", "Copy / cut / paste");
+	l_Row("Ctrl+D", "Duplicate");
+	l_Row("Delete", "Delete the selection");
+	l_Row("Arrow keys (+Shift)", "Nudge by 1 (10) points");
+	l_Row("Ctrl+] / Ctrl+[", "Bring forward / send backward");
+	l_Row("Ctrl+Shift+] / [", "Bring to front / send to back");
+	l_Row("Escape", "Cancel a drag, or deselect");
+	l_Section("Selection");
+	l_Row("Click / box / lasso", "Select. Shift adds to the selection");
+	l_Row("Drag inside the box", "Move");
+	l_Row("Drag a handle", "Scale. Shift keeps proportions, Alt scales from the centre");
+	l_Row("Drag the top circle", "Rotate. Shift snaps to 15 degrees");
 	l_Section("Navigation");
 	l_Row("Mouse wheel", "Zoom at the pointer");
 	l_Row("Ctrl+wheel (+Shift)", "Scroll vertically (horizontally)");

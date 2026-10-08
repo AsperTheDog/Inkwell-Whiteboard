@@ -46,11 +46,6 @@ constexpr Color DARK_CANVAS = Color::fromRgba8(0x1F2023FFu);
 constexpr Color LIGHT_GRID = Color::fromRgba8(0x00000030u);
 constexpr Color DARK_GRID = Color::fromRgba8(0xFFFFFF22u);
 
-constexpr std::array<uint32_t, 12> PALETTE{
-	0x1F1F1FFFu, 0x757575FFu, 0xFFFFFFFFu, 0xE53935FFu, 0xFB8C00FFu, 0xFDD835FFu,
-	0x43A047FFu, 0x00ACC1FFu, 0x1E88E5FFu, 0x5E35B1FFu, 0xD81B60FFu, 0x6D4C41FFu,
-};
-
 // While idle with the debug overlay open, refresh its numbers at this interval
 constexpr uint64_t DEBUG_REFRESH_NS = 250'000'000ull;
 constexpr VkDeviceSize STAGING_CHUNK_BYTES = 4ull * 1024 * 1024;
@@ -175,6 +170,11 @@ void App::init()
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Crosshair)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Move)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Pointer)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeEW)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNS)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNWSE)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNESW)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::Rotate)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER); // no system rotate cursor
 	m_CurrentCursor = tools::CursorKind::Default;
 
 #ifdef WB_DEBUG
@@ -340,6 +340,7 @@ void App::handleInput(const platform::InputEvent& p_Event)
 	{
 		m_LastPointer = *l_Pointer;
 		m_PointerInWindow = true;
+		m_Editor.notePointerDevice(l_Pointer->device); // the toolbar shows the tool of the device in use, even over the UI
 		m_CursorOverUi = l_UiHasPointer;
 		// Releases always reach the editor so no gesture is left hanging
 		const bool l_IsRelease = l_Pointer->phase == platform::PointerPhase::Up || l_Pointer->phase == platform::PointerPhase::Cancel;
@@ -474,6 +475,7 @@ void App::renderFrame()
 void App::buildUi()
 {
 	buildMenuBar();
+	buildSelectionUi();
 	buildToolbar();
 	buildToast();
 	buildShortcutsWindow();
@@ -530,6 +532,10 @@ void App::buildToolbar()
 	};
 	l_ToolButton("Pen", tools::ToolKind::Pen, "Pen (P)");
 	l_ToolButton("Eraser", tools::ToolKind::Eraser, "Eraser (E). The pen's eraser end works too");
+	l_ToolButton("Select", tools::ToolKind::Select, "Select (V): click, drag a box or lasso, then move, scale and rotate");
+	l_ToolButton("Hand", tools::ToolKind::Hand, "Hand (H): drag to move the view");
+	ImGui::TextDisabled("%s%s", deviceName(m_Editor.activeDevice()), m_Editor.toolIsBorrowed() ? " (held)" : "");
+	ImGui::SetItemTooltip("Mouse, pen and touch each remember their own tool; this is the device in use.\nHold Alt with a tool key (P, E, V, H) to borrow that tool while the key is down.");
 	ImGui::SameLine(0.f, 12.f * l_Scale);
 
 	if (l_Tool == tools::ToolKind::Eraser)
@@ -546,7 +552,7 @@ void App::buildToolbar()
 		ImGui::SetNextItemWidth(140.f * l_Scale);
 		ImGui::SliderFloat("##erasersize", &l_Eraser.sizePoints, 4.f, 120.f, "eraser %.0f", ImGuiSliderFlags_Logarithmic);
 	}
-	else
+	else if (l_Tool == tools::ToolKind::Pen)
 	{
 		for (size_t i = 0; i < PALETTE.size(); ++i)
 		{
@@ -591,6 +597,26 @@ void App::buildToolbar()
 		ImGui::SetNextItemWidth(110.f * l_Scale);
 		ImGui::SliderFloat("##pressure", &m_Editor.brushSettings().pressureSensitivity, 0.f, 1.f, "pressure %.2f");
 		ImGui::SetItemTooltip("How much pen pressure changes the stroke width (0 = constant)");
+	}
+	else if (l_Tool == tools::ToolKind::Select)
+	{
+		tools::SelectState& l_Select = m_Editor.selectState();
+		if (ImGui::RadioButton("Box", l_Select.mode == tools::SelectMode::Box))
+			l_Select.mode = tools::SelectMode::Box;
+		ImGui::SetItemTooltip("Drag a rectangle around what to select");
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Lasso", l_Select.mode == tools::SelectMode::Lasso))
+			l_Select.mode = tools::SelectMode::Lasso;
+		ImGui::SetItemTooltip("Draw around what to select. Anything the line touches is selected.");
+		if (m_Editor.hasSelection())
+		{
+			ImGui::SameLine(0.f, 12.f * l_Scale);
+			ImGui::TextDisabled("%zu selected", m_Editor.selection().size());
+		}
+	}
+	else
+	{
+		ImGui::TextDisabled("Drag to move the view");
 	}
 
 	ImGui::SameLine(0.f, 16.f * l_Scale);
