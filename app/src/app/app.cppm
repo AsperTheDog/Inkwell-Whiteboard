@@ -81,6 +81,8 @@ private:
 	void renderFrame();
 	void buildUi();
 	void buildToolbar();
+	void buildMenuBar();
+	void buildShortcutsWindow();
 	void buildDialogs();
 	void buildToast();
 	void drawEraserCursor();
@@ -143,6 +145,7 @@ private:
 	bool m_ShowDebug = false;
 	bool m_DarkTheme = false;
 	bool m_ShowGrid = true;
+	bool m_ShowShortcuts = false;
 	std::array<float, 4> m_CustomColor{ 0.2f, 0.5f, 0.9f, 1.f }; // last colour picked in the custom colour popup
 	uint32_t m_RedrawFrames = 2; // frames still to draw after the last change (ImGui needs one extra to settle)
 	uint64_t m_LastDebugRefreshNs = 0;

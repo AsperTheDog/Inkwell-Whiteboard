@@ -345,6 +345,108 @@ void App::showMessage(std::string p_Text)
 
 // ------------------------------------------------------------------------------------------------ UI (temporary ImGui)
 
+void App::buildMenuBar()
+{
+	if (!ImGui::BeginMainMenuBar())
+		return;
+	const bool l_Idle = !m_Editor.isBusy();
+	if (ImGui::BeginMenu("File"))
+	{
+		if (ImGui::MenuItem("New", "Ctrl+N", false, l_Idle))
+			requestAction(Action::NewBoard);
+		if (ImGui::MenuItem("Open...", "Ctrl+O", false, l_Idle))
+			requestAction(Action::OpenFile);
+		ImGui::Separator();
+		if (ImGui::MenuItem("Save", "Ctrl+S", false, l_Idle))
+			requestSave(false, Action::None);
+		if (ImGui::MenuItem("Save as...", "Ctrl+Shift+S", false, l_Idle))
+			requestSave(true, Action::None);
+		ImGui::Separator();
+		if (ImGui::MenuItem("Exit", "Alt+F4"))
+			requestAction(Action::Quit);
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("Edit"))
+	{
+		if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_Editor.history().canUndo()))
+			m_Editor.undo();
+		if (ImGui::MenuItem("Redo", "Ctrl+Y / Ctrl+Shift+Z", false, m_Editor.history().canRedo()))
+			m_Editor.redo();
+		ImGui::Separator();
+		if (ImGui::MenuItem("Pen", "P", m_Editor.selectedTool() == tools::ToolKind::Pen))
+			m_Editor.setTool(tools::ToolKind::Pen);
+		if (ImGui::MenuItem("Eraser", "E", m_Editor.selectedTool() == tools::ToolKind::Eraser))
+			m_Editor.setTool(tools::ToolKind::Eraser);
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("View"))
+	{
+		if (ImGui::MenuItem("Zoom in", "Ctrl+=  or  wheel"))
+			m_Editor.zoomAroundCenter(1.25);
+		if (ImGui::MenuItem("Zoom out", "Ctrl+-  or  wheel"))
+			m_Editor.zoomAroundCenter(1.0 / 1.25);
+		if (ImGui::MenuItem("Actual size (100%)", "Ctrl+0"))
+			m_Editor.resetZoom();
+		if (ImGui::MenuItem("Fit all content", "Home"))
+			m_Editor.fitContent();
+		ImGui::Separator();
+		ImGui::MenuItem("Grid", nullptr, &m_ShowGrid);
+		ImGui::MenuItem("Dark theme", nullptr, &m_DarkTheme);
+		if (ImGui::MenuItem("Fullscreen", "F11"))
+		{
+			const bool l_Fullscreen = (SDL_GetWindowFlags(m_Window.handle()) & SDL_WINDOW_FULLSCREEN) != 0;
+			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
+		}
+		ImGui::MenuItem("Debug panel", "F3", &m_ShowDebug);
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("Help"))
+	{
+		ImGui::MenuItem("Keyboard shortcuts", "F1", &m_ShowShortcuts);
+		ImGui::EndMenu();
+	}
+	ImGui::EndMainMenuBar();
+}
+
+void App::buildShortcutsWindow()
+{
+	if (!m_ShowShortcuts)
+		return;
+	const ImGuiViewport* l_Viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(ImVec2(l_Viewport->WorkPos.x + l_Viewport->WorkSize.x * 0.5f, l_Viewport->WorkPos.y + l_Viewport->WorkSize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Keyboard shortcuts", &m_ShowShortcuts, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+	{
+		ImGui::End();
+		return;
+	}
+	const auto l_Section = [](const char* p_Title) { ImGui::SeparatorText(p_Title); };
+	const auto l_Row = [](const char* p_Keys, const char* p_What)
+	{
+		ImGui::TextUnformatted(p_Keys);
+		ImGui::SameLine(ImGui::GetFontSize() * 17.f);
+		ImGui::TextUnformatted(p_What);
+	};
+	l_Section("File");
+	l_Row("Ctrl+N / Ctrl+O", "New board / open a board");
+	l_Row("Ctrl+S / Ctrl+Shift+S", "Save / save as");
+	l_Section("Drawing");
+	l_Row("P / E", "Pen / eraser (the pen's eraser end works too)");
+	l_Row("Ctrl+Z", "Undo");
+	l_Row("Ctrl+Y / Ctrl+Shift+Z", "Redo");
+	l_Section("Navigation");
+	l_Row("Mouse wheel", "Zoom at the pointer");
+	l_Row("Ctrl+wheel (+Shift)", "Scroll vertically (horizontally)");
+	l_Row("Space+drag / right or middle drag", "Pan");
+	l_Row("Ctrl+= / Ctrl+-", "Zoom in / out");
+	l_Row("Ctrl+0", "Actual size (100%)");
+	l_Row("Home", "Fit all content");
+	l_Section("Window");
+	l_Row("F1", "This list");
+	l_Row("F3", "Debug panel");
+	l_Row("F11", "Fullscreen");
+	ImGui::End();
+}
+
 void App::buildToast()
 {
 	if (m_Toast.empty())

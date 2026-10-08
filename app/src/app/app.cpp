@@ -288,6 +288,11 @@ void App::handleEvent(const SDL_Event& p_Event)
 			m_ShowDebug = !m_ShowDebug;
 			return;
 		}
+		if (p_Event.key.key == SDLK_F1 && !p_Event.key.repeat)
+		{
+			m_ShowShortcuts = !m_ShowShortcuts;
+			return;
+		}
 		if (p_Event.key.key == SDLK_F11 && !p_Event.key.repeat)
 		{
 			const bool l_Fullscreen = (SDL_GetWindowFlags(m_Window.handle()) & SDL_WINDOW_FULLSCREEN) != 0;
@@ -468,8 +473,10 @@ void App::renderFrame()
 
 void App::buildUi()
 {
+	buildMenuBar();
 	buildToolbar();
 	buildToast();
+	buildShortcutsWindow();
 	buildDialogs();
 	drawEraserCursor();
 	if (m_ShowDebug)
@@ -521,22 +528,6 @@ void App::buildToolbar()
 		ImGui::SetItemTooltip("%s", p_Tip);
 		ImGui::SameLine();
 	};
-	if (ImGui::Button("File"))
-		ImGui::OpenPopup("##filemenu");
-	if (ImGui::BeginPopup("##filemenu"))
-	{
-		if (ImGui::MenuItem("New", "Ctrl+N"))
-			requestAction(Action::NewBoard);
-		if (ImGui::MenuItem("Open...", "Ctrl+O"))
-			requestAction(Action::OpenFile);
-		ImGui::Separator();
-		if (ImGui::MenuItem("Save", "Ctrl+S"))
-			requestSave(false, Action::None);
-		if (ImGui::MenuItem("Save as...", "Ctrl+Shift+S"))
-			requestSave(true, Action::None);
-		ImGui::EndPopup();
-	}
-	ImGui::SameLine(0.f, 12.f * l_Scale);
 	l_ToolButton("Pen", tools::ToolKind::Pen, "Pen (P)");
 	l_ToolButton("Eraser", tools::ToolKind::Eraser, "Eraser (E). The pen's eraser end works too");
 	ImGui::SameLine(0.f, 12.f * l_Scale);
@@ -632,7 +623,7 @@ void App::buildToolbar()
 void App::buildDebugPanel()
 {
 	const float l_Scale = m_Window.displayScale();
-	ImGui::SetNextWindowPos(ImVec2(12.f * l_Scale, 12.f * l_Scale), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(12.f * l_Scale, ImGui::GetFrameHeight() + 12.f * l_Scale), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSize(ImVec2(400.f * l_Scale, 0.f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("Debug (F3)", &m_ShowDebug))
 	{
