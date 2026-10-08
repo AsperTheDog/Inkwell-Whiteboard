@@ -32,7 +32,7 @@ void PenTool::onPointer(const platform::PointerEvent& p_Event, ToolContext& p_Co
 		if (p_Event.button != platform::PointerButton::Primary || m_Builder.isActive())
 			return;
 		m_Device = p_Event.device;
-		m_Builder.begin(toStrokeInput(p_Event), p_Event.device == platform::PointerDevice::Pen, p_Context.brush.sizePoints, p_Context.brush.color, p_Context.camera, p_Context.brushSettings);
+		m_Builder.begin(toStrokeInput(p_Event), p_Event.device == platform::PointerDevice::Pen, p_Context.brush.effectivePoints(p_Context.camera.zoom()), p_Context.brush.color, p_Context.camera, p_Context.brushSettings);
 		return;
 
 	case platform::PointerPhase::Move:

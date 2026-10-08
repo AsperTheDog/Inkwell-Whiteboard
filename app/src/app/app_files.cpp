@@ -81,6 +81,8 @@ void App::loadSettings()
 	tools::BrushState& l_Brush = m_Editor.brush();
 	l_Brush.color = Color{ l_S.getFloat("brush.r", l_Brush.color.r), l_S.getFloat("brush.g", l_Brush.color.g), l_S.getFloat("brush.b", l_Brush.color.b), 1.f };
 	l_Brush.sizePoints = std::clamp(l_S.getFloat("brush.size", l_Brush.sizePoints), 0.5f, 40.f);
+	l_Brush.sizeScale = std::clamp(l_S.getFloat("brush.sizeScale", l_Brush.sizeScale), 0.25f, 4.f);
+	l_Brush.sizeMode = l_S.getInt("brush.sizeMode", 0) == 1 ? tools::BrushSizeMode::Board : tools::BrushSizeMode::Screen;
 
 	static constexpr const char* TOOL_KEYS[3] = { "tool.mouse", "tool.pen", "tool.touch" };
 	for (size_t i = 0; i < 3; ++i)
@@ -125,6 +127,8 @@ void App::saveSettings()
 	l_S.setFloat("brush.g", l_Brush.color.g);
 	l_S.setFloat("brush.b", l_Brush.color.b);
 	l_S.setFloat("brush.size", l_Brush.sizePoints);
+	l_S.setFloat("brush.sizeScale", l_Brush.sizeScale);
+	l_S.setInt("brush.sizeMode", l_Brush.sizeMode == tools::BrushSizeMode::Board ? 1 : 0);
 
 	static constexpr const char* TOOL_KEYS[3] = { "tool.mouse", "tool.pen", "tool.touch" };
 	for (size_t i = 0; i < 3; ++i)

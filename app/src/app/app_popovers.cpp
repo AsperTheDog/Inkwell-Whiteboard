@@ -213,7 +213,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 
 	float l_Height;
 	if (!m_PickerOpen)
-		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight;
+		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + m_Ui.px(38.f) + m_Ui.px(10.f);
 	else
 		l_Height = l_Pad * 2.f + m_Ui.px(34.f) + m_Ui.px(12.f) + m_Ui.px(190.f) + m_Ui.px(14.f) + m_Ui.px(20.f) + m_Ui.px(16.f) + l_Diameter;
 
@@ -313,8 +313,23 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	l_Y += l_SliderHeight;
 	const Rect2 l_Preview = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_PreviewHeight });
 	l_Draw.rect(l_Preview, m_Ui.px(12.f), l_Theme.hover);
-	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.sizePoints, l_Settings.pressureSensitivity);
+	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.effectivePoints(m_Editor.camera().zoom()), l_Settings.pressureSensitivity);
 	l_Y += l_PreviewHeight + m_Ui.px(10.f);
+
+	// Size multiplier and how the size follows the zoom
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size multiplier", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.2fx", l_Brush.sizeScale), 13.f, l_Theme.text, ui::TextAlign::Right);
+	l_Y += l_LabelHeight;
+	l_Slider("pen.sizeScale", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Brush.sizeScale, 0.25f, 4.f, true);
+	l_Y += l_SliderHeight + m_Ui.px(8.f);
+	{
+		int l_Mode = l_Brush.sizeMode == tools::BrushSizeMode::Screen ? 0 : 1;
+		static constexpr std::array<std::string_view, 2> LABELS{ "Fixed on screen", "Fixed on board" };
+		static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
+		if (m_Ui.segmented("pen.sizeMode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(38.f) }), LABELS, NO_ICONS, l_Mode))
+			l_Brush.sizeMode = l_Mode == 0 ? tools::BrushSizeMode::Screen : tools::BrushSizeMode::Board;
+		l_Y += m_Ui.px(38.f) + m_Ui.px(10.f);
+	}
 
 	// Pressure
 	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Pen pressure", 13.f, l_Theme.textMuted);

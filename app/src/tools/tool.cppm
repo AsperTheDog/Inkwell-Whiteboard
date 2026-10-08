@@ -41,11 +41,26 @@ enum class CursorKind : uint8_t
 
 inline constexpr size_t CURSOR_KIND_COUNT = 9;
 
+// How the brush size relates to the zoom level
+enum class BrushSizeMode : uint8_t
+{
+	Screen, // the stroke is as wide on screen whatever the zoom: zooming in gives finer lines on the board
+	Board,  // the stroke has a fixed width on the board: zooming in gives wider lines on screen
+};
+
 // What the user picked in the toolbar for drawing
 struct BrushState
 {
 	Color color = Color::fromRgba8(0x1F1F1FFFu);
-	float sizePoints = 3.f; // stroke width in logical points on screen
+	float sizePoints = 3.f; // stroke width in logical points (on screen, or on the board at 100% zoom in Board mode)
+	BrushSizeMode sizeMode = BrushSizeMode::Screen;
+	float sizeScale = 1.f;  // global multiplier on the size
+
+	// Width to draw with right now, in logical points on screen, for a camera at p_Zoom
+	[[nodiscard]] float effectivePoints(const double p_Zoom) const
+	{
+		return sizePoints * sizeScale * (sizeMode == BrushSizeMode::Board ? static_cast<float>(p_Zoom) : 1.f);
+	}
 };
 
 enum class EraserMode : uint8_t
