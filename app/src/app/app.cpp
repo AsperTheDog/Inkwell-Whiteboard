@@ -123,6 +123,8 @@ void App::run()
 			const bool l_CanRender = !m_Window.isMinimized() && !m_Window.pixelSize().isZero();
 			if (!pumpEvents(!l_CanRender || !needsRedraw()))
 				break;
+			m_Session.tick(SDL_GetTicksNS());
+			updateTitle();
 			if (!l_CanRender || m_Window.isMinimized() || m_Window.pixelSize().isZero())
 				continue;
 
@@ -150,9 +152,10 @@ void App::run()
 	}
 	catch (...)
 	{
-		shutdown();
+		shutdown(); // keeps any recovery copy: the run did not end normally
 		throw;
 	}
+	finishPersistence(m_QuitDiscard);
 	shutdown();
 }
 
@@ -166,6 +169,7 @@ void App::init()
 	m_Canvas.init(m_Context, m_Swapchain.format());
 	m_Canvas.attach(m_Editor.document());
 	m_ImGui.init(m_Context, m_Window, m_Swapchain);
+	initPersistence();
 
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Default)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Crosshair)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -206,12 +210,25 @@ bool App::pumpEvents(const bool p_Block)
 	if (p_Block)
 	{
 		// Sleep until something happens. With the overlay open, wake up periodically to refresh its stats.
-		const int32_t l_Timeout = m_ShowDebug ? static_cast<int32_t>(DEBUG_REFRESH_NS / 1'000'000ull) : 1000;
+		int32_t l_Timeout = m_ShowDebug ? static_cast<int32_t>(DEBUG_REFRESH_NS / 1'000'000ull) : 1000;
+		if (m_ToastUntilNs != 0)
+		{
+			// Wake up when the toast has to disappear
+			const uint64_t l_Now = SDL_GetTicksNS();
+			const int32_t l_Remaining = m_ToastUntilNs > l_Now ? static_cast<int32_t>((m_ToastUntilNs - l_Now) / 1'000'000ull) + 1 : 1;
+			l_Timeout = std::min(l_Timeout, l_Remaining);
+		}
 		if (SDL_WaitEventTimeout(&l_Event, l_Timeout))
 			handleEvent(l_Event);
 	}
 	while (SDL_PollEvent(&l_Event))
 		handleEvent(l_Event);
+
+	if (m_ToastUntilNs != 0 && SDL_GetTicksNS() >= m_ToastUntilNs)
+	{
+		m_ToastUntilNs = 0;
+		requestRedraw(); // draws one frame without the toast
+	}
 
 	if (m_ShowDebug)
 	{
@@ -234,11 +251,17 @@ void App::handleEvent(const SDL_Event& p_Event)
 {
 	m_ImGui.processEvent(p_Event);
 
+	if (m_DialogEvent != 0 && p_Event.type == m_DialogEvent)
+	{
+		handleDialogResult();
+		return;
+	}
+
 	switch (p_Event.type)
 	{
 	case SDL_EVENT_QUIT:
 	case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-		m_Running = false;
+		requestAction(Action::Quit);
 		return;
 	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
 	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
@@ -271,7 +294,7 @@ void App::handleEvent(const SDL_Event& p_Event)
 			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
 			return;
 		}
-		if (!m_ImGui.wantsKeyboard())
+		if (!m_ImGui.wantsKeyboard() && !handleFileShortcut(p_Event.key))
 			m_Editor.handleKeyDown(p_Event.key);
 		return;
 	case SDL_EVENT_KEY_UP:
@@ -446,6 +469,8 @@ void App::renderFrame()
 void App::buildUi()
 {
 	buildToolbar();
+	buildToast();
+	buildDialogs();
 	drawEraserCursor();
 	if (m_ShowDebug)
 		buildDebugPanel();
@@ -496,6 +521,22 @@ void App::buildToolbar()
 		ImGui::SetItemTooltip("%s", p_Tip);
 		ImGui::SameLine();
 	};
+	if (ImGui::Button("File"))
+		ImGui::OpenPopup("##filemenu");
+	if (ImGui::BeginPopup("##filemenu"))
+	{
+		if (ImGui::MenuItem("New", "Ctrl+N"))
+			requestAction(Action::NewBoard);
+		if (ImGui::MenuItem("Open...", "Ctrl+O"))
+			requestAction(Action::OpenFile);
+		ImGui::Separator();
+		if (ImGui::MenuItem("Save", "Ctrl+S"))
+			requestSave(false, Action::None);
+		if (ImGui::MenuItem("Save as...", "Ctrl+Shift+S"))
+			requestSave(true, Action::None);
+		ImGui::EndPopup();
+	}
+	ImGui::SameLine(0.f, 12.f * l_Scale);
 	l_ToolButton("Pen", tools::ToolKind::Pen, "Pen (P)");
 	l_ToolButton("Eraser", tools::ToolKind::Eraser, "Eraser (E). The pen's eraser end works too");
 	ImGui::SameLine(0.f, 12.f * l_Scale);

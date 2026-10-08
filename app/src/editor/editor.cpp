@@ -4,6 +4,9 @@ module;
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <vector>
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 
@@ -12,6 +15,7 @@ module wb.editor;
 import wb.math;
 import wb.doc.document;
 import wb.doc.history;
+import wb.io.serializer;
 import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
@@ -256,7 +260,49 @@ void Editor::handleFocusLost()
 	}
 }
 
+// Ends whatever the pointer is doing (stroke, erase drag, pan, scroll easing, camera animation)
+void Editor::cancelGestures()
+{
+	m_Panning = false;
+	m_PendingPan = DVec2{ 0.0 };
+	m_Animation = CameraAnimation::None;
+	if (m_ActiveTool != nullptr)
+	{
+		tools::ToolContext l_Context = toolContext();
+		m_ActiveTool->cancel(l_Context);
+	}
+}
+
 // ------------------------------------------------------------------------------------------------ commands
+
+std::vector<uint8_t> Editor::saveBoard(const std::string& p_SourcePath) const
+{
+	BoardMeta l_Meta;
+	l_Meta.viewCenter = m_Camera.center();
+	l_Meta.viewZoom = m_Camera.zoom();
+	l_Meta.sourcePath = p_SourcePath;
+	return serializeBoard(m_Document, l_Meta);
+}
+
+LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta)
+{
+	cancelGestures();
+	const LoadResult l_Result = deserializeBoard(p_Bytes, m_Document, p_Meta);
+	if (l_Result.ok)
+	{
+		m_History.clear();
+		lookAt(p_Meta.viewCenter, p_Meta.viewZoom);
+	}
+	return l_Result;
+}
+
+void Editor::newBoard()
+{
+	cancelGestures();
+	m_Document.clear();
+	m_History.clear();
+	lookAt(DVec2{ 0.0 }, 1.0);
+}
 
 void Editor::undo()
 {

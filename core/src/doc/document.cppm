@@ -52,6 +52,8 @@ public:
 	Document& operator=(const Document&) = delete;
 
 	[[nodiscard]] ObjectId allocateId() { return m_NextId++; }
+	// The id the next allocateId() returns (saved in files so ids stay unique across sessions)
+	[[nodiscard]] ObjectId peekNextId() const { return m_NextId; }
 	// Ensures future ids are greater than p_Id (used when loading files)
 	void reserveId(ObjectId p_Id);
 

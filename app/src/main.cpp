@@ -62,6 +62,8 @@ int main(int p_Argc, char** p_Argv)
 			spdlog::error("Smoke test: {} validation errors, {} warnings", l_Validation.errors, l_Validation.warnings);
 			l_ExitCode = 3;
 		}
+		if (l_Options.smokeTestFrames > 0 && l_App.failed())
+			l_ExitCode = 4;
 	}
 	catch (const wb::gfx::UnsupportedGpuError& l_Error)
 	{

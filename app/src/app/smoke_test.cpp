@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <variant>
 #include <vector>
 #include <SDL3/SDL.h>
@@ -19,6 +20,8 @@ module wb.app;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
+import wb.io.file;
+import wb.session;
 import wb.math;
 import wb.platform.input;
 import wb.tools.tool;
@@ -175,6 +178,34 @@ void App::driveSmokeTest()
 		return;
 	}
 	case 7:
+	{
+		// Save, edit, reload: the board must come back exactly, and the GPU mirror must follow the replaced document
+		const size_t l_Count = m_Editor.document().size();
+		const std::filesystem::path l_File = std::filesystem::temp_directory_path() / "wb_smoke_test.wbrd";
+		const auto l_Fail = [&](const char* p_What)
+		{
+			spdlog::error("Smoke test (save/open): {}", p_What);
+			m_Failed = true;
+		};
+		if (!m_Session.dirty())
+			l_Fail("the board should have unsaved changes after drawing");
+		if (const IoResult l_Saved = m_Session.saveTo(l_File); !l_Saved.ok)
+			l_Fail(l_Saved.error.c_str());
+		else if (m_Session.dirty())
+			l_Fail("the board should be clean after saving");
+		m_Editor.undo(); // dirty again; opening must discard that
+		if (!m_Session.dirty())
+			l_Fail("undo after saving should make the board dirty");
+		if (const IoResult l_Opened = m_Session.open(l_File); !l_Opened.ok)
+			l_Fail(l_Opened.error.c_str());
+		else if (m_Editor.document().size() != l_Count || m_Session.dirty())
+			l_Fail("reopened board differs from the saved one");
+		removeFileQuiet(l_File);
+		if (!m_Failed)
+			spdlog::info("Smoke test: save / reopen round trip of {} objects OK", l_Count);
+		return;
+	}
+	case 8:
 		m_Editor.setTool(tools::ToolKind::Pen);
 		// Final view: zoomed around the drawing
 		m_Editor.flyTo(m_Editor.camera().center(), m_Options.smokeZoom);

@@ -3,6 +3,8 @@ module;
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <variant>
@@ -18,10 +20,12 @@ import wb.gfx.buffer;
 import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.swapchain;
+import wb.io.settings;
 import wb.math;
 import wb.platform.input;
 import wb.platform.window;
 import wb.render.canvas_renderer;
+import wb.session;
 import wb.tools.tool;
 
 export namespace wb
@@ -43,8 +47,25 @@ public:
 
 	// Runs until the window closes. Throws on fatal errors (gfx::UnsupportedGpuError for missing GPU support).
 	void run();
+	// A smoke-test check failed (see the log)
+	[[nodiscard]] bool failed() const { return m_Failed; }
 
 private:
+	// Things that may have to wait for the "unsaved changes" question
+	enum class Action : uint8_t
+	{
+		None,
+		NewBoard,
+		OpenFile,
+		Quit,
+	};
+	enum class DialogKind : uint8_t
+	{
+		None,
+		Open,
+		Save,
+	};
+
 	void init();
 	void shutdown();
 
@@ -60,10 +81,31 @@ private:
 	void renderFrame();
 	void buildUi();
 	void buildToolbar();
+	void buildDialogs();
+	void buildToast();
 	void drawEraserCursor();
 	void buildDebugPanel();
 	void addStressStrokes(uint32_t p_Count);
 	void addStressStrokes(uint32_t p_Count, const Rect& p_Area);
+
+	// Files (app_files.cpp)
+	void initPersistence();
+	void finishPersistence(bool p_DiscardRecovery);
+	void loadSettings();
+	void saveSettings();
+	void requestAction(Action p_Action);
+	void performAction(Action p_Action);
+	void requestSave(bool p_SaveAs, Action p_After);
+	void showOpenDialog();
+	void showSaveDialog(Action p_After);
+	void handleDialogResult();
+	void saveToPath(const std::filesystem::path& p_Path, Action p_After);
+	void openPath(const std::filesystem::path& p_Path);
+	void updateTitle();
+	void showToast(std::string p_Text);
+	void showMessage(std::string p_Text);
+	bool handleFileShortcut(const SDL_KeyboardEvent& p_Event);
+	static void SDLCALL dialogCallback(void* p_User, const char* const* p_Files, int p_Filter);
 
 	// Scripted input for --smoke-test (smoke_test.cpp)
 	void driveSmokeTest();
@@ -90,6 +132,10 @@ private:
 	render::CanvasRenderer m_Canvas;
 	debug::ImGuiLayer m_ImGui;
 	Editor m_Editor;
+	Session m_Session{ m_Editor };
+	Settings m_Settings;
+	std::filesystem::path m_PrefDir;     // empty: nothing is persisted (smoke test, or no writable location)
+	std::string m_LastDirectory;         // where the file dialogs start
 
 	gfx::PresentPolicy m_PresentPolicy = gfx::PresentPolicy::VSync;
 	bool m_Running = true;
@@ -113,5 +159,25 @@ private:
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;
 	bool m_CursorOverUi = false;
 	bool m_PointerInWindow = false;
+
+	// Unsaved-changes / recovery / error dialogs and the file dialog hand-off (dialogs run on SDL's own threads)
+	Action m_PromptAction = Action::None;
+	bool m_PromptRequested = false;
+	bool m_QuitDiscard = false;
+	std::optional<RecoveryInfo> m_Recovery;
+	bool m_RecoveryRequested = false;
+	std::string m_Message;
+	bool m_MessageRequested = false;
+	std::string m_Toast;
+	uint64_t m_ToastUntilNs = 0;
+	std::string m_LastTitle;
+	bool m_Failed = false;
+
+	uint32_t m_DialogEvent = 0;
+	DialogKind m_DialogKind = DialogKind::None;
+	Action m_DialogAfter = Action::None;
+	std::mutex m_DialogMutex;
+	bool m_DialogReady = false;
+	std::optional<std::string> m_DialogPath;
 };
 } // namespace wb

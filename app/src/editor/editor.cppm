@@ -8,6 +8,9 @@ module;
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <vector>
 #include <SDL3/SDL.h>
 
 export module wb.editor;
@@ -15,6 +18,7 @@ export module wb.editor;
 import wb.math;
 import wb.doc.document;
 import wb.doc.history;
+import wb.io.serializer;
 import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
@@ -61,6 +65,12 @@ public:
 	void setTool(tools::ToolKind p_Kind);
 	[[nodiscard]] tools::ToolKind selectedTool() const { return m_SelectedTool; }
 
+	// Whole-board operations (used by the session: save, open, new). Loading and new end any gesture in progress and
+	// clear the undo history.
+	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath) const;
+	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta);
+	void newBoard();
+
 	void undo();
 	void redo();
 	void zoomAroundCenter(double p_Factor);
@@ -89,6 +99,7 @@ private:
 	[[nodiscard]] tools::ToolContext toolContext();
 	[[nodiscard]] tools::Tool* toolFor(tools::ToolKind p_Kind);
 	[[nodiscard]] tools::Tool* toolInEffect() const;
+	void cancelGestures();
 	void startZoom(double p_TargetZoom, DVec2 p_AnchorScreen);
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
 
