@@ -91,8 +91,8 @@ void App::buildSelectionBar()
 	l_Buttons += l_HasText ? 1 : 0;
 	const bool l_Tilted = m_Editor.selectionIsTilted();
 	l_Buttons += l_Tilted ? 1 : 0;
-	// A single object that is not text can switch between its own axes and the board's
-	const bool l_SpaceToggle = m_Editor.selection().size() == 1 && !l_HasText;
+	// A single stroke can switch between its own axes and the board's (text and pictures always use their own)
+	const bool l_SpaceToggle = m_Editor.selection().size() == 1 && l_HasStrokes;
 	l_Buttons += l_SpaceToggle ? 1 : 0;
 	const bool l_ShowColour = l_HasStrokes || l_HasText;
 	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);

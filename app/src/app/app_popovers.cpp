@@ -408,7 +408,7 @@ void App::buildSelectPopover(const Rect2 p_Anchor)
 	const bool l_Box = l_Select.mode == tools::SelectMode::Box;
 	const std::vector<std::string> l_Hint = hintLines(m_Ui, l_Box ? "Drag a rectangle around what to select. Hold Shift to add to the selection." : "Draw around what to select. Anything the line touches is selected.", l_Inner);
 	const bool l_Local = l_Select.space == tools::TransformSpace::Local;
-	const std::vector<std::string> l_SpaceHint = hintLines(m_Ui, l_Local ? "The box of a single object turns with it, so you can stretch it along its own sides." : "The box always stays upright around the object, whatever its rotation. Text always follows its own axes.", l_Inner);
+	const std::vector<std::string> l_SpaceHint = hintLines(m_Ui, l_Local ? "The box of a single stroke turns with it, so you can stretch it along its own sides." : "The box of a single stroke stays upright, whatever its rotation. Text and pictures always follow their own sides.", l_Inner);
 	const float l_Height = l_Pad * 2.f + m_Ui.px(40.f) + m_Ui.px(12.f) + m_Ui.px(17.f) * 3.f + m_Ui.px(14.f) + 1.f + m_Ui.px(14.f) + m_Ui.px(22.f) + m_Ui.px(40.f) + m_Ui.px(10.f) + m_Ui.px(17.f) * static_cast<float>(l_SpaceHint.size());
 
 	const Rect2 l_Rect = beginPopover(m_Ui, p_Anchor, l_Width, l_Height, false);

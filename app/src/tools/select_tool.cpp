@@ -198,10 +198,10 @@ void SelectTool::ensureFrame(ToolContext& p_Context)
 	m_FrameSpace = p_Context.select.space;
 	if (m_HasFrame)
 	{
-		// One object: its box follows its own axes (always for text, which only scales as a whole; for the rest when the
-		// local space is chosen). Otherwise the box surrounds everything upright.
+		// One object: its box follows its own axes (always for text and pictures, which are rectangles; for strokes
+		// when the local space is chosen). Otherwise the box surrounds everything upright.
 		const Object* l_Single = l_Selection.size() == 1 ? p_Context.document.find(l_Selection.ids().front()) : nullptr;
-		const bool l_Oriented = l_Single != nullptr && l_Single->transform.isInvertible() && (l_Single->text() != nullptr || p_Context.select.space == TransformSpace::Local);
+		const bool l_Oriented = l_Single != nullptr && l_Single->transform.isInvertible() && (l_Single->text() != nullptr || l_Single->image() != nullptr || p_Context.select.space == TransformSpace::Local);
 		m_Frame = l_Oriented ? orientedFrame(*l_Single) : SelectionFrame::fromBounds(l_Bounds);
 	}
 	m_FrameSelectionRevision = l_Selection.revision();
