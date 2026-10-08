@@ -29,6 +29,7 @@ import wb.doc.hit;
 import wb.editor.text_session;
 import wb.text.fonts;
 import wb.text.system;
+import wb.text.utf8;
 import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
@@ -77,6 +78,7 @@ tools::ToolContext Editor::toolContext()
 		.brush = m_Brush,
 		.eraser = m_EraserState,
 		.brushSettings = m_BrushSettings,
+		.text = m_TextSystem,
 	};
 }
 
@@ -595,6 +597,11 @@ void Editor::reorderSelection(const ZOrderMove p_Move)
 
 void Editor::recolorSelection(const Color p_Color)
 {
+	if (m_TextSession.active())
+	{
+		applyTextStyle([&](TextData& p_Data) { p_Data.color = Color{ p_Color.r, p_Color.g, p_Color.b, p_Data.color.a }; });
+		return;
+	}
 	if (isBusy() || m_Selection.empty())
 		return;
 	recolorObjects(m_Document, m_History, m_Selection.orderedIds(), p_Color);
@@ -819,6 +826,27 @@ TextData Editor::newTextData() const
 	return l_Data;
 }
 
+ObjectId Editor::insertText(std::string p_Text, const DVec2 p_WorldCenter)
+{
+	if (isBusy() || m_TextSession.active())
+		return INVALID_OBJECT_ID;
+	TextData l_Data = newTextData();
+	l_Data.text = text::sanitize(p_Text);
+	if (l_Data.text.empty())
+		return INVALID_OBJECT_ID;
+	l_Data.size = m_TextSystem.measure(l_Data);
+	auto l_Object = std::make_unique<Object>();
+	l_Object->id = m_Document.allocateId();
+	l_Object->transform = Affine2::translate(p_WorldCenter);
+	l_Object->payload = std::move(l_Data);
+	const ObjectId l_Id = l_Object->id;
+	std::vector<std::unique_ptr<Object>> l_Objects;
+	l_Objects.push_back(std::move(l_Object));
+	m_History.execute(m_Document, std::make_unique<AddObjectsCommand>(std::move(l_Objects), "Paste text"));
+	m_Selection.set(std::vector<ObjectId>{ l_Id });
+	return l_Id;
+}
+
 void Editor::handleTextInput(const std::string_view p_Text)
 {
 	m_TextSession.textInput(p_Text);
@@ -829,14 +857,17 @@ void Editor::handleTextEditing(const std::string_view p_Text, const int p_Cursor
 	m_TextSession.composition(p_Text, p_CursorCodepoints);
 }
 
-std::optional<TextData> Editor::currentText() const
+std::optional<Editor::CurrentText> Editor::currentText() const
 {
 	if (m_TextSession.active())
-		return m_TextSession.data();
+	{
+		const Object* l_Object = m_Document.find(m_TextSession.object());
+		return CurrentText{ .data = m_TextSession.data(), .scale = l_Object != nullptr ? l_Object->transform.uniformScale() : 1.0 };
+	}
 	for (const ObjectId l_Id : m_Selection.orderedIds())
 	{
 		if (const Object* l_Object = m_Document.find(l_Id); l_Object != nullptr && l_Object->text() != nullptr)
-			return *l_Object->text();
+			return CurrentText{ .data = *l_Object->text(), .scale = l_Object->transform.uniformScale() };
 	}
 	return std::nullopt;
 }
@@ -855,9 +886,22 @@ bool Editor::beginEditingSelectedText()
 
 void Editor::applyTextStyle(const std::function<void(TextData&)>& p_Edit)
 {
+	applyTextStyleScaled([&](TextData& p_Data, double) { p_Edit(p_Data); });
+}
+
+void Editor::setTextSizePoints(const float p_Points)
+{
+	const double l_Zoom = m_Camera.zoom();
+	applyTextStyleScaled([&](TextData& p_Data, const double p_Scale) { p_Data.fontSize = std::max(0.5f, static_cast<float>(static_cast<double>(p_Points) / (l_Zoom * std::max(p_Scale, 1e-9)))); });
+}
+
+void Editor::applyTextStyleScaled(const std::function<void(TextData&, double)>& p_Edit)
+{
 	if (m_TextSession.active())
 	{
-		m_TextSession.applyStyle(p_Edit);
+		const Object* l_Object = m_Document.find(m_TextSession.object());
+		const double l_Scale = l_Object != nullptr ? l_Object->transform.uniformScale() : 1.0;
+		m_TextSession.applyStyle([&](TextData& p_Data) { p_Edit(p_Data, l_Scale); });
 		return;
 	}
 	if (isBusy())
@@ -870,7 +914,7 @@ void Editor::applyTextStyle(const std::function<void(TextData&)>& p_Edit)
 		if (l_Text == nullptr)
 			continue;
 		TextData l_After = *l_Text;
-		p_Edit(l_After);
+		p_Edit(l_After, l_Object->transform.uniformScale());
 		l_After.size = m_TextSystem.measure(l_After);
 		if (l_After == *l_Text)
 			continue;

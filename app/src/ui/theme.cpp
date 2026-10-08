@@ -1,7 +1,12 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
+#include <cstdio>
+#include <optional>
+#include <string>
+#include <string_view>
 
 module wb.ui.theme;
 
@@ -133,5 +138,36 @@ Color hsvToRgb(const Hsv p_Hsv)
 		return p_Hsv.v * (1.f - p_Hsv.s + p_Hsv.s * l_K);
 	};
 	return Color{ l_Channel(0.f), l_Channel(2.f / 3.f), l_Channel(1.f / 3.f), 1.f };
+}
+
+std::string colorToHex(const Color p_Color)
+{
+	const uint32_t l_Packed = Color{ p_Color.r, p_Color.g, p_Color.b, 1.f }.toRgba8();
+	char l_Hex[16];
+	std::snprintf(l_Hex, sizeof(l_Hex), "#%02X%02X%02X", (l_Packed >> 24) & 0xFFu, (l_Packed >> 16) & 0xFFu, (l_Packed >> 8) & 0xFFu);
+	return l_Hex;
+}
+
+std::optional<Color> colorFromHex(std::string_view p_Text)
+{
+	if (!p_Text.empty() && p_Text.front() == '#')
+		p_Text.remove_prefix(1);
+	if (p_Text.size() != 6 && p_Text.size() != 3)
+		return std::nullopt;
+	uint32_t l_Value = 0;
+	for (const char l_Char : p_Text)
+	{
+		const unsigned char l_Byte = static_cast<unsigned char>(l_Char);
+		const int l_Digit = std::isdigit(l_Byte) ? l_Char - '0' : (std::isxdigit(l_Byte) ? std::tolower(l_Byte) - 'a' + 10 : -1);
+		if (l_Digit < 0)
+			return std::nullopt;
+		l_Value = l_Value * 16 + static_cast<uint32_t>(l_Digit);
+	}
+	if (p_Text.size() == 3)
+	{
+		const uint32_t l_R = (l_Value >> 8) & 0xF, l_G = (l_Value >> 4) & 0xF, l_B = l_Value & 0xF;
+		l_Value = (l_R * 17 << 16) | (l_G * 17 << 8) | (l_B * 17);
+	}
+	return Color::fromRgba8((l_Value << 8) | 0xFFu);
 }
 } // namespace wb::ui

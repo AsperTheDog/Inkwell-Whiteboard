@@ -39,7 +39,7 @@ namespace wb
 {
 void App::buildSelectionBar()
 {
-	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen())
+	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen() || m_Editor.textEditing())
 	{
 		if (m_Popup == Popup::SelectionColor)
 			closePopup("selection bar hidden");
@@ -52,6 +52,7 @@ void App::buildSelectionBar()
 
 	// What is selected decides which buttons the bar offers
 	bool l_HasStrokes = false;
+	bool l_HasText = false;
 	size_t l_Pictures = 0;
 	size_t l_Animated = 0;
 	size_t l_AnimatedPlaying = 0;
@@ -62,6 +63,8 @@ void App::buildSelectionBar()
 			continue;
 		if (l_Object->stroke() != nullptr)
 			l_HasStrokes = true;
+		if (l_Object->text() != nullptr)
+			l_HasText = true;
 		if (const ImageData* l_Image = l_Object->image())
 		{
 			++l_Pictures;
@@ -85,7 +88,8 @@ void App::buildSelectionBar()
 	size_t l_Buttons = 6;
 	l_Buttons += l_Animated > 0 ? 1 : 0;
 	l_Buttons += l_Pictures > 0 ? 1 : 0;
-	const bool l_ShowColour = l_HasStrokes;
+	l_Buttons += l_HasText ? 1 : 0;
+	const bool l_ShowColour = l_HasStrokes || l_HasText;
 	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);
 	const float l_Height = l_Button + l_Pad * 2.f;
 	const float l_Margin = m_Ui.px(14.f);
@@ -134,6 +138,13 @@ void App::buildSelectionBar()
 		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Playing ? "Pause the animation" : "Play the animation"))
 			toggleSelectedPlayback();
 	}
+	if (l_HasText)
+	{
+		const ui::Rect2 l_TextRect = l_Next();
+		m_TextAnchor = l_TextRect;
+		if (m_Ui.iconButton("selbar.text", l_TextRect, ui::Icon::Type, m_Popup == Popup::Text, true, "Font, size and alignment of the selected text"))
+			openTextPopup(false);
+	}
 	if (l_Pictures > 0)
 	{
 		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
@@ -147,7 +158,7 @@ void App::buildSelectionBar()
 		m_Ui.draw().line(Vec2{ l_Line, l_Bar.min.y + m_Ui.px(12.f) }, Vec2{ l_Line, l_Bar.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
 		l_Cursor += l_Separator;
 		const ui::Rect2 l_ColorRect = l_Next();
-		if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, "Recolour the selected strokes"))
+		if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, "Recolour the selection"))
 			togglePopup(Popup::SelectionColor);
 	}
 	else if (m_Popup == Popup::SelectionColor)

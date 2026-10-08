@@ -15,6 +15,7 @@ import wb.doc.selection;
 import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
+import wb.text.system;
 
 export namespace wb::tools
 {
@@ -110,6 +111,7 @@ struct ToolContext
 	BrushState& brush;
 	EraserState& eraser;
 	BrushSettings& brushSettings;
+	text::TextSystem& text;
 };
 
 class Tool

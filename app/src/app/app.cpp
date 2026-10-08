@@ -238,6 +238,8 @@ bool App::pumpEvents(const bool p_Block)
 	{
 		// Sleep until something happens. With the overlay open, wake up periodically to refresh its stats.
 		int32_t l_Timeout = m_ShowDebug ? static_cast<int32_t>(DEBUG_REFRESH_NS / 1'000'000ull) : 1000;
+		if (m_Editor.textEditing())
+			l_Timeout = std::min<int32_t>(l_Timeout, 120); // the caret blinks
 		if (m_ToastUntilNs != 0)
 		{
 			// Wake up when the toast has to disappear
@@ -250,6 +252,12 @@ bool App::pumpEvents(const bool p_Block)
 	}
 	while (SDL_PollEvent(&l_Event))
 		handleEvent(l_Event);
+
+	if (m_Editor.textEditing() && SDL_GetTicksNS() - m_LastBlinkRedrawNs >= 100'000'000ull)
+	{
+		m_LastBlinkRedrawNs = SDL_GetTicksNS();
+		requestRedraw(1);
+	}
 
 	if (m_ToastUntilNs != 0 && SDL_GetTicksNS() >= m_ToastUntilNs)
 	{
@@ -349,6 +357,8 @@ void App::handleEvent(const SDL_Event& p_Event)
 			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
 			return;
 		}
+		if (m_Ui.wantsKeyboard() && m_Ui.keyEvent(p_Event.key))
+			return;
 		if (m_Editor.textEditing() && !modalOpen() && !m_ImGui.wantsKeyboard() && m_Editor.handleKeyDown(p_Event.key))
 			return;
 		if (handleUiKey(p_Event.key))
@@ -362,12 +372,14 @@ void App::handleEvent(const SDL_Event& p_Event)
 		return;
 	case SDL_EVENT_TEXT_INPUT:
 		requestRedraw();
-		if (!m_ImGui.wantsKeyboard() && p_Event.text.text != nullptr)
+		if (m_Ui.wantsKeyboard() && p_Event.text.text != nullptr)
+			m_Ui.textInput(p_Event.text.text);
+		else if (!m_ImGui.wantsKeyboard() && p_Event.text.text != nullptr)
 			m_Editor.handleTextInput(p_Event.text.text);
 		return;
 	case SDL_EVENT_TEXT_EDITING:
 		requestRedraw();
-		if (!m_ImGui.wantsKeyboard() && p_Event.edit.text != nullptr)
+		if (!m_Ui.wantsKeyboard() && !m_ImGui.wantsKeyboard() && p_Event.edit.text != nullptr)
 			m_Editor.handleTextEditing(p_Event.edit.text, p_Event.edit.start);
 		return;
 	default:
@@ -415,7 +427,9 @@ void App::handleInput(const platform::InputEvent& p_Event)
 	else if (const platform::WheelEvent* l_Wheel = std::get_if<platform::WheelEvent>(&p_Event))
 	{
 		const bool l_UiHasPointer = (m_Ui.wantsPointer(l_Wheel->position) || l_ImGuiHasPointer) && !m_Editor.isBusy();
-		if (!l_UiHasPointer)
+		if (m_Popup == Popup::Text && m_FontListRect.contains(l_Wheel->position))
+			m_FontScroll -= l_Wheel->delta.y * 34.f * m_Window.displayScale() * (l_Wheel->precise ? 1.f : 2.f);
+		else if (!l_UiHasPointer)
 			m_Editor.handleWheel(*l_Wheel);
 	}
 	else if (const platform::PinchEvent* l_Pinch = std::get_if<platform::PinchEvent>(&p_Event))
@@ -466,7 +480,7 @@ void App::renderFrame()
 		}
 		if (l_Fonts.scanning())
 			requestRedraw(2); // until the installed fonts are known
-		const bool l_Typing = m_Editor.textEditing();
+		const bool l_Typing = m_Editor.textEditing() || m_Ui.wantsKeyboard();
 		if (l_Typing != m_TextInputActive)
 		{
 			m_TextInputActive = l_Typing;
@@ -603,6 +617,7 @@ void App::buildUi()
 	}
 	buildCanvasOverlays();
 	buildSelectionBar();
+	buildTextBar();
 	buildTopBar();
 	buildZoomPill();
 	buildToolbar();

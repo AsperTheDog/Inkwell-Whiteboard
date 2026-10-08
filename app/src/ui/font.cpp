@@ -121,7 +121,7 @@ bool FontAtlas::load(const std::filesystem::path& p_Directory, std::string& p_Er
 
 uint64_t FontAtlas::key(const FontFace p_Face, const uint32_t p_Codepoint, const int p_PixelSize)
 {
-	return static_cast<uint64_t>(p_Face) | (static_cast<uint64_t>(p_PixelSize & 0xFFFF) << 8) | (static_cast<uint64_t>(p_Codepoint) << 24);
+	return static_cast<uint64_t>(p_Face) | (static_cast<uint64_t>(p_PixelSize & 0xFFFF) << 16) | (static_cast<uint64_t>(p_Codepoint) << 32);
 }
 
 void FontAtlas::reset()
@@ -176,7 +176,7 @@ const GlyphQuad* FontAtlas::glyph(const FontFace p_Face, const uint32_t p_Codepo
 	if (m_Overflowed)
 		return nullptr;
 
-	const Font& l_Font = p_Face == FontFace::Text ? *m_Text : *m_Icons;
+	const Font& l_Font = fontFor(p_Face);
 	const float l_Scale = emScale(l_Font.info, p_PixelSize);
 	GlyphQuad l_Quad{};
 
@@ -215,19 +215,38 @@ const GlyphQuad* FontAtlas::glyph(const FontFace p_Face, const uint32_t p_Codepo
 
 float FontAtlas::advance(const FontFace p_Face, const uint32_t p_Codepoint, const int p_PixelSize) const
 {
-	const Font& l_Font = p_Face == FontFace::Text ? *m_Text : *m_Icons;
+	const Font& l_Font = fontFor(p_Face);
 	int l_Advance = 0, l_Bearing = 0;
 	stbtt_GetCodepointHMetrics(&l_Font.info, static_cast<int>(p_Codepoint), &l_Advance, &l_Bearing);
 	return static_cast<float>(l_Advance) * emScale(l_Font.info, p_PixelSize);
 }
 
-float FontAtlas::measure(const std::string_view p_Text, const int p_PixelSize) const
+float FontAtlas::measure(const std::string_view p_Text, const int p_PixelSize, const FontFace p_Face) const
 {
 	float l_Width = 0.f;
 	size_t l_Index = 0;
 	while (l_Index < p_Text.size())
-		l_Width += advance(FontFace::Text, nextCodepoint(p_Text, l_Index), p_PixelSize);
+		l_Width += advance(p_Face, nextCodepoint(p_Text, l_Index), p_PixelSize);
 	return l_Width;
+}
+
+const FontAtlas::Font& FontAtlas::fontFor(const FontFace p_Face) const
+{
+	const size_t l_Index = static_cast<size_t>(p_Face);
+	if (l_Index >= 2 && l_Index - 2 < m_Extra.size())
+		return *m_Extra[l_Index - 2];
+	return p_Face == FontFace::Icons ? *m_Icons : *m_Text;
+}
+
+FontFace FontAtlas::addFace(const uint8_t* p_Data, const size_t p_Size)
+{
+	(void)p_Size;
+	auto l_Font = std::make_unique<Font>();
+	if (stbtt_InitFont(&l_Font->info, p_Data, stbtt_GetFontOffsetForIndex(p_Data, 0)) == 0)
+		return FontFace::Text;
+	stbtt_GetFontVMetrics(&l_Font->info, &l_Font->ascent, &l_Font->descent, &l_Font->lineGap);
+	m_Extra.push_back(std::move(l_Font));
+	return static_cast<FontFace>(m_Extra.size() + 1);
 }
 
 float FontAtlas::ascent(const int p_PixelSize) const

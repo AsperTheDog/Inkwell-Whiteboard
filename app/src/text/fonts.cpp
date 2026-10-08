@@ -692,6 +692,27 @@ std::string_view FontRegistry::faceFamily(const FaceId p_Face) const
 	return p_Face < m_Faces.size() ? std::string_view(m_Faces[p_Face]->family) : std::string_view();
 }
 
+bool FontRegistry::isLightweight(const std::string_view p_Family) const
+{
+	constexpr uint64_t LIMIT = 3u << 20;
+	const Family* l_Family = findFamily(p_Family);
+	if (l_Family == nullptr)
+		return false;
+	for (const std::optional<Source>& l_Source : l_Family->styles)
+	{
+		if (!l_Source)
+			continue;
+		if (l_Source->face != NO_FACE)
+			return true;
+		if (!l_Source->bytes.empty())
+			return l_Source->bytes.size() <= LIMIT;
+		std::error_code l_Error;
+		const uint64_t l_Size = fs::file_size(l_Source->path, l_Error);
+		return !l_Error && l_Size <= LIMIT;
+	}
+	return false;
+}
+
 bool FontRegistry::isBundled(const FaceId p_Face) const
 {
 	return p_Face < m_Faces.size() && m_Faces[p_Face]->bundled;

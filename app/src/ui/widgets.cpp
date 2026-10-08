@@ -6,12 +6,15 @@ module;
 #include <span>
 #include <string>
 #include <string_view>
+#include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 
 module wb.ui.context;
 
 import wb.math;
 import wb.platform.input;
+import wb.text.edit;
+import wb.text.utf8;
 import wb.ui.draw;
 import wb.ui.font;
 import wb.ui.theme;
@@ -298,5 +301,211 @@ bool Context::colorPicker(const std::string_view p_Key, const Rect2 p_Rect, Hsv&
 	m_Draw.circle(l_BarThumb, px(7.5f), hsvToRgb(Hsv{ p_Hsv.h, 1.f, 1.f }));
 	m_Draw.ring(l_BarThumb, px(10.5f), Color{ 0.f, 0.f, 0.f, 0.3f }, 1.f);
 	return l_Changed;
+}
+
+// ------------------------------------------------------------------------------------------------ text field
+
+namespace
+{
+// Byte offset in p_Text whose left edge is nearest to p_X (measured from the start of the text)
+size_t indexAtX(const FontAtlas& p_Font, const std::string& p_Text, const int p_PixelSize, const float p_X)
+{
+	size_t l_Index = 0;
+	float l_Previous = 0.f;
+	while (l_Index < p_Text.size())
+	{
+		const size_t l_Next = text::nextCluster(p_Text, l_Index);
+		const float l_Right = p_Font.measure(std::string_view(p_Text).substr(0, l_Next), p_PixelSize);
+		if (p_X < (l_Previous + l_Right) * 0.5f)
+			return l_Index;
+		l_Previous = l_Right;
+		l_Index = l_Next;
+	}
+	return p_Text.size();
+}
+} // namespace
+
+bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::string& p_Text, const std::string_view p_Placeholder, const std::string_view p_Allowed, const size_t p_MaxBytes, const Icon p_Icon)
+{
+	const uint32_t l_Id = id(p_Key);
+	const Interaction l_State = interact(l_Id, p_Rect);
+
+	// A press anywhere else leaves the field
+	if (m_FieldId == l_Id && m_AnyPress && !hit(p_Rect, m_AnyPressPos))
+		m_FieldId = 0;
+
+	const int l_PixelSize = fontPx(13.5f);
+	const float l_Pad = px(11.f);
+	const float l_IconSpace = p_Icon != Icon::None ? px(24.f) : 0.f;
+	const float l_TextLeft = p_Rect.min.x + l_Pad + l_IconSpace;
+	const float l_TextWidth = std::max(p_Rect.max.x - l_Pad - l_TextLeft, 1.f);
+
+	const bool l_PressedHere = m_Pressed && hit(p_Rect, m_PressPos);
+	if (l_PressedHere)
+	{
+		if (m_FieldId != l_Id)
+		{
+			m_FieldId = l_Id;
+			m_Field = text::TextEditor(p_Text);
+			m_Field.selectAll();
+			m_FieldAllowed = std::string(p_Allowed);
+			m_FieldMaxBytes = p_MaxBytes;
+			m_FieldScroll = 0.f;
+		}
+		else
+		{
+			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_PressPos.x - l_TextLeft + m_FieldScroll), false);
+		}
+		m_FieldBlink = 0.0;
+	}
+	const bool l_Focused = m_FieldId == l_Id;
+	if (l_Focused)
+	{
+		m_FieldSeen = true;
+		m_FieldBlink += m_Dt;
+		m_AnimatingNext = true;
+		if (l_State.held && !l_PressedHere)
+			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_Pos.x - l_TextLeft + m_FieldScroll), true);
+	}
+
+	bool l_Changed = false;
+	if (l_Focused && m_FieldDirty)
+	{
+		p_Text = m_Field.text();
+		l_Changed = true;
+		m_FieldDirty = false;
+	}
+
+	const float l_Hover = anim(l_Id + 1, l_State.hovered || l_Focused ? 1.f : 0.f, 24.f);
+	const float l_Radius = px(10.f);
+	m_Draw.rect(p_Rect, l_Radius, scaledAlpha(m_Theme.hover, 0.6f + 0.4f * l_Hover));
+	if (l_Focused)
+		m_Draw.outline(p_Rect, l_Radius, m_Theme.accent, 1.5f * m_Scale);
+	if (p_Icon != Icon::None)
+		m_Draw.icon(p_Icon, Vec2{ p_Rect.min.x + l_Pad + px(7.f), p_Rect.center().y }, fontPx(15.f), m_Theme.textMuted);
+
+	const std::string& l_Shown = l_Focused ? m_Field.text() : p_Text;
+	const float l_CaretOffset = l_Focused ? m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.caret()), l_PixelSize) : 0.f;
+	if (l_Focused)
+	{
+		if (l_CaretOffset - m_FieldScroll > l_TextWidth - px(2.f))
+			m_FieldScroll = l_CaretOffset - l_TextWidth + px(2.f);
+		if (l_CaretOffset < m_FieldScroll)
+			m_FieldScroll = l_CaretOffset;
+		m_FieldScroll = std::max(m_FieldScroll, 0.f);
+	}
+	m_Draw.pushClip(Rect2{ Vec2{ l_TextLeft, p_Rect.min.y }, Vec2{ l_TextLeft + l_TextWidth + px(2.f), p_Rect.max.y } });
+	const float l_Origin = l_TextLeft - (l_Focused ? m_FieldScroll : 0.f);
+	if (l_Focused && m_Field.hasSelection())
+	{
+		const float l_From = m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.selectionBegin()), l_PixelSize);
+		const float l_To = m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.selectionEnd()), l_PixelSize);
+		const float l_HalfHeight = px(11.f);
+		m_Draw.rect(Rect2{ Vec2{ l_Origin + l_From, p_Rect.center().y - l_HalfHeight }, Vec2{ l_Origin + l_To, p_Rect.center().y + l_HalfHeight } }, px(3.f), withAlpha(m_Theme.accent, 0.3f));
+	}
+	if (l_Shown.empty() && !l_Focused)
+		m_Draw.text(Vec2{ l_Origin, p_Rect.center().y }, p_Placeholder, l_PixelSize, m_Theme.textFaint);
+	else
+		m_Draw.text(Vec2{ l_Origin, p_Rect.center().y }, l_Shown, l_PixelSize, m_Theme.text);
+	if (l_Focused && std::fmod(m_FieldBlink, 1.06) < 0.53)
+	{
+		const float l_CaretX = std::round(l_Origin + l_CaretOffset);
+		m_Draw.line(Vec2{ l_CaretX, p_Rect.center().y - px(9.f) }, Vec2{ l_CaretX, p_Rect.center().y + px(9.f) }, std::max(1.f, 1.2f * m_Scale), m_Theme.text);
+	}
+	m_Draw.popClip();
+	return l_Changed;
+}
+
+bool Context::keyEvent(const SDL_KeyboardEvent& p_Event)
+{
+	if (m_FieldId == 0)
+		return false;
+	const bool l_Ctrl = (p_Event.mod & SDL_KMOD_CTRL) != 0;
+	const bool l_Shift = (p_Event.mod & SDL_KMOD_SHIFT) != 0;
+	const SDL_Keycode l_Key = p_Event.key;
+	m_FieldBlink = 0.0;
+	switch (l_Key)
+	{
+	case SDLK_ESCAPE:
+	case SDLK_RETURN:
+	case SDLK_KP_ENTER:
+	case SDLK_TAB:
+		m_FieldId = 0;
+		return true;
+	case SDLK_LEFT:
+		m_Field.moveLeft(l_Shift, l_Ctrl);
+		return true;
+	case SDLK_RIGHT:
+		m_Field.moveRight(l_Shift, l_Ctrl);
+		return true;
+	case SDLK_HOME:
+		m_Field.moveTo(0, l_Shift);
+		return true;
+	case SDLK_END:
+		m_Field.moveTo(m_Field.text().size(), l_Shift);
+		return true;
+	case SDLK_BACKSPACE:
+		m_FieldDirty = m_Field.backspace(l_Ctrl) || m_FieldDirty;
+		return true;
+	case SDLK_DELETE:
+		m_FieldDirty = m_Field.erase(l_Ctrl) || m_FieldDirty;
+		return true;
+	default:
+		break;
+	}
+	if (l_Ctrl)
+	{
+		switch (l_Key)
+		{
+		case SDLK_A:
+			m_Field.selectAll();
+			return true;
+		case SDLK_C:
+			if (m_Field.hasSelection())
+				SDL_SetClipboardText(m_Field.selectedText().c_str());
+			return true;
+		case SDLK_X:
+			if (m_Field.hasSelection())
+			{
+				SDL_SetClipboardText(m_Field.selectedText().c_str());
+				m_FieldDirty = m_Field.deleteSelection() || m_FieldDirty;
+			}
+			return true;
+		case SDLK_V:
+			if (char* l_Text = SDL_GetClipboardText())
+			{
+				textInput(l_Text);
+				SDL_free(l_Text);
+			}
+			return true;
+		case SDLK_Z:
+			l_Shift ? m_Field.redo() : m_Field.undo();
+			m_FieldDirty = true;
+			return true;
+		default:
+			return false;
+		}
+	}
+	return l_Key < 0x40000000 && l_Key != SDLK_UNKNOWN;
+}
+
+void Context::textInput(const std::string_view p_Text)
+{
+	if (m_FieldId == 0)
+		return;
+	std::string l_Clean;
+	for (const char l_Char : text::sanitize(p_Text))
+	{
+		if (l_Char == '\n' || l_Char == '\t')
+			continue;
+		if (!m_FieldAllowed.empty() && m_FieldAllowed.find(l_Char) == std::string::npos)
+			continue;
+		l_Clean.push_back(l_Char);
+	}
+	const size_t l_Selected = m_Field.hasSelection() ? m_Field.selectionEnd() - m_Field.selectionBegin() : 0;
+	if (l_Clean.empty() || m_Field.text().size() - l_Selected + l_Clean.size() > m_FieldMaxBytes)
+		return;
+	m_FieldDirty = m_Field.insert(l_Clean) || m_FieldDirty;
+	m_FieldBlink = 0.0;
 }
 } // namespace wb::ui

@@ -100,12 +100,29 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 
 bool App::pasteFromSystemClipboard()
 {
-	if (m_Editor.isBusy() || !platform::clipboardMayHavePictures())
+	if (m_Editor.isBusy() || m_Editor.textEditing())
 		return false;
-	std::vector<platform::ClipboardPicture> l_Pictures = platform::readClipboardPictures(MAX_PICTURE_BYTES);
-	std::erase_if(l_Pictures, [](const platform::ClipboardPicture& p_Picture) { return !image::probe(p_Picture.bytes); });
+	std::vector<platform::ClipboardPicture> l_Pictures;
+	if (platform::clipboardMayHavePictures())
+	{
+		l_Pictures = platform::readClipboardPictures(MAX_PICTURE_BYTES);
+		std::erase_if(l_Pictures, [](const platform::ClipboardPicture& p_Picture) { return !image::probe(p_Picture.bytes); });
+	}
 	if (l_Pictures.empty())
-		return false;
+	{
+		// Plain text from another program becomes a text box
+		if (!SDL_HasClipboardText())
+			return false;
+		char* l_Text = SDL_GetClipboardText();
+		if (l_Text == nullptr)
+			return false;
+		const std::string l_Pasted(l_Text);
+		SDL_free(l_Text);
+		const DVec2 l_Viewport = m_Editor.camera().viewport();
+		const bool l_Over = m_PointerInWindow && !m_CursorOverUi && m_LastPointer;
+		const DVec2 l_Screen = l_Over ? DVec2{ m_LastPointer->position } : l_Viewport * 0.5;
+		return m_Editor.insertText(l_Pasted, m_Editor.camera().screenToWorld(l_Screen)) != INVALID_OBJECT_ID;
+	}
 	// Where the pointer is, unless it is over the interface or outside the window
 	std::optional<Vec2> l_Position;
 	if (m_PointerInWindow && !m_CursorOverUi && m_LastPointer)
@@ -134,6 +151,12 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 			showToast("Save this board first, then open the other one with Ctrl+O");
 		else
 			openPath(l_Path);
+		return;
+	}
+
+	if (const std::string l_Extension = l_Path.extension().string(); l_Extension == ".ttf" || l_Extension == ".otf" || l_Extension == ".ttc" || l_Extension == ".TTF" || l_Extension == ".OTF")
+	{
+		importFontFiles({ std::string(p_Event.data) });
 		return;
 	}
 

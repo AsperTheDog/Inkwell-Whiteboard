@@ -322,8 +322,8 @@ const std::vector<ShortcutSection>& leftSections()
 {
 	static const std::vector<ShortcutSection> s_Sections{
 		{ "Tools", {
-			{ "P  E  V  H", "Pen, eraser, select, hand" },
-			{ "Alt + P/E/V/H", "Borrow a tool while held" },
+			{ "P  E  V  T  H", "Pen, eraser, select, text, hand" },
+			{ "Alt + P/E/V/T/H", "Borrow a tool while held" },
 			{ "Pen eraser end", "Erases, whatever the tool" },
 		} },
 		{ "Navigation", {
@@ -365,6 +365,14 @@ const std::vector<ShortcutSection>& rightSections()
 			{ "Ctrl + ] / [", "Bring forward / send back" },
 			{ "Ctrl + Shift + ] / [", "To front / to back" },
 			{ "Esc", "Cancel a drag, or deselect" },
+		} },
+		{ "Text", {
+			{ "Click (Text tool)", "Type there; click again to edit" },
+			{ "Double click / Enter", "Edit the selected text" },
+			{ "Ctrl + B / I", "Bold / italic" },
+			{ "Esc / Ctrl + Enter", "Finish typing" },
+			{ "Drag a side handle", "Wrap lines at that width" },
+			{ "Drop a .ttf / .otf file", "Add a font" },
 		} },
 		{ "Selection", {
 			{ "Click, box or lasso", "Select (Shift adds)" },

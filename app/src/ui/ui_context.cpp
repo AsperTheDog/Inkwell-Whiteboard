@@ -98,8 +98,12 @@ void Context::endFrame()
 	}
 	if (m_Active != 0 && !m_Down)
 		m_Active = 0;
+	if (m_FieldId != 0 && !m_FieldSeen)
+		m_FieldId = 0;
+	m_FieldSeen = false;
 	m_Pressed = false;
 	m_Released = false;
+	m_AnyPress = false;
 	m_PrevPanels = m_Panels;
 	m_Animating = m_AnimatingNext;
 }
@@ -124,6 +128,8 @@ bool Context::pointerEvent(const platform::PointerEvent& p_Event)
 	case platform::PointerPhase::Down:
 	{
 		m_HoverValid = true;
+		m_AnyPress = true;
+		m_AnyPressPos = p_Event.position;
 		if (!wantsPointer(p_Event.position))
 			return false;
 		m_Captured = true;

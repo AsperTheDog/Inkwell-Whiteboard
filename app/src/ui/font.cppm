@@ -74,9 +74,18 @@ enum class Icon : uint32_t
 	Play = 0xE13F,
 	Pause = 0xE131,
 	ShrinkImage = 0xE540,
+	Type = 0xE197,
+	Bold = 0xE061,
+	Italic = 0xE100,
+	AlignLeft = 0xE041,
+	AlignCenter = 0xE03C,
+	AlignRight = 0xE042,
+	Search = 0xE154,
+	Upload = 0xE19D,
 };
 
-enum class FontFace : uint8_t
+// Text and Icons are the interface's own faces; addFace() hands out more (the font picker shows each family in itself)
+enum class FontFace : uint16_t
 {
 	Text,
 	Icons,
@@ -106,6 +115,10 @@ public:
 	// Loads Inter.ttf and lucide.ttf from p_Directory. Returns false (with p_Error set) when a file is missing.
 	bool load(const std::filesystem::path& p_Directory, std::string& p_Error);
 
+	// Adds a face drawn from p_Data, which must stay alive and unchanged for as long as the atlas is used. Returns
+	// FontFace::Text when the data cannot be read as a font.
+	FontFace addFace(const uint8_t* p_Data, size_t p_Size);
+
 	// Call once per frame before building the UI. Returns true when the atlas had overflowed and was reset (the UI
 	// of the previous frame was missing glyphs, so another frame is worth drawing).
 	bool beginFrame();
@@ -114,7 +127,7 @@ public:
 	[[nodiscard]] const GlyphQuad* glyph(FontFace p_Face, uint32_t p_Codepoint, int p_PixelSize);
 	[[nodiscard]] float advance(FontFace p_Face, uint32_t p_Codepoint, int p_PixelSize) const;
 	// Width of p_Text at p_PixelSize (no wrapping)
-	[[nodiscard]] float measure(std::string_view p_Text, int p_PixelSize) const;
+	[[nodiscard]] float measure(std::string_view p_Text, int p_PixelSize, FontFace p_Face = FontFace::Text) const;
 	// Distance from the top of the line box to the baseline, and the line height
 	[[nodiscard]] float ascent(int p_PixelSize) const;
 	[[nodiscard]] float lineHeight(int p_PixelSize) const;
@@ -138,6 +151,8 @@ private:
 
 	std::unique_ptr<Font> m_Text;
 	std::unique_ptr<Font> m_Icons;
+	std::vector<std::unique_ptr<Font>> m_Extra;
+	[[nodiscard]] const Font& fontFor(FontFace p_Face) const;
 	std::vector<uint8_t> m_Pixels;
 	std::unordered_map<uint64_t, GlyphQuad> m_Glyphs;
 

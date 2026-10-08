@@ -139,7 +139,7 @@ void App::buildPopover()
 	// A tool popup closes when the device that opened it switches to another tool (keyboard shortcuts included).
 	// Other devices speaking up in the meantime (a stray mouse or touch event next to a tablet) must not close it.
 	const tools::ToolKind l_Tool = m_Editor.deviceTool(m_PopupDevice);
-	if ((m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
+	if ((m_Popup == Popup::Text && m_TextPopupFromToolbar && l_Tool != tools::ToolKind::Text) || (m_Popup == Popup::Text && !m_TextPopupFromToolbar && !m_Editor.currentText()) || (m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
 		closePopup("its device switched tools");
 	if (m_Popup == Popup::SelectionColor && !m_Editor.hasSelection())
 		closePopup("selection gone");
@@ -155,6 +155,9 @@ void App::buildPopover()
 	case Popup::Select:
 		buildSelectPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Select)]);
 		break;
+	case Popup::Text:
+		buildTextPopover(m_TextPopupFromToolbar ? m_ToolRects[static_cast<size_t>(tools::ToolKind::Text)] : m_TextAnchor);
+		break;
 	case Popup::SelectionColor:
 	{
 		const float l_Pad = m_Ui.px(18.f);
@@ -167,7 +170,7 @@ void App::buildPopover()
 		float l_Y = l_Rect.min.y + l_Pad;
 		const float l_Left = l_Rect.min.x + l_Pad;
 		const float l_Inner = l_Width - l_Pad * 2.f;
-		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(10.f) }, "Recolour the selected strokes", 12.5f, m_Ui.theme().textMuted);
+		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(10.f) }, "Recolour the selection", 12.5f, m_Ui.theme().textMuted);
 		l_Y += m_Ui.px(20.f);
 		Color l_Picked;
 		if (paletteGrid(Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, 2.f * l_Diameter + m_Ui.px(12.f) }), l_Diameter, 6, std::nullopt, l_Picked))
@@ -215,7 +218,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	if (!m_PickerOpen)
 		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + m_Ui.px(38.f) + m_Ui.px(10.f);
 	else
-		l_Height = l_Pad * 2.f + m_Ui.px(34.f) + m_Ui.px(12.f) + m_Ui.px(190.f) + m_Ui.px(14.f) + m_Ui.px(20.f) + m_Ui.px(16.f) + l_Diameter;
+		l_Height = l_Pad * 2.f + m_Ui.px(34.f) + m_Ui.px(12.f) + m_Ui.px(190.f) + m_Ui.px(14.f) + m_Ui.px(38.f) + m_Ui.px(16.f) + l_Diameter;
 
 	const Rect2 l_Rect = beginPopover(m_Ui, p_Anchor, l_Width, l_Height, false);
 	m_Ui.panel(l_Rect, m_Ui.px(20.f));
@@ -261,11 +264,18 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 		}
 		l_Y += m_Ui.px(190.f) + m_Ui.px(14.f);
 
-		const uint32_t l_Packed = Color{ l_Brush.color.r, l_Brush.color.g, l_Brush.color.b, 1.f }.toRgba8();
-		char l_Hex[16];
-		std::snprintf(l_Hex, sizeof(l_Hex), "#%02X%02X%02X", (l_Packed >> 24) & 0xFFu, (l_Packed >> 16) & 0xFFu, (l_Packed >> 8) & 0xFFu);
-		m_Ui.label(Vec2{ l_Rect.center().x, l_Y + m_Ui.px(10.f) }, l_Hex, 13.5f, l_Theme.textMuted, ui::TextAlign::Center);
-		l_Y += m_Ui.px(20.f) + m_Ui.px(16.f);
+		// The value can be typed or pasted
+		if (!m_Ui.wantsKeyboard())
+			m_HexText = ui::colorToHex(l_Brush.color);
+		if (m_Ui.textField("pen.hex", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(38.f) }), m_HexText, "#RRGGBB", "0123456789abcdefABCDEF#", 7))
+		{
+			if (const std::optional<Color> l_Parsed = ui::colorFromHex(m_HexText))
+			{
+				l_Brush.color = *l_Parsed;
+				m_PickerHsv = ui::rgbToHsv(*l_Parsed);
+			}
+		}
+		l_Y += m_Ui.px(38.f) + m_Ui.px(16.f);
 		l_RecentRow(0);
 		endPopover(m_Ui);
 		return;

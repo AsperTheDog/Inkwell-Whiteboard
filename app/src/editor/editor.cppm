@@ -119,11 +119,20 @@ public:
 	void handleTextEditing(std::string_view p_Text, int p_CursorCodepoints);
 	// Edits the text being typed, or else the selected text objects (one undo step)
 	void applyTextStyle(const std::function<void(TextData&)>& p_Edit);
-	// The text being edited, or the first selected text object
-	[[nodiscard]] std::optional<TextData> currentText() const;
+	// Sets the size the text appears at on screen, in logical points at the current zoom
+	void setTextSizePoints(float p_Points);
+	// The text being edited, or the first selected text object, and how much its object is scaled
+	struct CurrentText
+	{
+		TextData data;
+		double scale = 1.0;
+	};
+	[[nodiscard]] std::optional<CurrentText> currentText() const;
 	// Starts typing in the selected text object (when exactly one is selected)
 	bool beginEditingSelectedText();
 	void endTextEditing() { m_TextSession.end(); }
+	// Puts pasted text on the board as a text box with the current text style, centred on p_WorldCenter
+	ObjectId insertText(std::string p_Text, DVec2 p_WorldCenter);
 	// Measures every text object again (fonts that were not available when the board was made may have arrived)
 	void remeasureText();
 
@@ -180,6 +189,7 @@ private:
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
 	[[nodiscard]] TextData newTextData() const;
 	void embedFonts();
+	void applyTextStyleScaled(const std::function<void(TextData&, double)>& p_Edit);
 
 	Document m_Document;
 	History m_History;

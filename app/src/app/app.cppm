@@ -84,6 +84,7 @@ private:
 		Open,
 		Save,
 		Pictures,
+		Fonts,
 	};
 	// The floating panel that is open, if any
 	enum class Popup : uint8_t
@@ -94,6 +95,7 @@ private:
 		Select,
 		Menu,
 		SelectionColor,
+		Text,
 	};
 
 	void init();
@@ -123,6 +125,13 @@ private:
 	void buildEraserPopover(ui::Rect2 p_Anchor);
 	void buildSelectPopover(ui::Rect2 p_Anchor);
 	void buildSelectionBar();
+	// Text (app_text.cpp)
+	void buildTextOverlay();
+	void buildTextBar();
+	void buildTextPopover(ui::Rect2 p_Anchor);
+	void openTextPopup(bool p_FromToolbar);
+	void showInsertFontDialog();
+	void importFontFiles(const std::vector<std::string>& p_Paths);
 	void buildMenu();
 	void buildShortcuts();
 	void buildDialogs();
@@ -240,6 +249,19 @@ private:
 	ui::Rect2 m_ToolbarRect{};
 	ui::Rect2 m_MenuAnchor{};
 	ui::Rect2 m_SelectionBarRect{};
+	// Text
+	ui::Rect2 m_TextBarRect{};
+	ui::Rect2 m_TextAnchor{};            // the button of the bar that opened the text popover
+	bool m_TextPopupFromToolbar = false; // opened from the Text tool's button (it then follows the tool)
+	std::string m_FontFilter;
+	std::string m_HexText;
+	float m_FontScroll = 0.f;
+	bool m_FontScrollToSelected = false;
+	ui::Rect2 m_FontListRect{};
+	std::unordered_map<uint32_t, ui::FontFace> m_FontPreviewFaces; // registry face -> face in the interface's glyph atlas
+	uint64_t m_CaretActivity = ~0ull;
+	uint64_t m_CaretResetNs = 0;
+	uint64_t m_LastBlinkRedrawNs = 0;
 
 	std::array<SDL_Cursor*, tools::CURSOR_KIND_COUNT> m_Cursors{};
 	tools::CursorKind m_CurrentCursor = tools::CursorKind::Default;

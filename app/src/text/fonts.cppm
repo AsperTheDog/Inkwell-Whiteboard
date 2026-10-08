@@ -118,6 +118,8 @@ public:
 	// The file of a face, for embedding in a board; empty when its licence forbids embedding
 	[[nodiscard]] std::span<const uint8_t> embeddableBytes(FaceId p_Face) const;
 	[[nodiscard]] std::string_view faceFamily(FaceId p_Face) const;
+	// True when a family is small enough to be read just to show its name in itself (the font picker)
+	[[nodiscard]] bool isLightweight(std::string_view p_Family) const;
 	// Fonts that ship with the app are never embedded in boards
 	[[nodiscard]] bool isBundled(FaceId p_Face) const;
 

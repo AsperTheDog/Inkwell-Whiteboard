@@ -80,7 +80,7 @@ public:
 	void polyline(std::span<const Vec2> p_Points, float p_Width, Color p_Color, bool p_Closed);
 
 	// Text whose vertical centre (of the capital letters) is at p_Position.y. Returns the width drawn.
-	float text(Vec2 p_Position, std::string_view p_Text, int p_PixelSize, Color p_Color, TextAlign p_Align = TextAlign::Left);
+	float text(Vec2 p_Position, std::string_view p_Text, int p_PixelSize, Color p_Color, TextAlign p_Align = TextAlign::Left, FontFace p_Face = FontFace::Text);
 	void icon(Icon p_Icon, Vec2 p_Center, int p_PixelSize, Color p_Color);
 
 	// Colour picker pieces

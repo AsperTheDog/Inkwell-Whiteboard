@@ -1,5 +1,8 @@
 // Colours of the user interface. Two palettes (light and dark) that can be blended, so switching themes fades.
 module;
+#include <optional>
+#include <string>
+#include <string_view>
 
 export module wb.ui.theme;
 
@@ -60,4 +63,8 @@ struct Hsv
 };
 [[nodiscard]] Hsv rgbToHsv(Color p_Color);
 [[nodiscard]] Color hsvToRgb(Hsv p_Hsv);
+
+// "#RRGGBB" (opaque) and back; the parser also takes "RRGGBB" and the short "#RGB"
+[[nodiscard]] std::string colorToHex(Color p_Color);
+[[nodiscard]] std::optional<Color> colorFromHex(std::string_view p_Text);
 } // namespace wb::ui

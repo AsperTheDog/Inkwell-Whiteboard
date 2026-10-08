@@ -74,6 +74,16 @@ private:
 		Affine2 transform{};
 	};
 
+	// What the selection holds of text: its boxes scale as a whole (corners keep the proportions); the side handles of a
+	// single upright text box change where its lines wrap instead
+	struct TextInfo
+	{
+		bool any = false;
+		bool singleUpright = false;
+		ObjectId id = INVALID_OBJECT_ID;
+	};
+	[[nodiscard]] TextInfo textInfo(const ToolContext& p_Context) const;
+	void applyTextResize(ToolContext& p_Context);
 	void ensureFrame(ToolContext& p_Context);
 	void begin(const platform::PointerEvent& p_Event, ToolContext& p_Context);
 	void drag(const platform::PointerEvent& p_Event, ToolContext& p_Context);
@@ -112,6 +122,10 @@ private:
 	double m_RotateStart = 0.0;
 	SelectionFrame m_BaseFrame{};
 	std::vector<Base> m_Bases;
+	bool m_TextResize = false; // dragging a side handle of a text box: changes its wrap width
+	ObjectId m_TextResizeId = INVALID_OBJECT_ID;
+	TextData m_TextBase;
+	Affine2 m_TextBaseTransform{};
 	std::vector<ObjectId> m_KeptSelection; // additive box / lasso: what was selected before
 	std::vector<DVec2> m_Lasso;
 };

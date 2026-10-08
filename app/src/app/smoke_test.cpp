@@ -48,6 +48,7 @@ Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
 std::vector<ObjectId> s_SmokePictures;
 size_t s_SmokeObjectsBefore = 0;
 size_t s_SmokeUndoBefore = 0;
+float s_SmokeWidthBefore = 0.f;
 bool s_SmokeExtraPicture = false;
 
 void appendPngBytes(void* p_Context, void* p_Data, const int p_Size)
@@ -744,6 +745,56 @@ void App::driveSmokeTest()
 	}
 	case 20:
 	{
+		// Resize the last text box with its side handle: it wraps at the new width, in one undo step
+		m_Editor.setTool(tools::ToolKind::Select);
+		m_Editor.selection().set(std::vector<ObjectId>{ m_Editor.document().objects().back()->id });
+		s_SmokeUndoBefore = m_Editor.history().undoCount();
+		s_SmokeWidthBefore = m_Editor.document().objects().back()->text()->wrapWidth;
+		const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
+		Vec2 l_Handle{ 0.f };
+		bool l_Found = false;
+		for (size_t i = 0; i < l_Overlay.handles.size(); ++i)
+		{
+			const bool l_Corner = i % 2 == 1;
+			if (l_Overlay.handleShown[i] && !l_Corner && !l_Found)
+			{
+				l_Handle = l_Overlay.handles[i];
+				l_Found = true;
+			}
+		}
+		if (!l_Found)
+		{
+			spdlog::error("Smoke test (text): a text box shows no side handle");
+			m_Failed = true;
+			return;
+		}
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_Handle + Vec2{ -70.f * l_S, 0.f } * p_T; }), {});
+		return;
+	}
+	case 21:
+	{
+		const Object* l_Object = m_Editor.document().objects().back().get();
+		const float l_Width = l_Object->text()->wrapWidth;
+		if (std::abs(l_Width - s_SmokeWidthBefore) < 20.f || m_Editor.history().undoCount() != s_SmokeUndoBefore + 1)
+		{
+			spdlog::error("Smoke test (text): the side handle did not change the wrap width ({} -> {}, {} undo steps)", s_SmokeWidthBefore, l_Width, m_Editor.history().undoCount() - s_SmokeUndoBefore);
+			m_Failed = true;
+			return;
+		}
+		m_Editor.undo();
+		if (std::abs(m_Editor.document().objects().back()->text()->wrapWidth - s_SmokeWidthBefore) > 0.01f)
+		{
+			spdlog::error("Smoke test (text): undoing the resize did not restore the width");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.redo();
+		if (!m_Failed)
+			spdlog::info("Smoke test: resizing a text box through its side handle OK");
+		return;
+	}
+	case 22:
+	{
 		// Leave a panel open for the screenshot
 		const std::string& l_Ui = m_Options.smokeUi;
 		if (l_Ui == "pen" || l_Ui == "picker")
@@ -753,6 +804,33 @@ void App::driveSmokeTest()
 			m_PickerOpen = l_Ui == "picker";
 			m_RecentColors[0] = 0x8E24AAFFu;
 			m_RecentColors[1] = 0x26A69AFFu;
+		}
+		else if (l_Ui == "text")
+		{
+			m_Editor.setTool(tools::ToolKind::Text);
+			openTextPopup(true);
+		}
+		else if (l_Ui == "textedit" || l_Ui == "textstyle")
+		{
+			m_Editor.setTool(tools::ToolKind::Select);
+			m_Editor.selection().set(std::vector<ObjectId>{ m_Editor.document().objects().back()->id });
+			if (l_Ui == "textedit")
+			{
+				m_Editor.beginEditingSelectedText();
+				for (int i = 0; i < 6; ++i)
+				{
+					SDL_KeyboardEvent l_Left{};
+					l_Left.type = SDL_EVENT_KEY_DOWN;
+					l_Left.key = SDLK_LEFT;
+					l_Left.mod = SDL_KMOD_SHIFT;
+					l_Left.down = true;
+					m_Editor.handleKeyDown(l_Left);
+				}
+			}
+			else
+			{
+				openTextPopup(false);
+			}
 		}
 		else if (l_Ui == "eraser")
 		{

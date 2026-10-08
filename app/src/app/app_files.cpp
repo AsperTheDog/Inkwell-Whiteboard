@@ -293,6 +293,11 @@ void App::handleDialogResult()
 	if (l_Paths.empty())
 		return; // cancelled (or the dialog failed): the board stays as it is
 
+	if (l_Kind == DialogKind::Fonts)
+	{
+		importFontFiles(l_Paths);
+		return;
+	}
 	if (l_Kind == DialogKind::Pictures)
 	{
 		std::vector<platform::ClipboardPicture> l_Pictures;

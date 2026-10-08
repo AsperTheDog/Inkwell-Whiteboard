@@ -16,11 +16,13 @@ module wb.tools.select;
 import wb.math;
 import wb.doc.commands;
 import wb.doc.document;
+import wb.doc.edit;
 import wb.doc.gizmo;
 import wb.doc.hit;
 import wb.doc.object;
 import wb.doc.selection;
 import wb.platform.input;
+import wb.text.system;
 import wb.view.camera;
 import wb.tools.tool;
 
@@ -74,10 +76,31 @@ double SelectTool::paddingWorld(const ToolContext& p_Context) const
 	return FRAME_PADDING * p_Context.camera.pixelScale() / p_Context.camera.pixelsPerUnit();
 }
 
+SelectTool::TextInfo SelectTool::textInfo(const ToolContext& p_Context) const
+{
+	TextInfo l_Info;
+	for (const ObjectId l_Id : p_Context.selection.ids())
+	{
+		const Object* l_Object = p_Context.document.find(l_Id);
+		if (l_Object == nullptr || l_Object->text() == nullptr)
+			continue;
+		l_Info.any = true;
+		l_Info.id = l_Id;
+	}
+	if (l_Info.any && p_Context.selection.size() == 1)
+	{
+		const Affine2& l_Transform = p_Context.document.find(l_Info.id)->transform;
+		l_Info.singleUpright = std::abs(l_Transform.linear[0].y) < 1e-9 && std::abs(l_Transform.linear[1].x) < 1e-9 && l_Transform.linear[0].x > 0.0 && l_Transform.linear[1].y > 0.0;
+	}
+	return l_Info;
+}
+
 bool SelectTool::edgeHandleShown(const Handle p_Handle, const ToolContext& p_Context) const
 {
 	if (isCorner(p_Handle))
 		return true;
+	if (const TextInfo l_Text = textInfo(p_Context); l_Text.any && (!l_Text.singleUpright || p_Handle == Handle::N || p_Handle == Handle::S))
+		return false;
 	const double l_Side = (p_Handle == Handle::N || p_Handle == Handle::S ? m_Frame.half.x : m_Frame.half.y) * 2.0 * p_Context.camera.pixelsPerUnit();
 	return l_Side >= EDGE_HANDLE_MIN_SIDE * p_Context.camera.pixelScale();
 }
@@ -326,6 +349,18 @@ void SelectTool::startTransform(const Gesture p_Gesture, ToolContext& p_Context)
 	}
 	if (p_Gesture == Gesture::Resize)
 		m_GrabOffset = m_DownWorld - m_Frame.handlePosition(m_ActiveHandle);
+	m_TextResize = false;
+	if (p_Gesture == Gesture::Resize && (m_ActiveHandle == Handle::E || m_ActiveHandle == Handle::W))
+	{
+		if (const TextInfo l_Text = textInfo(p_Context); l_Text.singleUpright)
+		{
+			const Object* l_Object = p_Context.document.find(l_Text.id);
+			m_TextResize = true;
+			m_TextResizeId = l_Text.id;
+			m_TextBase = *l_Object->text();
+			m_TextBaseTransform = l_Object->transform;
+		}
+	}
 	m_Dragged = p_Gesture != Gesture::Move; // resizing and rotating start at once; moving waits for the drag threshold
 }
 
@@ -400,6 +435,30 @@ void SelectTool::begin(const platform::PointerEvent& p_Event, ToolContext& p_Con
 	m_Cursor = CursorKind::Crosshair;
 }
 
+// Dragging the east or west handle of a text box: the opposite edge stays, the lines wrap at the new width
+void SelectTool::applyTextResize(ToolContext& p_Context)
+{
+	const bool l_East = m_ActiveHandle == Handle::E;
+	const double l_Scale = m_TextBaseTransform.linear[0].x;
+	const double l_BaseLeft = m_TextBaseTransform.translation.x - static_cast<double>(m_TextBase.size.x) * 0.5 * l_Scale;
+	const double l_BaseRight = m_TextBaseTransform.translation.x + static_cast<double>(m_TextBase.size.x) * 0.5 * l_Scale;
+	const double l_Grab = (m_CurrentWorld - m_GrabOffset).x;
+	const double l_WidthWorld = l_East ? l_Grab - l_BaseLeft : l_BaseRight - l_Grab;
+	const float l_Wrap = std::max(static_cast<float>(l_WidthWorld / std::max(l_Scale, 1e-12)), m_TextBase.fontSize * 1.5f);
+
+	TextData l_Data = m_TextBase;
+	l_Data.wrapWidth = l_Wrap;
+	l_Data.size = p_Context.text.measure(l_Data);
+	const Affine2 l_Transform = anchoredTextTransform(m_TextBaseTransform, m_TextBase.size, l_Data.size, l_East ? TextAlign::Left : TextAlign::Right);
+	p_Context.document.modify(m_TextResizeId, [&](Object& p_Object)
+	{
+		*p_Object.text() = l_Data;
+		p_Object.transform = l_Transform;
+	});
+	if (const Object* l_Object = p_Context.document.find(m_TextResizeId))
+		m_Frame = SelectionFrame::fromBounds(l_Object->worldBounds());
+}
+
 void SelectTool::applyTransform(const FrameTransform& p_Result, ToolContext& p_Context)
 {
 	for (const Base& l_Base : m_Bases)
@@ -428,7 +487,10 @@ void SelectTool::drag(const platform::PointerEvent& p_Event, ToolContext& p_Cont
 		break;
 
 	case Gesture::Resize:
-		applyTransform(resizeFrame(m_BaseFrame, m_ActiveHandle, m_CurrentWorld - m_GrabOffset, ResizeOptions{ .keepAspect = l_Shift, .fromCenter = l_Alt }), p_Context);
+		if (m_TextResize)
+			applyTextResize(p_Context);
+		else
+			applyTransform(resizeFrame(m_BaseFrame, m_ActiveHandle, m_CurrentWorld - m_GrabOffset, ResizeOptions{ .keepAspect = l_Shift || (isCorner(m_ActiveHandle) && textInfo(p_Context).any), .fromCenter = l_Alt }), p_Context);
 		break;
 
 	case Gesture::Rotate:
@@ -491,7 +553,20 @@ void SelectTool::finish(ToolContext& p_Context)
 	case Gesture::Resize:
 	case Gesture::Rotate:
 	{
-		if (m_Dragged)
+		if (m_Dragged && m_TextResize)
+		{
+			const Object* l_Object = p_Context.document.find(m_TextResizeId);
+			if (l_Object != nullptr && l_Object->text() != nullptr && !(*l_Object->text() == m_TextBase))
+			{
+				std::vector<SetTextCommand::Entry> l_Entries;
+				l_Entries.push_back(SetTextCommand::Entry{ .id = m_TextResizeId, .before = m_TextBase, .after = *l_Object->text(), .transformBefore = m_TextBaseTransform, .transformAfter = l_Object->transform });
+				p_Context.history.push(std::make_unique<SetTextCommand>(std::move(l_Entries), "Resize text"));
+			}
+			m_TextResize = false;
+			m_FrameDocumentRevision = p_Context.document.revision();
+			m_Bases.clear();
+		}
+		else if (m_Dragged)
 		{
 			std::vector<TransformObjectsCommand::Entry> l_Entries;
 			l_Entries.reserve(m_Bases.size());
@@ -563,6 +638,16 @@ void SelectTool::restore(ToolContext& p_Context)
 	m_ActiveHandle = Handle::None;
 	if (l_Gesture == Gesture::Move || l_Gesture == Gesture::Resize || l_Gesture == Gesture::Rotate)
 	{
+		if (m_TextResize)
+		{
+			p_Context.document.modify(m_TextResizeId, [&](Object& p_Object)
+			{
+				if (p_Object.text() != nullptr)
+					*p_Object.text() = m_TextBase;
+				p_Object.transform = m_TextBaseTransform;
+			});
+			m_TextResize = false;
+		}
 		for (const Base& l_Base : m_Bases)
 			p_Context.document.modify(l_Base.id, [&](Object& p_Object) { p_Object.transform = l_Base.transform; }, ObjectChange::Transform);
 		m_Frame = m_BaseFrame;

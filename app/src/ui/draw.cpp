@@ -128,9 +128,9 @@ void DrawList::polyline(const std::span<const Vec2> p_Points, const float p_Widt
 		line(p_Points.back(), p_Points.front(), p_Width, p_Color);
 }
 
-float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const int p_PixelSize, const Color p_Color, const TextAlign p_Align)
+float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const int p_PixelSize, const Color p_Color, const TextAlign p_Align, const FontFace p_Face)
 {
-	const float l_Width = m_Font->measure(p_Text, p_PixelSize);
+	const float l_Width = m_Font->measure(p_Text, p_PixelSize, p_Face);
 	float l_Pen = p_Position.x;
 	if (p_Align == TextAlign::Center)
 		l_Pen -= l_Width * 0.5f;
@@ -143,7 +143,7 @@ float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const
 	while (l_Index < p_Text.size())
 	{
 		const uint32_t l_Code = nextCodepoint(p_Text, l_Index);
-		const GlyphQuad* l_Glyph = m_Font->glyph(FontFace::Text, l_Code, p_PixelSize);
+		const GlyphQuad* l_Glyph = m_Font->glyph(p_Face, l_Code, p_PixelSize);
 		if (l_Glyph != nullptr && l_Glyph->size.x > 0.f)
 		{
 			const Vec2 l_Min{ std::round(l_Pen) + l_Glyph->offset.x, l_Baseline + l_Glyph->offset.y };
@@ -151,7 +151,7 @@ float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const
 			l_Prim.uv = { l_Glyph->uv0.x, l_Glyph->uv0.y, l_Glyph->uv1.x, l_Glyph->uv1.y };
 			l_Prim.color = l_Color;
 		}
-		l_Pen += m_Font->advance(FontFace::Text, l_Code, p_PixelSize);
+		l_Pen += m_Font->advance(p_Face, l_Code, p_PixelSize);
 	}
 	return l_Width;
 }

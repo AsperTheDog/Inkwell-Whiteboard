@@ -57,6 +57,8 @@ ui::Icon toolIcon(const tools::ToolKind p_Kind)
 		return ui::Icon::Select;
 	case tools::ToolKind::Hand:
 		return ui::Icon::Hand;
+	case tools::ToolKind::Text:
+		return ui::Icon::Type;
 	}
 	return ui::Icon::None;
 }
@@ -261,6 +263,8 @@ void App::buildCanvasOverlays()
 		}
 	}
 
+	buildTextOverlay();
+
 	// Brush outline under the pointer: how wide the stroke is on the board right now
 	if (!m_CursorOverUi && m_PointerInWindow)
 	{
@@ -354,9 +358,9 @@ void App::buildToolbar()
 	const float l_Pad = m_Ui.px(6.f);
 	const float l_Chip = m_Ui.px(30.f);
 	const float l_Separator = m_Ui.px(17.f);
-	constexpr std::array<tools::ToolKind, 4> ORDER{ tools::ToolKind::Select, tools::ToolKind::Pen, tools::ToolKind::Eraser, tools::ToolKind::Hand };
+	constexpr std::array<tools::ToolKind, 5> ORDER{ tools::ToolKind::Select, tools::ToolKind::Pen, tools::ToolKind::Eraser, tools::ToolKind::Text, tools::ToolKind::Hand };
 
-	const float l_Width = l_Pad * 2.f + l_Chip + l_Separator + 5.f * l_Button + 4.f * l_Gap + l_Separator + 2.f * l_Button + l_Gap;
+	const float l_Width = l_Pad * 2.f + l_Chip + l_Separator + 6.f * l_Button + 5.f * l_Gap + l_Separator + 2.f * l_Button + l_Gap;
 	const float l_Height = l_Button + l_Pad * 2.f;
 	const Rect2 l_Bar = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, l_Viewport.y - l_Margin - l_Height }, Vec2{ l_Width, l_Height });
 	m_ToolbarRect = l_Bar;
@@ -387,8 +391,9 @@ void App::buildToolbar()
 	l_Divider();
 
 	const tools::ToolKind l_Selected = m_Editor.selectedTool();
-	static const char* const TIPS[] = { "Pen (P). Click again for colours and size", "Eraser (E). Click again for options", "Select (V). Click again for box or lasso", "Hand (H). Drag to move the board" };
-	static const char* const SIMPLE_TIPS[] = { "Pen (P)", "Eraser (E)", "Select (V)", "Hand (H). Drag to move the board" };
+	// Indexed by tool kind: pen, eraser, select, hand, text
+	static const char* const TIPS[] = { "Pen (P). Click again for colours and size", "Eraser (E). Click again for options", "Select (V). Click again for box or lasso", "Hand (H). Drag to move the board", "Text (T). Click again for font, size and colour" };
+	static const char* const SIMPLE_TIPS[] = { "Pen (P)", "Eraser (E)", "Select (V)", "Hand (H). Drag to move the board", "Text (T). Click the board and type" };
 	for (const tools::ToolKind l_Kind : ORDER)
 	{
 		const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button });
@@ -398,8 +403,12 @@ void App::buildToolbar()
 		const char* l_Tip = l_IsSelected ? TIPS[static_cast<size_t>(l_Kind)] : SIMPLE_TIPS[static_cast<size_t>(l_Kind)];
 		if (m_Ui.iconButton(std::string("toolbar.tool") + std::to_string(static_cast<int>(l_Kind)), l_Rect, toolIcon(l_Kind), l_IsSelected, true, l_Tip, l_Kind == tools::ToolKind::Pen ? &l_PenColor : nullptr))
 		{
-			const Popup l_Wanted = l_Kind == tools::ToolKind::Pen ? Popup::Pen : (l_Kind == tools::ToolKind::Eraser ? Popup::Eraser : (l_Kind == tools::ToolKind::Select ? Popup::Select : Popup::None));
-			if (l_IsSelected && l_Wanted != Popup::None)
+			const Popup l_Wanted = l_Kind == tools::ToolKind::Pen ? Popup::Pen : (l_Kind == tools::ToolKind::Eraser ? Popup::Eraser : (l_Kind == tools::ToolKind::Select ? Popup::Select : (l_Kind == tools::ToolKind::Text ? Popup::Text : Popup::None)));
+			if (l_IsSelected && l_Wanted == Popup::Text)
+			{
+				openTextPopup(true);
+			}
+			else if (l_IsSelected && l_Wanted != Popup::None)
 			{
 				togglePopup(l_Wanted);
 			}

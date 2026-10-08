@@ -12,11 +12,13 @@ module;
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include <SDL3/SDL.h>
 
 export module wb.ui.context;
 
 import wb.math;
 import wb.platform.input;
+import wb.text.edit;
 import wb.ui.draw;
 import wb.ui.font;
 import wb.ui.theme;
@@ -68,6 +70,13 @@ public:
 	// The pointer was over a clickable widget in the last frame (the app shows a pointing cursor)
 	[[nodiscard]] bool overInteractive() const { return m_HoverAnyPrev; }
 
+	// ---- keyboard: a focused text field owns the keys and the typed characters
+	[[nodiscard]] bool wantsKeyboard() const { return m_FieldId != 0; }
+	// Returns true when the key was used by the field
+	bool keyEvent(const SDL_KeyboardEvent& p_Event);
+	void textInput(std::string_view p_Text);
+	void blurField() { m_FieldId = 0; }
+
 	// ---- state
 	[[nodiscard]] DrawList& draw() { return m_Draw; }
 	[[nodiscard]] FontAtlas& font() { return *m_Font; }
@@ -106,6 +115,9 @@ public:
 	// Saturation/value square above a hue bar filling p_Rect
 	bool colorPicker(std::string_view p_Key, Rect2 p_Rect, Hsv& p_Hsv);
 	void divider(Vec2 p_A, Vec2 p_B);
+	// Single-line text field. Returns true when the text changed (while typing). p_Allowed limits the characters
+	// (empty: anything); p_MaxBytes caps the length. Pressing outside, Enter or Escape leaves the field.
+	bool textField(std::string_view p_Key, Rect2 p_Rect, std::string& p_Text, std::string_view p_Placeholder, std::string_view p_Allowed = {}, size_t p_MaxBytes = 256, Icon p_Icon = Icon::None);
 	// Text with the UI's regular colours
 	float label(Vec2 p_Position, std::string_view p_Text, float p_Points, Color p_Color, TextAlign p_Align = TextAlign::Left);
 
@@ -155,5 +167,16 @@ private:
 	Rect2 m_TooltipRect{};
 	std::string m_TooltipText;
 	bool m_TooltipShown = false;
+	// Text field
+	uint32_t m_FieldId = 0;
+	text::TextEditor m_Field;
+	std::string m_FieldAllowed;
+	size_t m_FieldMaxBytes = 256;
+	bool m_FieldDirty = false; // changed by keys since the widget last reported it
+	double m_FieldBlink = 0.0;
+	float m_FieldScroll = 0.f;
+	bool m_FieldSeen = false; // the focused field was built this frame (a field that vanishes loses the focus)
+	bool m_AnyPress = false;
+	Vec2 m_AnyPressPos{ 0.f };
 };
 } // namespace wb::ui
