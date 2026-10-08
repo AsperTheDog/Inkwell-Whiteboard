@@ -99,6 +99,7 @@ void App::toggleInterface()
 	m_HideUi = !m_HideUi;
 	closePopup("interface hidden");
 	m_ShowShortcuts = false;
+	m_ShowSettings = false;
 	if (m_HideUi)
 		showToast("Interface hidden. Press F2 to bring it back");
 	requestRedraw();
@@ -204,9 +205,10 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 	}
 	if (l_Escape && !p_Event.repeat)
 	{
-		if (m_ShowShortcuts)
+		if (m_ShowShortcuts || m_ShowSettings)
 		{
 			m_ShowShortcuts = false;
+			m_ShowSettings = false;
 			return true;
 		}
 		if (m_Popup != Popup::None && !m_Editor.isBusy())

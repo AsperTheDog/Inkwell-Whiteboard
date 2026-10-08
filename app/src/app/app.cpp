@@ -634,6 +634,7 @@ void App::buildUi()
 	buildMenu();
 	buildToast();
 	buildShortcuts();
+	buildSettings();
 	buildDialogs();
 }
 

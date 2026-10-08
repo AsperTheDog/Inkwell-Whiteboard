@@ -134,6 +134,21 @@ void App::buildVideoViewer()
 		}
 		else if (l_HavePointer && !m_CursorOverUi)
 		{
+			// Where videos overlap under the pointer, the selected one wins over the topmost
+			ObjectId l_Preferred = INVALID_OBJECT_ID;
+			if (m_Editor.selection().size() == 1)
+				l_Preferred = m_Editor.selection().orderedIds().front();
+			const auto l_Under = [&](const ObjectId p_Id)
+			{
+				const Object* l_Object = m_Editor.document().find(p_Id);
+				const VideoData* l_Video = l_Object != nullptr ? l_Object->video() : nullptr;
+				if (l_Video == nullptr)
+					return false;
+				const std::optional<VideoOnScreen> l_Screen = videoOnScreen(*l_Object, *l_Video, l_Camera);
+				return l_Screen && l_Screen->box.contains(l_Pointer) && pointInVideo(*l_Screen, l_Video->localBounds(), l_Pointer);
+			};
+			if (l_Preferred != INVALID_OBJECT_ID && std::ranges::find(l_Visible, l_Preferred) != l_Visible.end() && l_Under(l_Preferred))
+				l_Hot = l_Preferred;
 			for (auto l_It = l_Visible.rbegin(); l_It != l_Visible.rend() && l_Hot == INVALID_OBJECT_ID; ++l_It)
 			{
 				const Object* l_Object = m_Editor.document().find(*l_It);
@@ -267,7 +282,8 @@ void App::buildVideoViewer()
 		}
 	}
 	m_VideoBarRect = l_Bar;
-	m_Ui.panel(l_Bar, l_Height * 0.5f);
+	// Concentric with the end buttons (their highlight radius is 0.3 of their size), so the corners line up
+	m_Ui.panel(l_Bar, l_Button * 0.3f + l_Pad);
 
 	float l_Cursor = l_Bar.min.x + l_Pad;
 	const float l_ButtonY = l_Bar.center().y - l_Button * 0.5f;
@@ -363,9 +379,11 @@ void App::buildVideoViewer()
 			Rect2 l_Panel = Rect2::fromPosSize(Vec2{ l_SoundRect.center().x - l_PanelWidth + m_Ui.px(22.f), l_Bar.min.y - m_Ui.px(8.f) - l_PanelHeight }, Vec2{ l_PanelWidth, l_PanelHeight });
 			if (l_Panel.min.y < m_Ui.px(8.f))
 				l_Panel = l_Panel.translated(Vec2{ 0.f, l_Bar.max.y + m_Ui.px(8.f) - l_Panel.min.y });
-			m_VideoVolumeHit = Rect2{ l_Panel.min, Vec2{ l_Panel.max.x, l_Panel.min.y < l_Bar.min.y ? l_Bar.min.y : l_Panel.max.y } };
+			// Reaches across the gap and the bar's padding down to the speaker, so the pointer can travel to the slider
+			const bool l_PanelAbove = l_Panel.min.y < l_Bar.min.y;
+			m_VideoVolumeHit = Rect2{ Vec2{ l_Panel.min.x, l_PanelAbove ? l_Panel.min.y : l_Bar.min.y }, Vec2{ l_Panel.max.x, l_PanelAbove ? l_Bar.max.y : l_Panel.max.y } };
 			m_VideoVolumeRect = m_VideoVolumeHit;
-			m_Ui.panel(l_Panel, m_Ui.px(14.f));
+			m_Ui.panel(l_Panel, m_Ui.px(18.f));
 
 			const Rect2 l_VTrack{ Vec2{ l_Panel.min.x + m_Ui.px(16.f), l_Panel.center().y }, Vec2{ l_Panel.max.x - m_Ui.px(16.f), l_Panel.center().y } };
 			const uint32_t l_VolumeId = ui::Context::id("video.volume");

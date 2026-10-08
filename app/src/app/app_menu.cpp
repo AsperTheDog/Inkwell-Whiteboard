@@ -4,6 +4,7 @@ module;
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -125,7 +126,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 13, 10, 1 };
+	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 13, 11, 1 };
 	static constexpr std::array<const char*, 4> TITLES{ "Board", "Edit", "View", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -285,6 +286,11 @@ void App::buildMenu()
 			}
 			if (l_Row(ui::Icon::Bug, "Debug panel", "F3", true, m_ShowDebug))
 				m_ShowDebug = !m_ShowDebug;
+			if (l_Row(ui::Icon::Sliders, "Settings...", ""))
+			{
+				m_ShowSettings = true;
+				l_Close = true;
+			}
 			break;
 		case 3:
 			if (l_Row(ui::Icon::Keyboard, "Keyboard shortcuts", "F1"))
@@ -453,6 +459,97 @@ void App::buildShortcuts()
 	l_DrawColumn(leftSections(), l_Card.min.x + l_Pad);
 	l_DrawColumn(rightSections(), l_Card.min.x + l_Pad + l_Column + l_Gap);
 	l_Draw.popClip();
+	l_Draw.setOpacity(1.f);
+}
+
+// ------------------------------------------------------------------------------------------------ settings
+
+void App::buildSettings()
+{
+	const float l_Open = m_Ui.anim(ui::Context::id("settings.open"), m_ShowSettings ? 1.f : 0.f, 20.f);
+	if (!m_ShowSettings && l_Open < 0.01f)
+		return;
+
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	const Vec2 l_Viewport = m_Ui.viewport();
+
+	const Rect2 l_Screen{ Vec2{ 0.f }, l_Viewport };
+	m_Ui.beginPanel(l_Screen);
+	l_Draw.setOpacity(l_Open);
+	l_Draw.rect(l_Screen, 0.f, l_Theme.scrim);
+	if (m_ShowSettings && m_Ui.interact(ui::Context::id("settings.scrim"), l_Screen).clicked)
+		m_ShowSettings = false;
+
+	const float l_Pad = m_Ui.px(26.f);
+	const float l_Width = std::min(m_Ui.px(460.f), l_Viewport.x - m_Ui.px(EDGE_MARGIN) * 2.f);
+	const float l_Inner = l_Width - l_Pad * 2.f;
+	const float l_LabelHeight = m_Ui.px(22.f);
+	const float l_SliderHeight = m_Ui.px(34.f);
+	const int l_HintPx = m_Ui.fontPx(12.5f);
+	tools::BrushState& l_Brush = m_Editor.brush();
+	tools::SelectState& l_Select = m_Editor.selectState();
+	const std::vector<std::string> l_SizeHint = m_Ui.font().wrap("Scales everything drawn with the pen, on top of the size chosen in its panel. Strokes already on the board keep their size.", l_HintPx, l_Inner);
+	const bool l_ScreenSized = l_Brush.sizeMode == tools::BrushSizeMode::Screen;
+	const std::vector<std::string> l_ModeHint = m_Ui.font().wrap(l_ScreenSized ? "The pen draws the same size on screen however far you zoom, so strokes get finer when you zoom in." : "The pen draws a fixed size on the board, so strokes grow and shrink as you zoom.", l_HintPx, l_Inner);
+	const bool l_Local = l_Select.space == tools::TransformSpace::Local;
+	const std::vector<std::string> l_SpaceHint = m_Ui.font().wrap(l_Local ? "The box of a single stroke turns with it, so you can stretch it along its own sides." : "The box of a single stroke stays upright, whatever its rotation. Text and pictures always follow their own sides.", l_HintPx, l_Inner);
+	const float l_Line = m_Ui.px(17.f);
+	const float l_SectionHeight = m_Ui.px(34.f);
+	const float l_ButtonsHeight = m_Ui.px(40.f);
+	const float l_Content = l_SectionHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SizeHint.size()) + m_Ui.px(16.f)
+		+ l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_ModeHint.size()) + m_Ui.px(16.f)
+		+ l_SectionHeight + l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SpaceHint.size());
+	const float l_Height = std::min(l_Pad * 2.f + m_Ui.px(48.f) + l_Content, l_Viewport.y - m_Ui.px(EDGE_MARGIN) * 2.f);
+	const float l_Lift = (1.f - l_Open) * m_Ui.px(10.f);
+	const Rect2 l_Card = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, (l_Viewport.y - l_Height) * 0.5f + l_Lift }, Vec2{ l_Width, l_Height });
+	m_Ui.panel(l_Card, m_Ui.px(22.f));
+
+	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Card.min.y + l_Pad + m_Ui.px(14.f) }, "Settings", 19.f, l_Theme.text);
+	if (m_Ui.iconButton("settings.close", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(36.f) + m_Ui.px(8.f), l_Card.min.y + l_Pad - m_Ui.px(4.f) }, Vec2{ m_Ui.px(36.f) }), ui::Icon::Close, false, true, "Close (Esc)"))
+		m_ShowSettings = false;
+
+	const float l_Left = l_Card.min.x + l_Pad;
+	float l_Y = l_Card.min.y + l_Pad + m_Ui.px(48.f);
+	const auto l_Hints = [&](const std::vector<std::string>& p_Lines)
+	{
+		for (const std::string& l_Text : p_Lines)
+		{
+			l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(8.f) }, l_Text, l_HintPx, l_Theme.textMuted);
+			l_Y += l_Line;
+		}
+	};
+	static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
+
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, "Pen", 12.f, l_Theme.accent);
+	l_Y += l_SectionHeight;
+	char l_Value[32];
+	std::snprintf(l_Value, sizeof(l_Value), "%.2fx", static_cast<double>(l_Brush.sizeScale));
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Stroke size multiplier", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, l_Value, 13.f, l_Theme.text, ui::TextAlign::Right);
+	l_Y += l_LabelHeight;
+	const float l_Inset = m_Ui.px(10.f);
+	m_Ui.slider("settings.sizeScale", Rect2{ Vec2{ l_Left - l_Inset, l_Y }, Vec2{ l_Left + l_Inner + l_Inset, l_Y + l_SliderHeight } }, l_Brush.sizeScale, 0.25f, 4.f, true);
+	l_Y += l_SliderHeight + m_Ui.px(8.f);
+	l_Hints(l_SizeHint);
+	l_Y += m_Ui.px(16.f);
+
+	int l_Mode = l_ScreenSized ? 0 : 1;
+	static constexpr std::array<std::string_view, 2> MODE_LABELS{ "Fixed on screen", "Fixed on board" };
+	if (m_Ui.segmented("settings.sizeMode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), MODE_LABELS, NO_ICONS, l_Mode))
+		l_Brush.sizeMode = l_Mode == 0 ? tools::BrushSizeMode::Screen : tools::BrushSizeMode::Board;
+	l_Y += l_ButtonsHeight + m_Ui.px(8.f);
+	l_Hints(l_ModeHint);
+	l_Y += m_Ui.px(16.f);
+
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, "Selection", 12.f, l_Theme.accent);
+	l_Y += l_SectionHeight;
+	int l_Space = l_Local ? 1 : 0;
+	static constexpr std::array<std::string_view, 2> SPACE_LABELS{ "Board axes", "Object axes" };
+	if (m_Ui.segmented("settings.space", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), SPACE_LABELS, NO_ICONS, l_Space))
+		l_Select.space = l_Space == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
+	l_Y += l_ButtonsHeight + m_Ui.px(8.f);
+	l_Hints(l_SpaceHint);
 	l_Draw.setOpacity(1.f);
 }
 

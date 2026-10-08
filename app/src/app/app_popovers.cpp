@@ -216,7 +216,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 
 	float l_Height;
 	if (!m_PickerOpen)
-		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + m_Ui.px(38.f) + m_Ui.px(10.f);
+		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight;
 	else
 		l_Height = l_Pad * 2.f + m_Ui.px(34.f) + m_Ui.px(12.f) + m_Ui.px(190.f) + m_Ui.px(14.f) + m_Ui.px(38.f) + m_Ui.px(16.f) + l_Diameter;
 
@@ -326,21 +326,6 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.sizePoints * l_Brush.sizeScale, l_Settings.pressureSensitivity);
 	l_Y += l_PreviewHeight + m_Ui.px(10.f);
 
-	// Size multiplier and how the size follows the zoom
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size multiplier", 13.f, l_Theme.textMuted);
-	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.2fx", l_Brush.sizeScale), 13.f, l_Theme.text, ui::TextAlign::Right);
-	l_Y += l_LabelHeight;
-	l_Slider("pen.sizeScale", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Brush.sizeScale, 0.25f, 4.f, true);
-	l_Y += l_SliderHeight + m_Ui.px(8.f);
-	{
-		int l_Mode = l_Brush.sizeMode == tools::BrushSizeMode::Screen ? 0 : 1;
-		static constexpr std::array<std::string_view, 2> LABELS{ "Fixed on screen", "Fixed on board" };
-		static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
-		if (m_Ui.segmented("pen.sizeMode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(38.f) }), LABELS, NO_ICONS, l_Mode))
-			l_Brush.sizeMode = l_Mode == 0 ? tools::BrushSizeMode::Screen : tools::BrushSizeMode::Board;
-		l_Y += m_Ui.px(38.f) + m_Ui.px(10.f);
-	}
-
 	// Pressure
 	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Pen pressure", 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f%%", l_Settings.pressureSensitivity * 100.0), 13.f, l_Theme.text, ui::TextAlign::Right);
@@ -407,9 +392,7 @@ void App::buildSelectPopover(const Rect2 p_Anchor)
 
 	const bool l_Box = l_Select.mode == tools::SelectMode::Box;
 	const std::vector<std::string> l_Hint = hintLines(m_Ui, l_Box ? "Drag a rectangle around what to select. Hold Shift to add to the selection." : "Draw around what to select. Anything the line touches is selected.", l_Inner);
-	const bool l_Local = l_Select.space == tools::TransformSpace::Local;
-	const std::vector<std::string> l_SpaceHint = hintLines(m_Ui, l_Local ? "The box of a single stroke turns with it, so you can stretch it along its own sides." : "The box of a single stroke stays upright, whatever its rotation. Text and pictures always follow their own sides.", l_Inner);
-	const float l_Height = l_Pad * 2.f + m_Ui.px(40.f) + m_Ui.px(12.f) + m_Ui.px(17.f) * 3.f + m_Ui.px(14.f) + 1.f + m_Ui.px(14.f) + m_Ui.px(22.f) + m_Ui.px(40.f) + m_Ui.px(10.f) + m_Ui.px(17.f) * static_cast<float>(l_SpaceHint.size());
+	const float l_Height = l_Pad * 2.f + m_Ui.px(40.f) + m_Ui.px(12.f) + m_Ui.px(17.f) * 3.f;
 
 	const Rect2 l_Rect = beginPopover(m_Ui, p_Anchor, l_Width, l_Height, false);
 	m_Ui.panel(l_Rect, m_Ui.px(20.f));
@@ -423,19 +406,6 @@ void App::buildSelectPopover(const Rect2 p_Anchor)
 		l_Select.mode = l_Mode == 0 ? tools::SelectMode::Box : tools::SelectMode::Lasso;
 	l_Y += m_Ui.px(40.f) + m_Ui.px(12.f);
 	drawHint(m_Ui, Vec2{ l_Left, l_Y }, l_Hint);
-	l_Y += m_Ui.px(17.f) * 3.f + m_Ui.px(14.f);
-	m_Ui.divider(Vec2{ l_Left, l_Y }, Vec2{ l_Left + l_Inner, l_Y });
-	l_Y += 1.f + m_Ui.px(14.f);
-
-	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(11.f) }, "Transform box", 13.f, m_Ui.theme().textMuted);
-	l_Y += m_Ui.px(22.f);
-	int l_Space = l_Local ? 1 : 0;
-	static constexpr std::array<std::string_view, 2> SPACE_LABELS{ "Board axes", "Object axes" };
-	static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
-	if (m_Ui.segmented("select.space", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(40.f) }), SPACE_LABELS, NO_ICONS, l_Space))
-		l_Select.space = l_Space == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
-	l_Y += m_Ui.px(40.f) + m_Ui.px(10.f);
-	drawHint(m_Ui, Vec2{ l_Left, l_Y }, l_SpaceHint);
 	endPopover(m_Ui);
 }
 } // namespace wb

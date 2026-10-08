@@ -137,6 +137,7 @@ private:
 	void importFontFiles(const std::vector<std::string>& p_Paths);
 	void buildMenu();
 	void buildShortcuts();
+	void buildSettings();
 	void buildDialogs();
 	void buildToast();
 	void toggleInterface();
@@ -216,6 +217,7 @@ private:
 	bool m_DarkTheme = false;
 	bool m_ShowGrid = true;
 	bool m_ShowShortcuts = false;
+	bool m_ShowSettings = false;
 	bool m_HideUi = false; // F2: only the board is drawn
 	bool m_PlayAnimations = true;
 	bool m_TextInputActive = false; // SDL text input (keyboard characters, input methods) is on while text is edited
