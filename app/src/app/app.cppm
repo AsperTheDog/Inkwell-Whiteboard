@@ -7,6 +7,7 @@ module;
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 #include <SDL3/SDL.h>
