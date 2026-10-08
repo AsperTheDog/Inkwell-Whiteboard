@@ -117,6 +117,7 @@ void Swapchain::build(const GraphicsContext& p_Context, const platform::PixelSiz
 		l_ImageCount = std::min(l_ImageCount, l_Caps.maxImageCount);
 	m_MinImageCount = l_Caps.minImageCount;
 
+	m_Readback = (l_Caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
 	const VkSwapchainCreateInfoKHR l_CreateInfo{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = l_Surface,
@@ -125,7 +126,7 @@ void Swapchain::build(const GraphicsContext& p_Context, const platform::PixelSiz
 		.imageColorSpace = m_Format.colorSpace,
 		.imageExtent = m_Extent,
 		.imageArrayLayers = 1,
-		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (l_Caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT),
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (l_Caps.supportedUsageFlags & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)),
 		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.preTransform = (l_Caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0 ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : l_Caps.currentTransform,
 		.compositeAlpha = chooseCompositeAlpha(l_Caps.supportedCompositeAlpha),

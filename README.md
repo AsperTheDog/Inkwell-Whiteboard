@@ -34,6 +34,7 @@ scripts/build_linux.sh debug --run
 
 The script picks up the newest `~/toolchains/LLVM-*` and `~/toolchains/cmake-*` (or `CC`/`CXX` and PATH).
 SDL3 needs the usual X11/Wayland development packages. Validation layers: `sudo apt install vulkan-validationlayers`.
+Shaders need a Linux `slangc`: the build looks in `~/toolchains/slang/bin` (Slang release tarball) and the Vulkan SDK.
 
 ### Useful switches
 
@@ -41,14 +42,23 @@ SDL3 needs the usual X11/Wayland development packages. Validation layers: `sudo 
 |---|---|
 | `WB_VALIDATION=0/1` | Force Vulkan validation off/on (default: on in Debug builds) |
 | `WB_GPU=<substring>` | Pick the GPU whose name contains the substring |
-| `--smoke-test[=N]` | Render N frames (default 120) and exit; exit code 3 on any validation message |
+| `--smoke-test[=N]` | Run a scripted drawing session for N frames (default 240) and exit; exit code 3 on any validation message |
+| `--screenshot <file.png>` | With `--smoke-test`: save the last frame |
+| `--smoke-zoom=Z` | With `--smoke-test`: zoom of the final view |
 
 ## Controls
 
-| Key | Action |
+| Input | Action |
 |---|---|
-| F3 | Toggle the debug overlay (GPU, frame times, pen diagnostics) |
-| F11 | Toggle fullscreen |
+| Left mouse / pen tip | Draw |
+| Right or middle drag, pen barrel button drag, Space + drag | Pan |
+| Wheel / touchpad scroll | Pan (Shift: horizontal) |
+| Ctrl + wheel, touchpad pinch | Zoom at the pointer |
+| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / 100% |
+| Home | Fit all content (recenter) |
+| Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) | Undo / redo |
+| F3 | Debug overlay (GPU, frame times, pen diagnostics, brush tuning) |
+| F11 | Fullscreen |
 
 **Tablets:** SDL3 reads pens through Windows Ink on Windows. For Wacom, Huion and XP-Pen tablets make sure
 "Windows Ink" is enabled in the tablet driver settings; the F3 overlay shows live pressure and tilt.

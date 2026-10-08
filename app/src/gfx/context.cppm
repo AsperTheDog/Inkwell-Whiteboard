@@ -69,7 +69,7 @@ public:
 	[[nodiscard]] VkQueue queue() const { return m_Queue; }
 	[[nodiscard]] uint32_t queueFamily() const { return m_QueueFamily; }
 	[[nodiscard]] const DeviceInfo& info() const { return m_Info; }
-	[[nodiscard]] bool validationEnabled() const { return m_DebugMessenger != VK_NULL_HANDLE; }
+	[[nodiscard]] bool validationEnabled() const { return m_ValidationLayer && m_DebugMessenger != VK_NULL_HANDLE; }
 	[[nodiscard]] static ValidationStats validationStats();
 
 	// No-op unless VK_EXT_debug_utils is enabled
@@ -91,6 +91,7 @@ private:
 	VkInstance m_Instance = VK_NULL_HANDLE;
 	VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
 	bool m_DebugUtils = false;
+	bool m_ValidationLayer = false;
 	VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
 	VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
 	VkDevice m_Device = VK_NULL_HANDLE;

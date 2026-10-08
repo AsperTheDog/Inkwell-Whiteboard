@@ -117,6 +117,8 @@ std::optional<std::string_view> missingRequiredFeature(const FeatureChain& p_Fea
 		return "synchronization2";
 	if (!l_V13.maintenance4)
 		return "maintenance4";
+	if (!l_V13.shaderDemoteToHelperInvocation)
+		return "shaderDemoteToHelperInvocation";
 	if (!l_V12.timelineSemaphore)
 		return "timelineSemaphore";
 	if (!l_V12.descriptorIndexing)
@@ -184,7 +186,10 @@ void GraphicsContext::createInstance()
 	if (l_WantValidation)
 	{
 		if (hasLayer(l_Layers, VALIDATION_LAYER))
+		{
 			l_EnabledLayers.push_back(VALIDATION_LAYER);
+			m_ValidationLayer = true;
+		}
 		else
 			spdlog::warn("Validation requested but {} is not installed", VALIDATION_LAYER);
 	}
@@ -402,6 +407,7 @@ void GraphicsContext::createDevice()
 	l_Features.v13.dynamicRendering = VK_TRUE;
 	l_Features.v13.synchronization2 = VK_TRUE;
 	l_Features.v13.maintenance4 = VK_TRUE;
+	l_Features.v13.shaderDemoteToHelperInvocation = VK_TRUE; // `discard` in Slang
 
 	constexpr float l_Priority = 1.f;
 	const VkDeviceQueueCreateInfo l_QueueInfo{

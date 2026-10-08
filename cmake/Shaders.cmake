@@ -1,6 +1,6 @@
-# Compiles every app/shaders/*.slang (except *.slangh includes) to SPIR-V at build time with slangc.
-# Each .slang file holds a `vsMain` and/or `fsMain` (or `csMain`) entry point; all entry points are
-# emitted into one module: <exe dir>/shaders/<name>.spv.
+# Compiles every app/shaders/*.slang to SPIR-V at build time with slangc. Each file holds its entry points
+# (`vsMain`/`fsMain`, ...), all emitted into one module: <exe dir>/shaders/<name>.spv.
+# Shared Slang modules live in shaders/lib/ (imported with `import name;`) and are not compiled on their own.
 
 find_program(WB_SLANGC
 	NAMES slangc
@@ -9,7 +9,7 @@ find_program(WB_SLANGC
 
 function(wb_compile_shaders p_target p_shaderDir)
 	file(GLOB l_shaders CONFIGURE_DEPENDS "${p_shaderDir}/*.slang")
-	file(GLOB l_includes CONFIGURE_DEPENDS "${p_shaderDir}/*.slangh")
+	file(GLOB_RECURSE l_includes CONFIGURE_DEPENDS "${p_shaderDir}/lib/*.slang")
 	set_source_files_properties(${l_shaders} ${l_includes} PROPERTIES HEADER_FILE_ONLY TRUE)
 	target_sources(${p_target} PRIVATE ${l_shaders} ${l_includes})
 	source_group("shaders" FILES ${l_shaders} ${l_includes})
@@ -30,7 +30,7 @@ function(wb_compile_shaders p_target p_shaderDir)
 			OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>/${l_name}.stamp"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${p_target}>/shaders"
 			COMMAND "${WB_SLANGC}" "${l_shader}" -target spirv -profile spirv_1_6 -fvk-use-entrypoint-name
-				-matrix-layout-column-major -I "${p_shaderDir}" ${l_debugFlags} -o "${l_out}"
+				-matrix-layout-column-major -I "${p_shaderDir}/lib" ${l_debugFlags} -o "${l_out}"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>"
 			COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>/${l_name}.stamp"
 			DEPENDS "${l_shader}" ${l_includes}

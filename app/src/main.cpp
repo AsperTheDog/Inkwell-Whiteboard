@@ -20,9 +20,13 @@ wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 	{
 		const std::string_view l_Arg = p_Argv[i];
 		if (l_Arg == "--smoke-test")
-			l_Options.smokeTestFrames = 120;
+			l_Options.smokeTestFrames = 240;
 		else if (l_Arg.starts_with("--smoke-test="))
 			l_Options.smokeTestFrames = static_cast<uint32_t>(std::strtoul(p_Argv[i] + 13, nullptr, 10));
+		else if (l_Arg.starts_with("--smoke-zoom="))
+			l_Options.smokeZoom = std::strtod(p_Argv[i] + 13, nullptr);
+		else if (l_Arg == "--screenshot" && i + 1 < p_Argc)
+			l_Options.screenshotPath = p_Argv[++i];
 	}
 	return l_Options;
 }

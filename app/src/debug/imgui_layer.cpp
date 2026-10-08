@@ -23,32 +23,6 @@ void checkVkResult(const VkResult p_Result)
 		throw gfx::VulkanError(p_Result, "ImGui Vulkan backend", __FILE__, __LINE__);
 }
 
-bool isPointerEvent(const Uint32 p_Type)
-{
-	switch (p_Type)
-	{
-	case SDL_EVENT_MOUSE_MOTION:
-	case SDL_EVENT_MOUSE_BUTTON_DOWN:
-	case SDL_EVENT_MOUSE_BUTTON_UP:
-	case SDL_EVENT_MOUSE_WHEEL:
-	case SDL_EVENT_PEN_DOWN:
-	case SDL_EVENT_PEN_UP:
-	case SDL_EVENT_PEN_MOTION:
-	case SDL_EVENT_PEN_BUTTON_DOWN:
-	case SDL_EVENT_PEN_BUTTON_UP:
-	case SDL_EVENT_FINGER_DOWN:
-	case SDL_EVENT_FINGER_UP:
-	case SDL_EVENT_FINGER_MOTION:
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool isKeyboardEvent(const Uint32 p_Type)
-{
-	return p_Type == SDL_EVENT_KEY_DOWN || p_Type == SDL_EVENT_KEY_UP || p_Type == SDL_EVENT_TEXT_INPUT || p_Type == SDL_EVENT_TEXT_EDITING;
-}
 } // namespace
 
 void ImGuiLayer::init(const gfx::GraphicsContext& p_Context, const platform::Window& p_Window, const gfx::Swapchain& p_Swapchain)
@@ -58,6 +32,7 @@ void ImGuiLayer::init(const gfx::GraphicsContext& p_Context, const platform::Win
 	ImGuiIO& l_Io = ImGui::GetIO();
 	l_Io.IniFilename = nullptr; // nothing worth persisting for a debug overlay
 	l_Io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	l_Io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange; // the app owns the cursor
 
 	ImGui::StyleColorsDark();
 	ImGuiStyle& l_Style = ImGui::GetStyle();
@@ -104,37 +79,26 @@ void ImGuiLayer::shutdown()
 	m_Initialized = false;
 }
 
-bool ImGuiLayer::processEvent(const SDL_Event& p_Event)
+void ImGuiLayer::processEvent(const SDL_Event& p_Event) const
 {
-	if (!m_Initialized)
-		return false;
-
-	// Always forward so ImGui's input state stays consistent (key/mouse releases while hidden, focus...)
-	ImGui_ImplSDL3_ProcessEvent(&p_Event);
-	if (!m_Visible)
-		return false;
-
-	if (isPointerEvent(p_Event.type))
-		return wantsPointer();
-	if (isKeyboardEvent(p_Event.type))
-		return wantsKeyboard();
-	return false;
+	if (m_Initialized)
+		ImGui_ImplSDL3_ProcessEvent(&p_Event);
 }
 
 bool ImGuiLayer::wantsPointer() const
 {
-	return m_Visible && ImGui::GetIO().WantCaptureMouse;
+	return m_Initialized && ImGui::GetIO().WantCaptureMouse;
 }
 
 bool ImGuiLayer::wantsKeyboard() const
 {
-	return m_Visible && ImGui::GetIO().WantCaptureKeyboard;
+	return m_Initialized && ImGui::GetIO().WantCaptureKeyboard;
 }
 
 void ImGuiLayer::buildFrame(const std::function<void()>& p_Build)
 {
 	m_HasDrawData = false;
-	if (!m_Visible)
+	if (!m_Initialized)
 		return;
 
 	ImGui_ImplVulkan_NewFrame();

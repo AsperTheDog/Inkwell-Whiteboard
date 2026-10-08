@@ -78,9 +78,11 @@ bool isSyntheticMouse(const SDL_MouseID p_Which)
 
 void InputRouter::configureHints()
 {
-	SDL_SetHint(SDL_HINT_PEN_MOUSE_EVENTS, "0");
+	// Pen and touch keep generating synthetic mouse events (ImGui needs them to be clickable with a pen); the
+	// router drops those for the canvas. Pens must not also show up as touches, nor mice as touches.
+	SDL_SetHint(SDL_HINT_PEN_MOUSE_EVENTS, "1");
+	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
 	SDL_SetHint(SDL_HINT_PEN_TOUCH_EVENTS, "0");
-	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 	SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 }
 
@@ -312,6 +314,11 @@ std::optional<InputEvent> InputRouter::translate(const SDL_Event& p_Event, const
 			.timestampNs = l_Wheel.timestamp,
 		};
 	}
+
+	case SDL_EVENT_PINCH_UPDATE:
+		if (p_Event.pinch.scale > 0.f)
+			return PinchEvent{ .scale = p_Event.pinch.scale, .timestampNs = p_Event.pinch.timestamp };
+		return std::nullopt;
 
 	// ---------------------------------------------------------------- touch (first finger acts as a pointer)
 	case SDL_EVENT_FINGER_DOWN:

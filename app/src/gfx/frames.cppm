@@ -60,6 +60,8 @@ public:
 	// Runs cleanups whose frames have completed
 	void collectGarbage(const GraphicsContext& p_Context);
 
+	// Slot of the frame being prepared (valid after waitForSlot())
+	[[nodiscard]] uint32_t currentSlot() const { return m_Current; }
 	[[nodiscard]] uint64_t submittedValue() const { return m_TimelineValue; }
 	[[nodiscard]] uint64_t completedValue(const GraphicsContext& p_Context) const;
 	[[nodiscard]] VkSemaphore timeline() const { return m_Timeline; }

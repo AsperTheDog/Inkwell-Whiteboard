@@ -76,7 +76,14 @@ struct WheelEvent
 	uint64_t timestampNs = 0;
 };
 
-using InputEvent = std::variant<PointerEvent, WheelEvent>;
+// Touchpad pinch (zoom gesture); applies around the pointer position
+struct PinchEvent
+{
+	float scale = 1.f; // relative change since the previous pinch event (> 1 zooms in)
+	uint64_t timestampNs = 0;
+};
+
+using InputEvent = std::variant<PointerEvent, WheelEvent, PinchEvent>;
 
 // Live pen state, kept for diagnostics (F3) and for stamping axis values onto events.
 struct PenState
@@ -105,7 +112,7 @@ struct InputStats
 class InputRouter
 {
 public:
-	// Call once before SDL_Init: disables SDL's pen/touch -> mouse emulation.
+	// Call once before SDL_Init: configures SDL's emulation between pen, touch and mouse events.
 	static void configureHints();
 
 	// Translates one SDL event. Returns nothing for events that are not pointer/wheel input (or are filtered).

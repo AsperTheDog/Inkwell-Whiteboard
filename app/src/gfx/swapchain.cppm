@@ -39,6 +39,8 @@ public:
 	[[nodiscard]] VkSemaphore renderFinished(const uint32_t p_Index) const { return m_RenderFinished[p_Index]; }
 	[[nodiscard]] std::span<const VkPresentModeKHR> supportedPresentModes() const { return m_SupportedModes; }
 	[[nodiscard]] bool isValid() const { return m_Swapchain != VK_NULL_HANDLE; }
+	// Images can be copied from (screenshots); not guaranteed by every platform
+	[[nodiscard]] bool supportsReadback() const { return m_Readback; }
 
 private:
 	void build(const GraphicsContext& p_Context, platform::PixelSize p_Size, PresentPolicy p_Policy, VkSwapchainKHR p_Old);
@@ -48,6 +50,7 @@ private:
 	VkSurfaceFormatKHR m_Format{};
 	VkExtent2D m_Extent{};
 	VkPresentModeKHR m_PresentMode = VK_PRESENT_MODE_FIFO_KHR;
+	bool m_Readback = false;
 	uint32_t m_MinImageCount = 2;
 	std::vector<VkImage> m_Images;
 	std::vector<VkImageView> m_Views;
