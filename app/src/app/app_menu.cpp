@@ -287,7 +287,7 @@ void App::buildMenu()
 	}
 	m_Ui.draw().setOpacity(1.f);
 	if (l_Close)
-		closePopup();
+		closePopup("menu item used");
 }
 
 // ------------------------------------------------------------------------------------------------ shortcuts

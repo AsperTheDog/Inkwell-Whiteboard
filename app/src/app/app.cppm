@@ -125,7 +125,7 @@ private:
 	void buildDialogs();
 	void buildToast();
 	void openPopup(Popup p_Popup);
-	void closePopup();
+	void closePopup(const char* p_Why = "");
 	void togglePopup(Popup p_Popup);
 	void pushRecentColor(Color p_Color);
 	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen; }
@@ -211,6 +211,7 @@ private:
 	float m_ThemeBlend = 0.f; // 0 light .. 1 dark, eased
 	uint64_t m_LastUiNs = 0;
 	Popup m_Popup = Popup::None;
+	platform::PointerDevice m_PopupDevice = platform::PointerDevice::Mouse; // the device that opened it: its tool decides when a tool popup closes
 	bool m_PickerOpen = false;  // the pen popover shows the custom colour page
 	ui::Hsv m_PickerHsv{ 0.6f, 0.7f, 0.9f };
 	std::array<uint32_t, 5> m_RecentColors{}; // RGBA8, 0 = empty, most recent first

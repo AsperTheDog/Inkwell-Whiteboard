@@ -17,6 +17,7 @@ module;
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 #include <volk.h>
 
 module wb.app;
@@ -135,12 +136,13 @@ bool App::paletteGrid(const Rect2 p_Area, const float p_Diameter, const int p_Co
 
 void App::buildPopover()
 {
-	// A popup that belongs to a tool closes when another tool takes over (keyboard shortcuts included)
-	const tools::ToolKind l_Tool = m_Editor.selectedTool();
+	// A tool popup closes when the device that opened it switches to another tool (keyboard shortcuts included).
+	// Other devices speaking up in the meantime (a stray mouse or touch event next to a tablet) must not close it.
+	const tools::ToolKind l_Tool = m_Editor.deviceTool(m_PopupDevice);
 	if ((m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
-		closePopup();
+		closePopup("its device switched tools");
 	if (m_Popup == Popup::SelectionColor && !m_Editor.hasSelection())
-		closePopup();
+		closePopup("selection gone");
 
 	switch (m_Popup)
 	{

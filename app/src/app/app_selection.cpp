@@ -39,7 +39,7 @@ void App::buildSelectionBar()
 	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen())
 	{
 		if (m_Popup == Popup::SelectionColor)
-			closePopup();
+			closePopup("selection bar hidden");
 		m_SelectionBarRect = ui::Rect2{};
 		return;
 	}

@@ -16,6 +16,7 @@ module;
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 #include <volk.h>
 
 module wb.app;
@@ -95,17 +96,19 @@ void App::openPopup(const Popup p_Popup)
 {
 	if (m_Popup == p_Popup)
 		return;
-	closePopup();
+	closePopup("another popup opened");
 	m_Popup = p_Popup;
+	m_PopupDevice = m_Editor.activeDevice();
 	m_PickerOpen = false;
 	m_Ui.setAnim(ui::Context::id("popover.open"), 0.f);
 	requestRedraw();
 }
 
-void App::closePopup()
+void App::closePopup(const char* p_Why)
 {
 	if (m_Popup == Popup::None)
 		return;
+	spdlog::debug("Popup {} closed: {}", static_cast<int>(m_Popup), p_Why);
 	if (m_Popup == Popup::Pen && m_PickerOpen)
 		pushRecentColor(m_Editor.brush().color);
 	m_Popup = Popup::None;
@@ -116,7 +119,7 @@ void App::closePopup()
 void App::togglePopup(const Popup p_Popup)
 {
 	if (m_Popup == p_Popup)
-		closePopup();
+		closePopup("toggled");
 	else
 		openPopup(p_Popup);
 }
@@ -196,7 +199,7 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 		}
 		if (m_Popup != Popup::None && !m_Editor.isBusy())
 		{
-			closePopup();
+			closePopup("Escape");
 			return true;
 		}
 	}
@@ -382,7 +385,7 @@ void App::buildToolbar()
 			else
 			{
 				m_Editor.setTool(l_Kind);
-				closePopup();
+				closePopup("another tool picked");
 			}
 		}
 		l_X += l_Button + l_Gap;

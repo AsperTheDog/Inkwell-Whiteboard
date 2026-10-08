@@ -359,8 +359,8 @@ void App::handleInput(const platform::InputEvent& p_Event)
 		const bool l_UiOwns = m_Ui.pointerEvent(*l_Pointer);
 		const bool l_UiHasPointer = (l_UiOwns || l_ImGuiHasPointer) && !m_Editor.isBusy();
 		// A click on the board closes whatever popup is open (the click itself still reaches the board)
-		if (l_Pointer->phase == platform::PointerPhase::Down && !l_UiHasPointer && m_Popup != Popup::None)
-			closePopup();
+		if (l_Pointer->phase == platform::PointerPhase::Down && !l_UiHasPointer && m_Popup != Popup::None && l_Pointer->device == m_PopupDevice)
+			closePopup("pointer pressed outside the UI");
 		m_CursorOverUi = l_UiHasPointer;
 		// Releases always reach the editor so no gesture is left hanging
 		const bool l_IsRelease = l_Pointer->phase == platform::PointerPhase::Up || l_Pointer->phase == platform::PointerPhase::Cancel;
