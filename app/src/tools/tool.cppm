@@ -3,10 +3,12 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 export module wb.tools.tool;
 
 import wb.math;
+import wb.doc.object;
 import wb.doc.document;
 import wb.doc.history;
 import wb.doc.selection;
@@ -22,9 +24,10 @@ enum class ToolKind : uint8_t
 	Eraser,
 	Select,
 	Hand, // drags the view around, like the scroll wheel does with a pointer
+	Text, // click to type; the editor runs the text session
 };
 
-inline constexpr size_t TOOL_KIND_COUNT = 4;
+inline constexpr size_t TOOL_KIND_COUNT = 5;
 
 enum class CursorKind : uint8_t
 {
@@ -37,9 +40,10 @@ enum class CursorKind : uint8_t
 	ResizeNWSE,
 	ResizeNESW,
 	Rotate,
+	IBeam,
 };
 
-inline constexpr size_t CURSOR_KIND_COUNT = 9;
+inline constexpr size_t CURSOR_KIND_COUNT = 10;
 
 // How the brush size relates to the zoom level
 enum class BrushSizeMode : uint8_t
@@ -61,6 +65,16 @@ struct BrushState
 	{
 		return sizePoints * sizeScale * (sizeMode == BrushSizeMode::Board ? static_cast<float>(p_Zoom) : 1.f);
 	}
+};
+
+// What the user picked in the toolbar for typing. The size is in logical points on screen at the zoom the text is
+// created at.
+struct TextState
+{
+	std::string family = "Inter";
+	uint8_t style = 0; // TextStyle flags
+	float sizePoints = 28.f;
+	TextAlign align = TextAlign::Left;
 };
 
 enum class EraserMode : uint8_t

@@ -206,6 +206,7 @@ private:
 	bool m_ShowShortcuts = false;
 	bool m_HideUi = false; // F2: only the board is drawn
 	bool m_PlayAnimations = true;
+	bool m_TextInputActive = false; // SDL text input (keyboard characters, input methods) is on while text is edited
 	double m_AnimSeconds = 0.0; // animation clock: advances while animations play
 	uint64_t m_AnimLastNs = 0;
 	bool m_ExternalClipboardNewer = true; // something other than our own copy was put on the system clipboard last

@@ -25,6 +25,10 @@ import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
 import wb.render.canvas_renderer;
+import wb.doc.hit;
+import wb.editor.text_session;
+import wb.text.fonts;
+import wb.text.system;
 import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
@@ -52,7 +56,7 @@ bool isPanButton(const platform::PointerButton p_Button)
 } // namespace
 
 Editor::Editor()
-	: m_Pen(std::make_unique<tools::PenTool>()), m_Eraser(std::make_unique<tools::EraserTool>()), m_Select(std::make_unique<tools::SelectTool>()), m_Hand(std::make_unique<tools::HandTool>())
+	: m_Pen(std::make_unique<tools::PenTool>()), m_Eraser(std::make_unique<tools::EraserTool>()), m_Select(std::make_unique<tools::SelectTool>()), m_Hand(std::make_unique<tools::HandTool>()), m_TextTool(std::make_unique<tools::TextTool>())
 {
 	m_ActiveTool = m_Pen.get();
 }
@@ -86,6 +90,8 @@ tools::Tool* Editor::toolFor(const tools::ToolKind p_Kind) const
 		return m_Select.get();
 	case tools::ToolKind::Hand:
 		return m_Hand.get();
+	case tools::ToolKind::Text:
+		return m_TextTool.get();
 	default:
 		return m_Pen.get();
 	}
@@ -116,6 +122,8 @@ void Editor::setTool(const tools::ToolKind p_Kind)
 
 void Editor::setDeviceTool(const platform::PointerDevice p_Device, const tools::ToolKind p_Kind)
 {
+	if (p_Kind != tools::ToolKind::Text)
+		m_TextSession.end();
 	m_DeviceTools[static_cast<size_t>(p_Device)] = p_Kind;
 	if (p_Device != m_LastDevice)
 		return;
@@ -131,6 +139,8 @@ void Editor::borrowTool(const tools::ToolKind p_Kind, const SDL_Keycode p_Key)
 {
 	if (m_Momentary && m_Momentary->kind == p_Kind && m_Momentary->key == p_Key)
 		return;
+	if (p_Kind != tools::ToolKind::Text)
+		m_TextSession.end();
 	m_Momentary = BorrowedTool{ .kind = p_Kind, .key = p_Key };
 	if (m_ActiveTool == nullptr || !m_ActiveTool->isBusy())
 		m_ActiveTool = toolInEffect();
@@ -161,7 +171,7 @@ std::optional<EraserCursor> Editor::brushCursor() const
 
 bool Editor::isBusy() const
 {
-	return m_Panning || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
+	return m_Panning || m_SwallowPointer || m_TextSession.dragging() || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
 }
 
 tools::CursorKind Editor::cursor() const
@@ -233,6 +243,51 @@ void Editor::handlePointer(const platform::PointerEvent& p_Event)
 		return;
 	}
 
+	// The rest of a press that began text editing
+	if (m_SwallowPointer && p_Event.device == m_SwallowDevice)
+	{
+		if (p_Event.phase == platform::PointerPhase::Up || p_Event.phase == platform::PointerPhase::Cancel)
+			m_SwallowPointer = false;
+		return;
+	}
+
+	// Text editing: a press inside the box places the caret; a press anywhere else ends the editing and carries on
+	const DVec2 l_World = m_Camera.screenToWorld(DVec2{ p_Event.position });
+	if (m_TextSession.active() && m_TextSession.pointer(p_Event, l_World))
+		return;
+
+	if (m_ActiveTool != nullptr && !l_ToolBusy && p_Event.phase == platform::PointerPhase::Down && p_Event.button == platform::PointerButton::Primary)
+	{
+		const tools::ToolKind l_Kind = m_ActiveTool->kind();
+		const double l_Tolerance = 4.0 * m_Camera.pixelScale() / m_Camera.pixelsPerUnit();
+		const ObjectId l_Hit = pickTopmost(m_Document, l_World, l_Tolerance);
+		const Object* l_HitObject = l_Hit != INVALID_OBJECT_ID ? m_Document.find(l_Hit) : nullptr;
+		const bool l_HitText = l_HitObject != nullptr && l_HitObject->text() != nullptr;
+		const DVec2 l_Screen{ p_Event.position };
+		const bool l_Double = m_LastClickNs != 0 && p_Event.timestampNs - m_LastClickNs < 450'000'000ull && glm::length(l_Screen - m_LastClickScreen) < 8.0 * m_Camera.pixelScale();
+		m_LastClickNs = p_Event.timestampNs;
+		m_LastClickScreen = l_Screen;
+		if (l_Kind == tools::ToolKind::Text)
+		{
+			if (l_HitText)
+				m_TextSession.beginExisting(l_Hit, l_World);
+			else
+				m_TextSession.beginNew(l_World, newTextData());
+			m_SwallowPointer = true;
+			m_SwallowDevice = p_Event.device;
+			m_LastClickNs = 0;
+			return;
+		}
+		if (l_Kind == tools::ToolKind::Select && l_Double && l_HitText)
+		{
+			m_TextSession.beginExisting(l_Hit, l_World);
+			m_SwallowPointer = true;
+			m_SwallowDevice = p_Event.device;
+			m_LastClickNs = 0;
+			return;
+		}
+	}
+
 	if (m_ActiveTool != nullptr)
 	{
 		// Starting to draw leaves the selection behind
@@ -274,6 +329,10 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 	const bool l_Shift = (p_Event.mod & SDL_KMOD_SHIFT) != 0;
 	const bool l_Alt = (p_Event.mod & SDL_KMOD_ALT) != 0;
 	const SDL_Keycode l_Key = p_Event.key;
+
+	// While typing, the keys belong to the text
+	if (m_TextSession.active())
+		return m_TextSession.key(p_Event);
 
 	if (l_Key == SDLK_SPACE)
 	{
@@ -360,6 +419,8 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 			deleteSelection();
 		return l_Handled();
 	}
+	if ((l_Key == SDLK_RETURN || l_Key == SDLK_KP_ENTER) && !p_Event.repeat && beginEditingSelectedText())
+		return true;
 	if (l_Key == SDLK_ESCAPE)
 	{
 		if (m_ActiveTool != nullptr && m_ActiveTool->isBusy() && m_ActiveTool->kind() == tools::ToolKind::Select)
@@ -395,6 +456,9 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 	case SDLK_H:
 		l_Tool = tools::ToolKind::Hand;
 		break;
+	case SDLK_T:
+		l_Tool = tools::ToolKind::Text;
+		break;
 	default:
 		break;
 	}
@@ -420,6 +484,7 @@ void Editor::handleFocusLost()
 {
 	m_SpaceHeld = false;
 	m_Panning = false;
+	m_SwallowPointer = false;
 	if (m_ActiveTool != nullptr)
 	{
 		tools::ToolContext l_Context = toolContext();
@@ -432,6 +497,8 @@ void Editor::handleFocusLost()
 void Editor::cancelGestures()
 {
 	m_Panning = false;
+	m_SwallowPointer = false;
+	m_TextSession.abort();
 	m_PendingPan = DVec2{ 0.0 };
 	m_Animation = CameraAnimation::None;
 	if (m_ActiveTool != nullptr)
@@ -590,8 +657,9 @@ void Editor::nudgeSelection(const Vec2 p_Points)
 
 // ------------------------------------------------------------------------------------------------ commands
 
-std::vector<uint8_t> Editor::saveBoard(const std::string& p_SourcePath) const
+std::vector<uint8_t> Editor::saveBoard(const std::string& p_SourcePath)
 {
+	embedFonts();
 	BoardMeta l_Meta;
 	l_Meta.viewCenter = m_Camera.center();
 	l_Meta.viewZoom = m_Camera.zoom();
@@ -606,6 +674,9 @@ LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& 
 	if (l_Result.ok)
 	{
 		m_History.clear();
+		for (const FontAsset& l_Font : m_Document.fontAssets())
+			m_TextSystem.fonts().addDocumentFont(l_Font.family, l_Font.style, l_Font.bytes);
+		remeasureText();
 		lookAt(p_Meta.viewCenter, p_Meta.viewZoom);
 	}
 	return l_Result;
@@ -621,6 +692,11 @@ void Editor::newBoard()
 
 void Editor::undo()
 {
+	if (m_TextSession.active())
+	{
+		m_TextSession.undo();
+		return;
+	}
 	if (isBusy())
 		return;
 	m_History.undo(m_Document);
@@ -628,6 +704,11 @@ void Editor::undo()
 
 void Editor::redo()
 {
+	if (m_TextSession.active())
+	{
+		m_TextSession.redo();
+		return;
+	}
 	if (isBusy())
 		return;
 	m_History.redo(m_Document);
@@ -723,5 +804,132 @@ bool Editor::update(const double p_DeltaSeconds)
 	m_Camera.setZoom(std::exp(l_LogZoom + (l_LogTarget - l_LogZoom) * l_T));
 	m_Camera.setCenter(m_Camera.center() + (m_TargetCenter - m_Camera.center()) * l_T);
 	return true;
+}
+
+// ------------------------------------------------------------------------------------------------ text
+
+TextData Editor::newTextData() const
+{
+	TextData l_Data;
+	l_Data.family = m_TextState.family;
+	l_Data.style = m_TextState.style;
+	l_Data.fontSize = std::max(1.f, m_TextState.sizePoints / static_cast<float>(m_Camera.zoom()));
+	l_Data.color = m_Brush.color;
+	l_Data.align = m_TextState.align;
+	return l_Data;
+}
+
+void Editor::handleTextInput(const std::string_view p_Text)
+{
+	m_TextSession.textInput(p_Text);
+}
+
+void Editor::handleTextEditing(const std::string_view p_Text, const int p_CursorCodepoints)
+{
+	m_TextSession.composition(p_Text, p_CursorCodepoints);
+}
+
+std::optional<TextData> Editor::currentText() const
+{
+	if (m_TextSession.active())
+		return m_TextSession.data();
+	for (const ObjectId l_Id : m_Selection.orderedIds())
+	{
+		if (const Object* l_Object = m_Document.find(l_Id); l_Object != nullptr && l_Object->text() != nullptr)
+			return *l_Object->text();
+	}
+	return std::nullopt;
+}
+
+bool Editor::beginEditingSelectedText()
+{
+	if (isBusy() || m_Selection.size() != 1)
+		return false;
+	const ObjectId l_Id = m_Selection.ids().front();
+	const Object* l_Object = m_Document.find(l_Id);
+	if (l_Object == nullptr || l_Object->text() == nullptr)
+		return false;
+	m_TextSession.beginExisting(l_Id, std::nullopt);
+	return m_TextSession.active();
+}
+
+void Editor::applyTextStyle(const std::function<void(TextData&)>& p_Edit)
+{
+	if (m_TextSession.active())
+	{
+		m_TextSession.applyStyle(p_Edit);
+		return;
+	}
+	if (isBusy())
+		return;
+	std::vector<SetTextCommand::Entry> l_Entries;
+	for (const ObjectId l_Id : m_Selection.orderedIds())
+	{
+		const Object* l_Object = m_Document.find(l_Id);
+		const TextData* l_Text = l_Object != nullptr ? l_Object->text() : nullptr;
+		if (l_Text == nullptr)
+			continue;
+		TextData l_After = *l_Text;
+		p_Edit(l_After);
+		l_After.size = m_TextSystem.measure(l_After);
+		if (l_After == *l_Text)
+			continue;
+		l_Entries.push_back(SetTextCommand::Entry{
+			.id = l_Id,
+			.before = *l_Text,
+			.after = l_After,
+			.transformBefore = l_Object->transform,
+			.transformAfter = anchoredTextTransform(l_Object->transform, l_Text->size, l_After.size, l_After.align),
+		});
+	}
+	if (!l_Entries.empty())
+		m_History.execute(m_Document, std::make_unique<SetTextCommand>(std::move(l_Entries), "Change text"));
+}
+
+void Editor::remeasureText()
+{
+	std::vector<ObjectId> l_Stale;
+	for (const std::unique_ptr<Object>& l_Object : m_Document.objects())
+	{
+		const TextData* l_Text = l_Object->text();
+		if (l_Text == nullptr || (m_TextSession.active() && l_Object->id == m_TextSession.object()))
+			continue;
+		const Vec2 l_Size = m_TextSystem.measure(*l_Text);
+		if (std::abs(l_Size.x - l_Text->size.x) > 0.01f || std::abs(l_Size.y - l_Text->size.y) > 0.01f)
+			l_Stale.push_back(l_Object->id);
+	}
+	for (const ObjectId l_Id : l_Stale)
+	{
+		const Object* l_Object = m_Document.find(l_Id);
+		const Vec2 l_OldSize = l_Object->text()->size;
+		const Vec2 l_Size = m_TextSystem.measure(*l_Object->text());
+		const Affine2 l_Transform = anchoredTextTransform(l_Object->transform, l_OldSize, l_Size, l_Object->text()->align);
+		m_Document.modify(l_Id, [&](Object& p_Object)
+		{
+			p_Object.text()->size = l_Size;
+			p_Object.transform = l_Transform;
+		});
+	}
+}
+
+// Stores the fonts the board's text uses in the board, so it looks the same on a machine that lacks them. Fonts that
+// ship with the app, that forbid embedding or that are huge are only referenced by name.
+void Editor::embedFonts()
+{
+	constexpr size_t MAX_EMBEDDED_BYTES = 8u << 20;
+	text::FontRegistry& l_Fonts = m_TextSystem.fonts();
+	for (const std::unique_ptr<Object>& l_Object : m_Document.objects())
+	{
+		const TextData* l_Text = l_Object->text();
+		if (l_Text == nullptr)
+			continue;
+		const text::ResolvedFace l_Face = l_Fonts.resolve(l_Text->family, l_Text->style);
+		if (l_Face.face == text::NO_FACE || l_Fonts.isBundled(l_Face.face) || m_Document.findFontAsset(l_Text->family, l_Face.actualStyle) != nullptr)
+			continue;
+		const std::span<const uint8_t> l_Bytes = l_Fonts.embeddableBytes(l_Face.face);
+		if (l_Bytes.empty() || l_Bytes.size() > MAX_EMBEDDED_BYTES)
+			continue;
+		m_Document.setFontAsset(FontAsset{ .family = l_Text->family, .style = l_Face.actualStyle, .bytes = std::vector<uint8_t>(l_Bytes.begin(), l_Bytes.end()) });
+	}
 }
 } // namespace wb

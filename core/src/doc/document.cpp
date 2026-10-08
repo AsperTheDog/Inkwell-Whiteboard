@@ -166,8 +166,32 @@ const ImageAsset* Document::findAsset(const AssetId p_Id) const
 	return l_It != m_Assets.end() ? &l_It->second : nullptr;
 }
 
+void Document::setFontAsset(FontAsset p_Font)
+{
+	for (FontAsset& l_Existing : m_Fonts)
+	{
+		if (l_Existing.style == p_Font.style && l_Existing.family == p_Font.family)
+		{
+			l_Existing = std::move(p_Font);
+			return;
+		}
+	}
+	m_Fonts.push_back(std::move(p_Font));
+}
+
+const FontAsset* Document::findFontAsset(const std::string_view p_Family, const uint8_t p_Style) const
+{
+	for (const FontAsset& l_Font : m_Fonts)
+	{
+		if (l_Font.style == p_Style && l_Font.family == p_Family)
+			return &l_Font;
+	}
+	return nullptr;
+}
+
 void Document::clear()
 {
+	m_Fonts.clear();
 	m_Assets.clear();
 	m_AssetsByHash.clear();
 	m_NextAsset = 1;

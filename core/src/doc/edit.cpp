@@ -150,12 +150,44 @@ void editImages(Document& p_Document, History& p_History, const std::span<const 
 		p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), p_Name));
 }
 
+Affine2 anchoredTextTransform(const Affine2& p_Old, const Vec2 p_OldSize, const Vec2 p_NewSize, const TextAlign p_Align)
+{
+	const double l_Fraction = p_Align == TextAlign::Left ? 0.0 : (p_Align == TextAlign::Center ? 0.5 : 1.0);
+	const DVec2 l_OldAnchor{ (l_Fraction - 0.5) * p_OldSize.x, -0.5 * p_OldSize.y };
+	const DVec2 l_NewAnchor{ (l_Fraction - 0.5) * p_NewSize.x, -0.5 * p_NewSize.y };
+	Affine2 l_Result = p_Old;
+	l_Result.translation = p_Old.translation + p_Old.applyVector(l_OldAnchor - l_NewAnchor);
+	return l_Result;
+}
+
+void editText(Document& p_Document, History& p_History, const ObjectId p_Id, const TextData& p_After, const char* p_Name)
+{
+	const Object* l_Object = p_Document.find(p_Id);
+	const TextData* l_Before = l_Object != nullptr ? l_Object->text() : nullptr;
+	if (l_Before == nullptr || *l_Before == p_After)
+		return;
+	std::vector<SetTextCommand::Entry> l_Entries;
+	l_Entries.push_back(SetTextCommand::Entry{
+		.id = p_Id,
+		.before = *l_Before,
+		.after = p_After,
+		.transformBefore = l_Object->transform,
+		.transformAfter = anchoredTextTransform(l_Object->transform, l_Before->size, p_After.size, p_After.align),
+	});
+	p_History.execute(p_Document, std::make_unique<SetTextCommand>(std::move(l_Entries), p_Name));
+}
+
 void recolorObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const Color p_Color)
 {
 	std::vector<ObjectId> l_Ids;
 	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
 	{
-		if (const StrokeData* l_Stroke = l_Object->stroke(); l_Stroke != nullptr && !(l_Stroke->style.color.r == p_Color.r && l_Stroke->style.color.g == p_Color.g && l_Stroke->style.color.b == p_Color.b))
+		const Color* l_Current = nullptr;
+		if (const StrokeData* l_Stroke = l_Object->stroke())
+			l_Current = &l_Stroke->style.color;
+		else if (const TextData* l_Text = l_Object->text())
+			l_Current = &l_Text->color;
+		if (l_Current != nullptr && !(l_Current->r == p_Color.r && l_Current->g == p_Color.g && l_Current->b == p_Color.b))
 			l_Ids.push_back(l_Object->id);
 	}
 	if (!l_Ids.empty())

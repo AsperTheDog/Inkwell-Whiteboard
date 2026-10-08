@@ -27,6 +27,8 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.pipeline;
 import wb.render.image_store;
+import wb.render.text_renderer;
+import wb.text.system;
 
 namespace wb::render
 {
@@ -159,6 +161,7 @@ void CanvasRenderer::init(const gfx::GraphicsContext& p_Context, const VkFormat 
 
 	createPipelines(p_Context, p_ColorFormat);
 	m_Images.init(p_Context, p_ColorFormat);
+	m_Text.init(p_Context, p_ColorFormat);
 
 	m_MaxPoolPoints = p_Context.info().limits.maxStorageBufferRange / sizeof(GpuPoint);
 	const uint64_t l_Initial = std::min(INITIAL_POOL_POINTS, m_MaxPoolPoints);
@@ -186,6 +189,7 @@ void CanvasRenderer::destroy(const gfx::GraphicsContext& p_Context)
 {
 	detach();
 	m_Images.destroy(p_Context);
+	m_Text.destroy(p_Context);
 	const VkDevice l_Device = p_Context.device();
 	for (FrameResources& l_Frame : m_Frames)
 	{
@@ -364,6 +368,9 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 	m_Slot = p_Slot;
 	m_Images.update(p_Context, p_Frames, p_Cmd);
 	m_ImageDraws.clear();
+	m_Text.begin();
+	m_TextGlyphs.clear();
+	m_TextIncomplete = false;
 	m_Animating = false;
 	m_CurrentTimeline = p_Frames.submittedValue() + 1;
 	processFrees(p_Frames.completedValue(p_Context));
@@ -391,6 +398,18 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
 				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Image->size });
 				m_Animating = m_Animating || l_Lookup.animatedAndPlaying;
+				continue;
+			}
+			if (const TextData* l_Text = l_Object->text())
+			{
+				if (m_TextSystem == nullptr || !l_Object->worldBounds().inflated(2.0 / p_Camera.pixelsPerUnit()).intersects(l_Visible))
+					continue;
+				const size_t l_FirstGlyph = m_TextGlyphs.size();
+				if (!m_TextSystem->buildGlyphs(*l_Text, m_TextGlyphs))
+					m_TextIncomplete = true;
+				const uint32_t l_Count = static_cast<uint32_t>(m_TextGlyphs.size() - l_FirstGlyph);
+				if (l_Count > 0)
+					m_Draws.push_back(Draw{ .text = m_Text.add(static_cast<uint32_t>(l_FirstGlyph), l_Count, l_WorldToScreen * l_Object->transform, l_Text->color) });
 				continue;
 			}
 			const StrokeData* l_Stroke = l_Object->stroke();
@@ -427,6 +446,9 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 		m_Draws.push_back(Draw{ .instance = static_cast<uint32_t>(l_Instances.size()), .vertexCount = vertexCountFor(static_cast<uint32_t>(l_LiveCount)) });
 		l_Instances.push_back(makeInstance(l_WorldToScreen * Affine2::translate(p_Live->origin), p_Live->color, 0, static_cast<uint32_t>(l_LiveCount), STROKE_FLAG_LIVE));
 	}
+
+	if (m_TextSystem != nullptr)
+		m_Text.upload(p_Context, p_Frames, p_Staging, p_Cmd, p_Slot, m_TextSystem->atlas(), m_TextGlyphs);
 
 	ensureCapacity(p_Context, p_Frames, l_Frame.instances, std::max<size_t>(l_Instances.size(), 1) * sizeof(GpuStrokeInstance), "stroke instances");
 	if (!l_Instances.empty())
@@ -500,8 +522,21 @@ void CanvasRenderer::record(const VkCommandBuffer p_Cmd, const Camera& p_Camera,
 	const VkExtent2D l_Extent{ static_cast<uint32_t>(l_Viewport.x), static_cast<uint32_t>(l_Viewport.y) };
 	bool l_StrokesBound = false;
 	bool l_ImagesBound = false;
+	bool l_TextBound = false;
 	for (const Draw& l_Draw : m_Draws)
 	{
+		if (l_Draw.text != NO_IMAGE)
+		{
+			if (!l_TextBound)
+			{
+				m_Text.bind(p_Cmd);
+				l_TextBound = true;
+				l_StrokesBound = false;
+				l_ImagesBound = false;
+			}
+			m_Text.draw(p_Cmd, l_Extent, l_Draw.text);
+			continue;
+		}
 		if (l_Draw.image != NO_IMAGE)
 		{
 			if (!l_ImagesBound)
@@ -509,6 +544,7 @@ void CanvasRenderer::record(const VkCommandBuffer p_Cmd, const Camera& p_Camera,
 				m_Images.bind(p_Cmd);
 				l_ImagesBound = true;
 				l_StrokesBound = false;
+				l_TextBound = false;
 			}
 			m_Images.draw(p_Cmd, l_Extent, m_ImageDraws[l_Draw.image]);
 			continue;
@@ -520,6 +556,7 @@ void CanvasRenderer::record(const VkCommandBuffer p_Cmd, const Camera& p_Camera,
 			vkCmdPushConstants(p_Cmd, m_StrokeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(l_Push), &l_Push);
 			l_StrokesBound = true;
 			l_ImagesBound = false;
+			l_TextBound = false;
 		}
 		vkCmdDraw(p_Cmd, l_Draw.vertexCount, 1, 0, l_Draw.instance);
 	}

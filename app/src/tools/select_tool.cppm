@@ -116,6 +116,17 @@ private:
 	std::vector<DVec2> m_Lasso;
 };
 
+// Clicking with this tool starts typing; the editor runs the text session
+class TextTool final : public Tool
+{
+public:
+	[[nodiscard]] ToolKind kind() const override { return ToolKind::Text; }
+	void onPointer(const platform::PointerEvent&, ToolContext&) override {}
+	void cancel(ToolContext&) override {}
+	[[nodiscard]] bool isBusy() const override { return false; }
+	[[nodiscard]] CursorKind cursor() const override { return CursorKind::IBeam; }
+};
+
 // Dragging with this tool moves the view; the editor does the panning
 class HandTool final : public Tool
 {

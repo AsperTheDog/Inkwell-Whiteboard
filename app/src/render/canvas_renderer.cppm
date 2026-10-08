@@ -24,6 +24,8 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.buffer;
 import wb.render.image_store;
+import wb.render.text_renderer;
+import wb.text.system;
 
 export namespace wb::render
 {
@@ -58,6 +60,9 @@ public:
 	void init(const gfx::GraphicsContext& p_Context, VkFormat p_ColorFormat);
 	void destroy(const gfx::GraphicsContext& p_Context);
 
+	// The text system that lays out and rasterizes the board's text; set before the first prepare()
+	void setTextSystem(text::TextSystem* p_Text) { m_TextSystem = p_Text; }
+
 	// Starts mirroring p_Document on the GPU (uploads everything it already contains)
 	void attach(Document& p_Document);
 	void detach();
@@ -69,7 +74,7 @@ public:
 
 	[[nodiscard]] const CanvasStats& stats() const { return m_Stats; }
 	// Frames must keep coming: an animated picture is on screen, or pictures are still loading
-	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy(); }
+	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete; }
 	[[nodiscard]] ImageStore& images() { return m_Images; }
 	[[nodiscard]] const ImageStore& images() const { return m_Images; }
 
@@ -100,6 +105,7 @@ private:
 		uint32_t instance = 0;
 		uint32_t vertexCount = 0;
 		uint32_t image = NO_IMAGE; // index into m_ImageDraws for pictures
+		uint32_t text = NO_IMAGE;  // draw index of m_Text for text
 	};
 
 	struct FrameResources
@@ -131,7 +137,11 @@ private:
 	std::vector<Draw> m_Draws;
 	std::vector<ImageDraw> m_ImageDraws;
 	ImageStore m_Images;
+	TextRenderer m_Text;
+	text::TextSystem* m_TextSystem = nullptr;
+	std::vector<text::GpuGlyph> m_TextGlyphs;
 	bool m_Animating = false;
+	bool m_TextIncomplete = false; // the glyph atlas ran out of room: draw again with a fresh one
 
 	VkDescriptorSetLayout m_SetLayout = VK_NULL_HANDLE;
 	VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;

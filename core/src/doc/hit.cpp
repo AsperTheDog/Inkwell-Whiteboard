@@ -55,6 +55,18 @@ bool anySegment(const Object& p_Object, const StrokeData& p_Stroke, Visitor&& p_
 	return false;
 }
 
+// Pictures and text are solid rectangles
+bool boxBounds(const Object& p_Object, Rect& p_Local)
+{
+	if (const ImageData* l_Image = p_Object.image())
+		p_Local = l_Image->localBounds();
+	else if (const TextData* l_Text = p_Object.text())
+		p_Local = l_Text->localBounds();
+	else
+		return false;
+	return true;
+}
+
 Rect polygonBounds(const std::span<const DVec2> p_Polygon)
 {
 	Rect l_Bounds{};
@@ -78,12 +90,12 @@ Rect tightWorldBounds(const Object& p_Object)
 
 bool hitsPoint(const Object& p_Object, const DVec2 p_World, const double p_Tolerance)
 {
-	if (const ImageData* l_Image = p_Object.image())
+	if (Rect l_Box; boxBounds(p_Object, l_Box))
 	{
 		if (!p_Object.worldBounds().inflated(p_Tolerance).contains(p_World) || !p_Object.transform.isInvertible())
 			return false;
 		const DVec2 l_Local = p_Object.transform.inverse().apply(p_World);
-		return l_Image->localBounds().inflated(p_Tolerance / std::max(p_Object.transform.uniformScale(), 1e-12)).contains(l_Local);
+		return l_Box.inflated(p_Tolerance / std::max(p_Object.transform.uniformScale(), 1e-12)).contains(l_Local);
 	}
 	const StrokeData* l_Stroke = p_Object.stroke();
 	if (l_Stroke == nullptr || !p_Object.worldBounds().inflated(p_Tolerance).contains(p_World))
@@ -123,10 +135,10 @@ bool pointInPolygon(const DVec2 p_Point, const std::span<const DVec2> p_Polygon)
 
 namespace
 {
-// A (possibly rotated or mirrored) image rectangle against a polygon
-bool imageTouchesPolygon(const Object& p_Object, const ImageData& p_Image, const std::span<const DVec2> p_Polygon)
+// A (possibly rotated or mirrored) picture or text rectangle against a polygon
+bool boxTouchesPolygon(const Object& p_Object, const Rect& p_Local, const std::span<const DVec2> p_Polygon)
 {
-	const Rect l_Local = p_Image.localBounds();
+	const Rect& l_Local = p_Local;
 	const std::array<DVec2, 4> l_Corners{
 		p_Object.transform.apply(l_Local.min),
 		p_Object.transform.apply(DVec2{ l_Local.max.x, l_Local.min.y }),
@@ -167,8 +179,8 @@ bool touchesPolygon(const Object& p_Object, const std::span<const DVec2> p_Polyg
 	const Rect l_Area = polygonBounds(p_Polygon);
 	if (!p_Object.worldBounds().intersects(l_Area))
 		return false;
-	if (const ImageData* l_Image = p_Object.image())
-		return imageTouchesPolygon(p_Object, *l_Image, p_Polygon);
+	if (Rect l_Box; boxBounds(p_Object, l_Box))
+		return boxTouchesPolygon(p_Object, l_Box, p_Polygon);
 	const StrokeData* l_Stroke = p_Object.stroke();
 	if (l_Stroke == nullptr)
 		return false;

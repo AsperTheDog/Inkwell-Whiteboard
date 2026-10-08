@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <variant>
 #include <vector>
 #include <glm/glm.hpp>
@@ -87,7 +88,39 @@ struct ImageData
 	bool operator==(const ImageData&) const = default;
 };
 
-using ObjectPayload = std::variant<StrokeData, ImageData>;
+enum class TextAlign : uint8_t
+{
+	Left,
+	Center,
+	Right,
+};
+
+namespace TextStyle
+{
+inline constexpr uint8_t Bold = 1u << 0;
+inline constexpr uint8_t Italic = 1u << 1;
+} // namespace TextStyle
+
+// Text. The object-local rectangle is centred on the origin like a picture's. `size` is the extent of the laid-out
+// text; whoever changes the text, font or wrap width measures it again and stores it here (the document itself knows
+// nothing about fonts, so files load and hit-test without them).
+struct TextData
+{
+	std::string text;                  // UTF-8, line feed separates lines
+	std::string family = "Inter";      // font family name; the font itself is looked up at draw time
+	uint8_t style = 0;                 // TextStyle flags
+	float fontSize = 32.f;             // em size in local units
+	Color color = Color::fromRgba8(0x1F1F1FFFu);
+	TextAlign align = TextAlign::Left;
+	float wrapWidth = 0.f;             // local units; 0 = lines end only where the text has a line break
+	Vec2 size{ 1.f, 1.f };             // measured extent in local units
+
+	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
+
+	bool operator==(const TextData&) const = default;
+};
+
+using ObjectPayload = std::variant<StrokeData, ImageData, TextData>;
 
 struct Object
 {
@@ -111,6 +144,8 @@ struct Object
 	[[nodiscard]] const StrokeData* stroke() const { return std::get_if<StrokeData>(&payload); }
 	[[nodiscard]] ImageData* image() { return std::get_if<ImageData>(&payload); }
 	[[nodiscard]] const ImageData* image() const { return std::get_if<ImageData>(&payload); }
+	[[nodiscard]] TextData* text() { return std::get_if<TextData>(&payload); }
+	[[nodiscard]] const TextData* text() const { return std::get_if<TextData>(&payload); }
 
 private:
 	Rect m_LocalBounds{};

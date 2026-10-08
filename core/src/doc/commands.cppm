@@ -158,7 +158,31 @@ private:
 	std::string m_Name;
 };
 
-// Recolours strokes (the alpha channel of each stroke is kept)
+// Replaces the data of text objects. The transform changes with it: a box that grows keeps its anchored corner or
+// edge in place, which moves the object's origin (see anchoredTextTransform).
+class SetTextCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		TextData before{};
+		TextData after{};
+		Affine2 transformBefore{};
+		Affine2 transformAfter{};
+	};
+
+	SetTextCommand(std::vector<Entry> p_Entries, std::string p_Name);
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
+// Recolours strokes and text (the alpha channel of each is kept)
 class SetStrokeColorCommand final : public Command
 {
 public:

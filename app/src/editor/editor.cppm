@@ -16,6 +16,7 @@ module;
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <SDL3/SDL.h>
 
@@ -33,6 +34,8 @@ import wb.view.camera;
 import wb.brush.stroke_builder;
 import wb.platform.input;
 import wb.render.canvas_renderer;
+import wb.editor.text_session;
+import wb.text.system;
 import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
@@ -107,6 +110,23 @@ public:
 	ObjectId insertPicture(ImageAsset p_Asset, DVec2 p_WorldCenter);
 	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
 	void editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
+	// ---- text
+	[[nodiscard]] text::TextSystem& textSystem() { return m_TextSystem; }
+	[[nodiscard]] tools::TextState& textState() { return m_TextState; }
+	[[nodiscard]] bool textEditing() const { return m_TextSession.active(); }
+	[[nodiscard]] std::optional<TextEditView> textEditView() { return m_TextSession.view(); }
+	void handleTextInput(std::string_view p_Text);
+	void handleTextEditing(std::string_view p_Text, int p_CursorCodepoints);
+	// Edits the text being typed, or else the selected text objects (one undo step)
+	void applyTextStyle(const std::function<void(TextData&)>& p_Edit);
+	// The text being edited, or the first selected text object
+	[[nodiscard]] std::optional<TextData> currentText() const;
+	// Starts typing in the selected text object (when exactly one is selected)
+	bool beginEditingSelectedText();
+	void endTextEditing() { m_TextSession.end(); }
+	// Measures every text object again (fonts that were not available when the board was made may have arrived)
+	void remeasureText();
+
 	// Changes whenever something is copied or cut inside the app (the system clipboard may hold something newer)
 	[[nodiscard]] uint64_t clipSerial() const { return m_ClipSerial; }
 	void recolorSelection(Color p_Color);
@@ -115,7 +135,7 @@ public:
 
 	// Whole-board operations (used by the session: save, open, new). Loading and new end any gesture in progress and
 	// clear the undo history.
-	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath) const;
+	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath);
 	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta);
 	void newBoard();
 
@@ -158,6 +178,8 @@ private:
 	void cancelGestures();
 	void startZoom(double p_TargetZoom, DVec2 p_AnchorScreen);
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
+	[[nodiscard]] TextData newTextData() const;
+	void embedFonts();
 
 	Document m_Document;
 	History m_History;
@@ -167,10 +189,14 @@ private:
 	tools::EraserState m_EraserState;
 	tools::SelectState m_SelectState;
 	BrushSettings m_BrushSettings;
+	tools::TextState m_TextState;
+	text::TextSystem m_TextSystem;
+	TextSession m_TextSession{ m_Document, m_History, m_Selection, m_Camera, m_TextSystem };
 	std::unique_ptr<tools::PenTool> m_Pen;
 	std::unique_ptr<tools::EraserTool> m_Eraser;
 	std::unique_ptr<tools::SelectTool> m_Select;
 	std::unique_ptr<tools::HandTool> m_Hand;
+	std::unique_ptr<tools::TextTool> m_TextTool;
 	std::array<tools::ToolKind, 3> m_DeviceTools{ tools::ToolKind::Pen, tools::ToolKind::Pen, tools::ToolKind::Hand }; // mouse, pen, touch
 	platform::PointerDevice m_LastDevice = platform::PointerDevice::Mouse;
 	std::optional<BorrowedTool> m_Momentary;
@@ -187,6 +213,10 @@ private:
 	bool m_SpaceHeld = false;
 	DVec2 m_PendingPan{ 0.0 }; // scroll-wheel pan (pixels) still to be applied, eased in by update()
 	bool m_Panning = false;
+	bool m_SwallowPointer = false; // the press that began text editing: its drag and release are ignored
+	platform::PointerDevice m_SwallowDevice = platform::PointerDevice::Mouse;
+	uint64_t m_LastClickNs = 0;
+	DVec2 m_LastClickScreen{ 0.0 };
 	platform::PointerDevice m_PanDevice = platform::PointerDevice::Mouse;
 	platform::PointerButton m_PanButton = platform::PointerButton::None;
 	Vec2 m_PanLast{ 0.f };

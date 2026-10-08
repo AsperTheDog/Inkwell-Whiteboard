@@ -35,6 +35,8 @@ import wb.math;
 import wb.platform.input;
 import wb.platform.window;
 import wb.render.canvas_renderer;
+import wb.text.fonts;
+import wb.text.system;
 import wb.tools.tool;
 import wb.ui.context;
 import wb.ui.draw;
@@ -166,6 +168,17 @@ void App::init()
 	m_Staging.init(m_Context, STAGING_CHUNK_BYTES);
 	m_Canvas.init(m_Context, m_Swapchain.format());
 	m_Canvas.attach(m_Editor.document());
+	m_Canvas.setTextSystem(&m_Editor.textSystem());
+	{
+		text::FontRegistry& l_Fonts = m_Editor.textSystem().fonts();
+		l_Fonts.addBundledDirectory(fontDirectory() / "text");
+		if (char* l_Pref = SDL_GetPrefPath("Whiteboard", "Whiteboard"))
+		{
+			l_Fonts.setUserDirectory(std::filesystem::path(reinterpret_cast<const char8_t*>(l_Pref)) / "fonts");
+			SDL_free(l_Pref);
+		}
+		l_Fonts.scanSystemFonts();
+	}
 	m_ImGui.init(m_Context, m_Window, m_Swapchain);
 	{
 		std::string l_Error;
@@ -186,6 +199,7 @@ void App::init()
 	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNS)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNWSE)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::ResizeNESW)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE);
+	m_Cursors[static_cast<size_t>(tools::CursorKind::IBeam)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
 	m_Cursors[static_cast<size_t>(tools::CursorKind::Rotate)] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER); // no system rotate cursor
 	m_CurrentCursor = tools::CursorKind::Default;
 
@@ -335,6 +349,8 @@ void App::handleEvent(const SDL_Event& p_Event)
 			SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
 			return;
 		}
+		if (m_Editor.textEditing() && !modalOpen() && !m_ImGui.wantsKeyboard() && m_Editor.handleKeyDown(p_Event.key))
+			return;
 		if (handleUiKey(p_Event.key))
 			return;
 		if (!m_ImGui.wantsKeyboard() && !handleFileShortcut(p_Event.key))
@@ -345,8 +361,14 @@ void App::handleEvent(const SDL_Event& p_Event)
 		m_Editor.handleKeyUp(p_Event.key); // releases (Space...) must never get lost
 		return;
 	case SDL_EVENT_TEXT_INPUT:
+		requestRedraw();
+		if (!m_ImGui.wantsKeyboard() && p_Event.text.text != nullptr)
+			m_Editor.handleTextInput(p_Event.text.text);
+		return;
 	case SDL_EVENT_TEXT_EDITING:
 		requestRedraw();
+		if (!m_ImGui.wantsKeyboard() && p_Event.edit.text != nullptr)
+			m_Editor.handleTextEditing(p_Event.edit.text, p_Event.edit.start);
 		return;
 	default:
 		break;
@@ -434,6 +456,26 @@ void App::renderFrame()
 
 	if (m_FontAtlas.beginFrame())
 		requestRedraw(2); // the glyph atlas overflowed and was cleared: draw again with the glyphs it now holds
+	{
+		text::FontRegistry& l_Fonts = m_Editor.textSystem().fonts();
+		l_Fonts.pump();
+		if (m_Editor.textSystem().beginFrame())
+		{
+			m_Editor.remeasureText(); // fonts arrived: boxes made with stand-ins fit their text again
+			requestRedraw(2);
+		}
+		if (l_Fonts.scanning())
+			requestRedraw(2); // until the installed fonts are known
+		const bool l_Typing = m_Editor.textEditing();
+		if (l_Typing != m_TextInputActive)
+		{
+			m_TextInputActive = l_Typing;
+			if (l_Typing)
+				SDL_StartTextInput(m_Window.handle());
+			else
+				SDL_StopTextInput(m_Window.handle());
+		}
+	}
 	const double l_UiDt = m_LastUiNs == 0 ? 0.0 : std::min(static_cast<double>(l_CpuStart - m_LastUiNs) * 1e-9, 0.05);
 	m_LastUiNs = l_CpuStart;
 	updateTheme(l_UiDt);

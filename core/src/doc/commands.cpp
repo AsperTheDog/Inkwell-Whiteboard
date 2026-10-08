@@ -254,18 +254,36 @@ SetStrokeColorCommand::SetStrokeColorCommand(std::vector<ObjectId> p_Ids, const 
 {
 }
 
+namespace
+{
+// The colour of an object that has one (strokes and text)
+Color* colorOf(Object& p_Object)
+{
+	if (StrokeData* l_Stroke = p_Object.stroke())
+		return &l_Stroke->style.color;
+	if (TextData* l_Text = p_Object.text())
+		return &l_Text->color;
+	return nullptr;
+}
+
+const Color* colorOf(const Object& p_Object)
+{
+	return colorOf(const_cast<Object&>(p_Object));
+}
+} // namespace
+
 void SetStrokeColorCommand::apply(Document& p_Document)
 {
 	m_Old.clear();
 	for (const ObjectId l_Id : m_Ids)
 	{
 		const Object* l_Object = p_Document.find(l_Id);
-		const StrokeData* l_Stroke = l_Object != nullptr ? l_Object->stroke() : nullptr;
-		m_Old.push_back(l_Stroke != nullptr ? l_Stroke->style.color : m_New);
-		if (l_Stroke == nullptr)
+		const Color* l_Current = l_Object != nullptr ? colorOf(*l_Object) : nullptr;
+		m_Old.push_back(l_Current != nullptr ? *l_Current : m_New);
+		if (l_Current == nullptr)
 			continue;
-		const Color l_Color{ m_New.r, m_New.g, m_New.b, l_Stroke->style.color.a };
-		p_Document.modify(l_Id, [&](Object& p_Object) { p_Object.stroke()->style.color = l_Color; }, ObjectChange::Style);
+		const Color l_Color{ m_New.r, m_New.g, m_New.b, l_Current->a };
+		p_Document.modify(l_Id, [&](Object& p_Object) { *colorOf(p_Object) = l_Color; }, ObjectChange::Style);
 	}
 }
 
@@ -274,9 +292,43 @@ void SetStrokeColorCommand::revert(Document& p_Document)
 	for (size_t i = 0; i < m_Ids.size() && i < m_Old.size(); ++i)
 	{
 		const Object* l_Object = p_Document.find(m_Ids[i]);
-		if (l_Object == nullptr || l_Object->stroke() == nullptr)
+		if (l_Object == nullptr || colorOf(*l_Object) == nullptr)
 			continue;
-		p_Document.modify(m_Ids[i], [&](Object& p_Object) { p_Object.stroke()->style.color = m_Old[i]; }, ObjectChange::Style);
+		p_Document.modify(m_Ids[i], [&](Object& p_Object) { *colorOf(p_Object) = m_Old[i]; }, ObjectChange::Style);
+	}
+}
+
+SetTextCommand::SetTextCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
+{
+}
+
+void SetTextCommand::apply(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+	{
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (TextData* l_Text = p_Object.text())
+			{
+				*l_Text = l_Entry.after;
+				p_Object.transform = l_Entry.transformAfter;
+			}
+		});
+	}
+}
+
+void SetTextCommand::revert(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+	{
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (TextData* l_Text = p_Object.text())
+			{
+				*l_Text = l_Entry.before;
+				p_Object.transform = l_Entry.transformBefore;
+			}
+		});
 	}
 }
 } // namespace wb

@@ -43,6 +43,13 @@ void flipObjects(Document& p_Document, History& p_History, std::span<const Objec
 // Edits the image data of the image objects among p_Ids (one undo step). p_Edit returns false to leave an image alone.
 void editImages(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
 
+// The transform a text object needs when its box changes from p_OldSize to p_NewSize so that the part the text is
+// aligned to (left edge, centre line or right edge, and the top) stays where it was on the board
+[[nodiscard]] Affine2 anchoredTextTransform(const Affine2& p_Old, Vec2 p_OldSize, Vec2 p_NewSize, TextAlign p_Align);
+
+// Replaces the data of one text object (one undo step); the object keeps its anchored corner in place
+void editText(Document& p_Document, History& p_History, ObjectId p_Id, const TextData& p_After, const char* p_Name);
+
 void recolorObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, Color p_Color);
 
 // Applies p_World after each object's own transform (new = p_World * old). Consecutive calls with p_Mergeable

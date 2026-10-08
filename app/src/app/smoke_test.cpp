@@ -28,6 +28,8 @@ import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
 import wb.io.file;
+import wb.io.serializer;
+import wb.text.system;
 import wb.session;
 import wb.math;
 import wb.platform.input;
@@ -45,6 +47,7 @@ constexpr size_t EVENTS_PER_FRAME = 6;
 Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
 std::vector<ObjectId> s_SmokePictures;
 size_t s_SmokeObjectsBefore = 0;
+size_t s_SmokeUndoBefore = 0;
 bool s_SmokeExtraPicture = false;
 
 void appendPngBytes(void* p_Context, void* p_Data, const int p_Size)
@@ -590,6 +593,156 @@ void App::driveSmokeTest()
 		return;
 	}
 	case 18:
+	{
+		// Text: typed through the editor like the keyboard does it
+		if (m_Options.smokeUi == "text")
+		{
+			m_Editor.selectAll();
+			m_Editor.deleteSelection();
+			m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+		}
+		s_SmokeObjectsBefore = m_Editor.document().size();
+		s_SmokeUndoBefore = m_Editor.history().undoCount();
+		const auto l_Click = [&](const Vec2 p_Screen)
+		{
+			m_SmokeTimeNs += 1'000'000'000ull;
+			platform::PointerEvent l_Event{ .phase = platform::PointerPhase::Down, .device = platform::PointerDevice::Mouse, .button = platform::PointerButton::Primary, .buttons = platform::ButtonMask::Primary, .position = p_Screen, .timestampNs = m_SmokeTimeNs };
+			m_Editor.handlePointer(l_Event);
+			l_Event.phase = platform::PointerPhase::Up;
+			l_Event.buttons = 0;
+			m_Editor.handlePointer(l_Event);
+		};
+		const auto l_Key = [&](const SDL_Keycode p_Key)
+		{
+			SDL_KeyboardEvent l_Event{};
+			l_Event.type = SDL_EVENT_KEY_DOWN;
+			l_Event.key = p_Key;
+			l_Event.down = true;
+			m_Editor.handleKeyDown(l_Event);
+		};
+		m_Editor.setTool(tools::ToolKind::Text);
+		tools::TextState& l_State = m_Editor.textState();
+		m_Editor.brush().color = Color::fromRgba8(0x1F1F1FFFu);
+
+		l_State = { .family = "Inter", .style = 0, .sizePoints = 28.f, .align = TextAlign::Left };
+		l_Click(l_C + Vec2{ -560.f * l_S, -300.f * l_S });
+		m_Editor.handleTextInput("Whiteboard text: Inter");
+		m_Editor.handleTextInput("\nsecond line, kerning: AVA To Wa");
+		l_Key(SDLK_ESCAPE);
+
+		l_State = { .family = "Caveat", .style = TextStyle::Bold, .sizePoints = 54.f, .align = TextAlign::Left };
+		m_Editor.brush().color = Color::fromRgba8(0xE53935FFu);
+		l_Click(l_C + Vec2{ -560.f * l_S, -190.f * l_S });
+		m_Editor.handleTextInput("Handwriting looks good");
+		l_Key(SDLK_ESCAPE);
+
+		l_State = { .family = "Source Serif 4", .style = TextStyle::Italic, .sizePoints = 30.f, .align = TextAlign::Center };
+		m_Editor.brush().color = Color::fromRgba8(0x1E88E5FFu);
+		l_Click(l_C + Vec2{ 120.f * l_S, -300.f * l_S });
+		m_Editor.handleTextInput("Serif italic, centred\nshort\na much longer line here");
+		l_Key(SDLK_ESCAPE);
+
+		l_State = { .family = "JetBrains Mono", .style = TextStyle::Bold, .sizePoints = 22.f, .align = TextAlign::Right };
+		m_Editor.brush().color = Color::fromRgba8(0x43A047FFu);
+		l_Click(l_C + Vec2{ 480.f * l_S, -170.f * l_S });
+		m_Editor.handleTextInput("int main()\n{\n\treturn 0;\n}");
+		l_Key(SDLK_ESCAPE);
+
+		// Fallback fonts for characters Inter lacks, and synthetic styles for a face without bold / italic
+		l_State = { .family = "Patrick Hand", .style = TextStyle::Bold | TextStyle::Italic, .sizePoints = 34.f, .align = TextAlign::Left };
+		m_Editor.brush().color = Color::fromRgba8(0x8E24AAFFu);
+		l_Click(l_C + Vec2{ -560.f * l_S, -60.f * l_S });
+		m_Editor.handleTextInput("Synthetic bold italic");
+		l_Key(SDLK_ESCAPE);
+
+		l_State = { .family = "Inter", .style = 0, .sizePoints = 26.f, .align = TextAlign::Left };
+		m_Editor.brush().color = Color::fromRgba8(0x1F1F1FFFu);
+		l_Click(l_C + Vec2{ -560.f * l_S, 20.f * l_S });
+		m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"Fallback: \u65e5\u672c\u8a9e \u2713 \u041f\u0440\u0438\u0432\u0435\u0442 \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac \u2192 \u2211"));
+		l_Key(SDLK_ESCAPE);
+
+		// A wrapped box, sized through the style like the width handle does
+		l_State = { .family = "Inter", .style = 0, .sizePoints = 24.f, .align = TextAlign::Left };
+		l_Click(l_C + Vec2{ 120.f * l_S, 90.f * l_S });
+		m_Editor.handleTextInput("This box wraps its text at a fixed width, so a long sentence breaks into several lines instead of growing wider and wider.");
+		m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.wrapWidth = 380.f; });
+		l_Key(SDLK_ESCAPE);
+		return;
+	}
+	case 19:
+	{
+		const size_t l_Added = m_Editor.document().size() - s_SmokeObjectsBefore;
+		const size_t l_Steps = m_Editor.history().undoCount() - s_SmokeUndoBefore;
+		if (l_Added != 7 || l_Steps != 7 || m_Editor.textEditing())
+		{
+			spdlog::error("Smoke test (text): expected 7 new text boxes in 7 undo steps, got {} boxes and {} steps (editing: {})", l_Added, l_Steps, m_Editor.textEditing());
+			m_Failed = true;
+			return;
+		}
+		// The boxes are as big as their laid-out text, and the wrapped one is as wide as asked
+		bool l_Sized = true;
+		const TextData* l_Wrapped = nullptr;
+		for (const std::unique_ptr<Object>& l_Object : m_Editor.document().objects())
+		{
+			const TextData* l_Text = l_Object->text();
+			if (l_Text == nullptr)
+				continue;
+			const Vec2 l_Size = m_Editor.textSystem().measure(*l_Text);
+			l_Sized = l_Sized && std::abs(l_Size.x - l_Text->size.x) < 0.01f && std::abs(l_Size.y - l_Text->size.y) < 0.01f;
+			if (l_Text->wrapWidth > 0.f)
+				l_Wrapped = l_Text;
+		}
+		if (!l_Sized || l_Wrapped == nullptr || std::abs(l_Wrapped->size.x - 380.f) > 0.01f || l_Wrapped->size.y < l_Wrapped->fontSize * 2.f)
+		{
+			spdlog::error("Smoke test (text): the boxes do not match their layout (sized: {})", l_Sized);
+			m_Failed = true;
+			return;
+		}
+		// Edit the wrapped box again: select it, press Enter, type at the end, finish. One undo step, undoable.
+		m_Editor.setTool(tools::ToolKind::Select);
+		m_Editor.selection().set(std::vector<ObjectId>{ m_Editor.document().objects().back()->id });
+		SDL_KeyboardEvent l_Enter{};
+		l_Enter.type = SDL_EVENT_KEY_DOWN;
+		l_Enter.key = SDLK_RETURN;
+		l_Enter.down = true;
+		m_Editor.handleKeyDown(l_Enter);
+		if (!m_Editor.textEditing())
+		{
+			spdlog::error("Smoke test (text): Enter did not start editing the selected text");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.handleTextInput(" More words.");
+		l_Enter.key = SDLK_ESCAPE;
+		m_Editor.handleKeyDown(l_Enter);
+		const size_t l_Undo = m_Editor.history().undoCount();
+		const std::string l_Edited = m_Editor.document().objects().back()->text()->text;
+		m_Editor.undo();
+		const bool l_Reverted = m_Editor.document().objects().back()->text()->text.find("More words.") == std::string::npos;
+		m_Editor.redo();
+		if (l_Undo != s_SmokeUndoBefore + 8 || l_Edited.find("More words.") == std::string::npos || !l_Reverted || m_Editor.document().objects().back()->text()->text != l_Edited)
+		{
+			spdlog::error("Smoke test (text): editing an existing text box did not make one undo step");
+			m_Failed = true;
+			return;
+		}
+		// Save and load keep the text and the fonts it needs
+		BoardMeta l_Meta;
+		const std::vector<uint8_t> l_Bytes = m_Editor.saveBoard("");
+		const size_t l_Objects = m_Editor.document().size();
+		if (!m_Editor.loadBoard(l_Bytes, l_Meta).ok || m_Editor.document().size() != l_Objects)
+		{
+			spdlog::error("Smoke test (text): saving and loading lost objects");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.clearSelection();
+		m_Editor.setTool(tools::ToolKind::Pen);
+		if (!m_Failed)
+			spdlog::info("Smoke test: text boxes (fonts, styles, alignment, wrapping, fallback), editing, undo and save/load OK");
+		return;
+	}
+	case 20:
 	{
 		// Leave a panel open for the screenshot
 		const std::string& l_Ui = m_Options.smokeUi;

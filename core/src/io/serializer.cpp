@@ -39,16 +39,20 @@ constexpr uint32_t TAG_META = tag("META");
 constexpr uint32_t TAG_VIEW = tag("VIEW");
 constexpr uint32_t TAG_OBJS = tag("OBJS");
 constexpr uint32_t TAG_ASET = tag("ASET");
+constexpr uint32_t TAG_FONT = tag("FONT");
 constexpr uint32_t TAG_END = tag("END ");
 
 enum class ObjectType : uint8_t
 {
 	Stroke = 1,
 	Image = 2,
+	Text = 3,
 };
 
 constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
 constexpr size_t MAX_NAME_BYTES = 1024;
+constexpr size_t MAX_TEXT_BYTES = 64u << 20;
+constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
 constexpr uint64_t MAX_ASSET_BYTES = 1ull << 31;
 
 constexpr size_t TRANSFORM_BYTES = 6 * sizeof(double);
@@ -299,6 +303,105 @@ bool readImage(Reader& p_Reader, Object& p_Object)
 	return true;
 }
 
+size_t textBodyBytes(const TextData& p_Text)
+{
+	return TRANSFORM_BYTES + 4 + p_Text.family.size() + 1 + sizeof(float) + 4 * sizeof(float) + 1 + sizeof(float) + 2 * sizeof(float) + 4 + p_Text.text.size();
+}
+
+void writeText(Writer& p_Writer, const Object& p_Object, const TextData& p_Text)
+{
+	p_Writer.u64(p_Object.id);
+	p_Writer.u8(static_cast<uint8_t>(ObjectType::Text));
+	p_Writer.u32(static_cast<uint32_t>(textBodyBytes(p_Text)));
+	writeTransform(p_Writer, p_Object.transform);
+	p_Writer.string(p_Text.family);
+	p_Writer.u8(p_Text.style);
+	p_Writer.f32(p_Text.fontSize);
+	p_Writer.f32(p_Text.color.r);
+	p_Writer.f32(p_Text.color.g);
+	p_Writer.f32(p_Text.color.b);
+	p_Writer.f32(p_Text.color.a);
+	p_Writer.u8(static_cast<uint8_t>(p_Text.align));
+	p_Writer.f32(p_Text.wrapWidth);
+	p_Writer.f32(p_Text.size.x);
+	p_Writer.f32(p_Text.size.y);
+	p_Writer.string(p_Text.text);
+}
+
+bool readText(Reader& p_Reader, Object& p_Object)
+{
+	if (!readTransform(p_Reader, p_Object.transform))
+		return false;
+	TextData l_Text;
+	l_Text.family = p_Reader.string(MAX_NAME_BYTES);
+	l_Text.style = p_Reader.u8();
+	l_Text.fontSize = p_Reader.f32();
+	l_Text.color = Color{ p_Reader.f32(), p_Reader.f32(), p_Reader.f32(), p_Reader.f32() };
+	const uint8_t l_Align = p_Reader.u8();
+	l_Text.wrapWidth = p_Reader.f32();
+	l_Text.size.x = p_Reader.f32();
+	l_Text.size.y = p_Reader.f32();
+	l_Text.text = p_Reader.string(MAX_TEXT_BYTES);
+	if (!p_Reader.ok() || l_Align > static_cast<uint8_t>(TextAlign::Right) || !finite(l_Text.fontSize) || l_Text.fontSize <= 0.f || !finite(l_Text.wrapWidth) || l_Text.wrapWidth < 0.f ||
+	    !finite(l_Text.size.x) || !finite(l_Text.size.y) || l_Text.size.x <= 0.f || l_Text.size.y <= 0.f || !finite(l_Text.color.r) || !finite(l_Text.color.g) || !finite(l_Text.color.b) || !finite(l_Text.color.a))
+		return false;
+	l_Text.style &= TextStyle::Bold | TextStyle::Italic;
+	l_Text.align = static_cast<TextAlign>(l_Align);
+	p_Object.payload = std::move(l_Text);
+	return true;
+}
+
+void writeFonts(Writer& p_Writer, const Document& p_Document)
+{
+	// Only fonts some text still uses are saved
+	std::vector<const FontAsset*> l_Used;
+	for (const FontAsset& l_Font : p_Document.fontAssets())
+	{
+		for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+		{
+			const TextData* l_Text = l_Object->text();
+			if (l_Text != nullptr && l_Text->family == l_Font.family)
+			{
+				l_Used.push_back(&l_Font);
+				break;
+			}
+		}
+	}
+	if (l_Used.empty())
+		return;
+	p_Writer.beginChunk(TAG_FONT);
+	p_Writer.u32(static_cast<uint32_t>(l_Used.size()));
+	for (const FontAsset* l_Font : l_Used)
+	{
+		p_Writer.string(l_Font->family);
+		p_Writer.u8(l_Font->style);
+		p_Writer.u64(l_Font->bytes.size());
+		p_Writer.raw(l_Font->bytes.data(), l_Font->bytes.size());
+	}
+	p_Writer.endChunk();
+}
+
+bool parseFonts(const std::span<const uint8_t> p_Payload, std::vector<FontAsset>& p_Fonts)
+{
+	Reader l_Reader(p_Payload);
+	const uint32_t l_Count = l_Reader.u32();
+	if (!l_Reader.ok())
+		return false;
+	for (uint32_t i = 0; i < l_Count; ++i)
+	{
+		FontAsset l_Font;
+		l_Font.family = l_Reader.string(MAX_NAME_BYTES);
+		l_Font.style = l_Reader.u8() & (TextStyle::Bold | TextStyle::Italic);
+		const uint64_t l_Size = l_Reader.u64();
+		if (!l_Reader.ok() || l_Size > MAX_FONT_BYTES || l_Size > l_Reader.remaining())
+			return false;
+		const std::span<const uint8_t> l_Bytes = l_Reader.take(static_cast<size_t>(l_Size));
+		l_Font.bytes.assign(l_Bytes.begin(), l_Bytes.end());
+		p_Fonts.push_back(std::move(l_Font));
+	}
+	return l_Reader.ok();
+}
+
 void writeAssets(Writer& p_Writer, const Document& p_Document)
 {
 	// Only assets some object still uses are saved (undone or deleted images do not bloat the file)
@@ -380,7 +483,7 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		if (!l_Reader.ok() || l_Id == INVALID_OBJECT_ID || !l_Seen.insert(l_Id).second)
 			return false;
 
-		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke) && l_Type != static_cast<uint8_t>(ObjectType::Image))
+		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke) && l_Type != static_cast<uint8_t>(ObjectType::Image) && l_Type != static_cast<uint8_t>(ObjectType::Text))
 		{
 			++p_Skipped;
 			continue;
@@ -392,6 +495,11 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		if (l_Type == static_cast<uint8_t>(ObjectType::Image))
 		{
 			if (!readImage(l_BodyReader, *l_Object))
+				return false;
+		}
+		else if (l_Type == static_cast<uint8_t>(ObjectType::Text))
+		{
+			if (!readText(l_BodyReader, *l_Object))
 				return false;
 		}
 		else if (!readStroke(l_BodyReader, *l_Object, l_Skipped))
@@ -424,6 +532,8 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			l_Estimate += OBJECT_HEADER_BYTES + strokeBodyBytes(*l_Stroke);
 		else if (l_Object->image() != nullptr)
 			l_Estimate += OBJECT_HEADER_BYTES + IMAGE_BODY_BYTES;
+		else if (const TextData* l_Text = l_Object->text())
+			l_Estimate += OBJECT_HEADER_BYTES + textBodyBytes(*l_Text);
 	}
 	for (const auto& [l_Id, l_Asset] : p_Document.assets())
 		l_Estimate += l_Asset.bytes.size() + 64;
@@ -446,6 +556,7 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 	l_Writer.endChunk();
 
 	writeAssets(l_Writer, p_Document);
+	writeFonts(l_Writer, p_Document);
 
 	l_Writer.beginChunk(TAG_OBJS);
 	l_Writer.u32(static_cast<uint32_t>(p_Document.size()));
@@ -455,6 +566,8 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 			writeStroke(l_Writer, *l_Object, *l_Stroke);
 		else if (const ImageData* l_Image = l_Object->image())
 			writeImage(l_Writer, *l_Object, *l_Image);
+		else if (const TextData* l_Text = l_Object->text())
+			writeText(l_Writer, *l_Object, *l_Text);
 	}
 	l_Writer.endChunk();
 
@@ -479,6 +592,7 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	std::optional<std::array<double, 3>> l_View;
 	std::vector<std::unique_ptr<Object>> l_Objects;
 	std::vector<ImageAsset> l_Assets;
+	std::vector<FontAsset> l_Fonts;
 	bool l_HaveObjects = false;
 	bool l_HaveEnd = false;
 	uint32_t l_Skipped = 0;
@@ -525,6 +639,10 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 			if (!l_Assets.empty() || !parseAssets(l_Payload, l_Assets))
 				return failure("The file is damaged (bad image data).");
 			break;
+		case TAG_FONT:
+			if (!l_Fonts.empty() || !parseFonts(l_Payload, l_Fonts))
+				return failure("The file is damaged (bad font data).");
+			break;
 		case TAG_END:
 			l_HaveEnd = true;
 			break;
@@ -557,6 +675,8 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 		p_Document.reserveId(l_ParsedMeta->nextId - 1);
 	for (ImageAsset& l_Asset : l_Assets)
 		p_Document.insertAsset(std::move(l_Asset));
+	for (FontAsset& l_Font : l_Fonts)
+		p_Document.setFontAsset(std::move(l_Font));
 	for (std::unique_ptr<Object>& l_Object : l_Objects)
 		p_Document.insert(std::move(l_Object));
 

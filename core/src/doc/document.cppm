@@ -9,6 +9,7 @@ module;
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -36,6 +37,15 @@ struct ImageAsset
 	uint32_t width = 0;  // pixels of the first frame
 	uint32_t height = 0;
 	std::string name;    // file name it came from, for the user's benefit
+};
+
+// A font file embedded in the board so text looks the same on machines that do not have the font. Identified by
+// family and style (TextStyle flags of the face the file really is).
+struct FontAsset
+{
+	std::string family;
+	uint8_t style = 0;
+	std::vector<uint8_t> bytes;
 };
 
 class DocumentListener
@@ -96,6 +106,11 @@ public:
 	[[nodiscard]] const ImageAsset* findAsset(AssetId p_Id) const;
 	[[nodiscard]] const std::unordered_map<AssetId, ImageAsset>& assets() const { return m_Assets; }
 
+	// ---- embedded fonts (replaced when the same family and style is stored again)
+	void setFontAsset(FontAsset p_Font);
+	[[nodiscard]] const FontAsset* findFontAsset(std::string_view p_Family, uint8_t p_Style) const;
+	[[nodiscard]] const std::vector<FontAsset>& fontAssets() const { return m_Fonts; }
+
 	// Incremented by every mutation
 	[[nodiscard]] uint64_t revision() const { return m_Revision; }
 
@@ -107,6 +122,7 @@ private:
 	std::unordered_map<ObjectId, Object*> m_ById;
 	std::vector<DocumentListener*> m_Listeners;
 	std::unordered_map<AssetId, ImageAsset> m_Assets;
+	std::vector<FontAsset> m_Fonts;
 	std::unordered_map<uint64_t, std::vector<AssetId>> m_AssetsByHash;
 	ObjectId m_NextId = 1;
 	AssetId m_NextAsset = 1;
