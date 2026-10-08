@@ -607,6 +607,23 @@ void Editor::recolorSelection(const Color p_Color)
 	recolorObjects(m_Document, m_History, m_Selection.orderedIds(), p_Color);
 }
 
+void Editor::resetSelectionTransform()
+{
+	if (isBusy() || m_Selection.empty() || m_TextSession.active())
+		return;
+	resetTransforms(m_Document, m_History, m_Selection.orderedIds());
+}
+
+bool Editor::selectionIsTilted() const
+{
+	for (const ObjectId l_Id : m_Selection.ids())
+	{
+		if (const Object* l_Object = m_Document.find(l_Id); l_Object != nullptr && isTilted(*l_Object))
+			return true;
+	}
+	return false;
+}
+
 void Editor::flipSelection(const bool p_Horizontal)
 {
 	if (isBusy() || m_Selection.empty())

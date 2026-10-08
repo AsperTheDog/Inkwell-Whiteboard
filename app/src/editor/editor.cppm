@@ -104,6 +104,9 @@ public:
 	void cutSelection();
 	void paste();
 	void reorderSelection(ZOrderMove p_Move);
+	// Makes the selected objects upright again (one undo step)
+	void resetSelectionTransform();
+	[[nodiscard]] bool selectionIsTilted() const;
 	// Mirrors the selection about its centre
 	void flipSelection(bool p_Horizontal);
 	// Puts a picture on the board, centred on p_WorldCenter and sized to look natural at the current zoom, and selects it

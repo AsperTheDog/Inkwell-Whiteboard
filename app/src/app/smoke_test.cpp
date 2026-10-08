@@ -748,6 +748,11 @@ void App::driveSmokeTest()
 		// Resize the last text box with its side handle: it wraps at the new width, in one undo step
 		m_Editor.setTool(tools::ToolKind::Select);
 		m_Editor.selection().set(std::vector<ObjectId>{ m_Editor.document().objects().back()->id });
+		// Turned by 30 degrees: the box turns with it and the side handle still works along the text's own axis
+		m_Editor.document().modify(m_Editor.document().objects().back()->id, [&](Object& p_Object)
+		{
+			p_Object.transform = Affine2::around(p_Object.transform.translation, Affine2::rotate(0.5)) * p_Object.transform;
+		}, ObjectChange::Transform);
 		s_SmokeUndoBefore = m_Editor.history().undoCount();
 		s_SmokeWidthBefore = m_Editor.document().objects().back()->text()->wrapWidth;
 		const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
@@ -768,7 +773,7 @@ void App::driveSmokeTest()
 			m_Failed = true;
 			return;
 		}
-		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_Handle + Vec2{ -70.f * l_S, 0.f } * p_T; }), {});
+		queueStroke(platform::PointerDevice::Mouse, {}, sampleCurve(20, [&](const float p_T) { return l_Handle + Vec2{ -70.f * l_S * std::cos(0.5f), -70.f * l_S * std::sin(0.5f) } * p_T; }), {});
 		return;
 	}
 	case 21:
@@ -789,8 +794,32 @@ void App::driveSmokeTest()
 			return;
 		}
 		m_Editor.redo();
+		// Reset: upright again, same centre, undoable
+		const DVec2 l_CenterBefore = m_Editor.document().objects().back()->worldBounds().center();
+		if (!m_Editor.selectionIsTilted())
+		{
+			spdlog::error("Smoke test (text): a turned text box is not reported as tilted");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.resetSelectionTransform();
+		const Object* l_After = m_Editor.document().objects().back().get();
+		if (m_Editor.selectionIsTilted() || glm::length(l_After->worldBounds().center() - l_CenterBefore) > 1e-6)
+		{
+			spdlog::error("Smoke test (text): resetting the transform failed");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.undo();
+		if (!m_Editor.selectionIsTilted())
+		{
+			spdlog::error("Smoke test (text): undoing the reset did not bring the rotation back");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.redo();
 		if (!m_Failed)
-			spdlog::info("Smoke test: resizing a text box through its side handle OK");
+			spdlog::info("Smoke test: resizing a rotated text box through its side handle, and resetting its transform OK");
 		return;
 	}
 	case 22:
@@ -831,6 +860,11 @@ void App::driveSmokeTest()
 			{
 				openTextPopup(false);
 			}
+		}
+		else if (l_Ui == "oriented")
+		{
+			m_Editor.setTool(tools::ToolKind::Select);
+			m_Editor.selection().set(std::vector<ObjectId>{ s_SmokePictures.front() });
 		}
 		else if (l_Ui == "eraser")
 		{

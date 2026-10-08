@@ -82,6 +82,8 @@ enum class Icon : uint32_t
 	AlignRight = 0xE042,
 	Search = 0xE154,
 	Upload = 0xE19D,
+	ResetTransform = 0xE14B,
+	TransformSpace = 0xE2FD,
 };
 
 // Text and Icons are the interface's own faces; addFace() hands out more (the font picker shows each family in itself)

@@ -89,6 +89,11 @@ void App::buildSelectionBar()
 	l_Buttons += l_Animated > 0 ? 1 : 0;
 	l_Buttons += l_Pictures > 0 ? 1 : 0;
 	l_Buttons += l_HasText ? 1 : 0;
+	const bool l_Tilted = m_Editor.selectionIsTilted();
+	l_Buttons += l_Tilted ? 1 : 0;
+	// A single object that is not text can switch between its own axes and the board's
+	const bool l_SpaceToggle = m_Editor.selection().size() == 1 && !l_HasText;
+	l_Buttons += l_SpaceToggle ? 1 : 0;
 	const bool l_ShowColour = l_HasStrokes || l_HasText;
 	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);
 	const float l_Height = l_Button + l_Pad * 2.f;
@@ -137,6 +142,18 @@ void App::buildSelectionBar()
 		const bool l_Playing = l_AnimatedPlaying == l_Animated;
 		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Playing ? "Pause the animation" : "Play the animation"))
 			toggleSelectedPlayback();
+	}
+	if (l_SpaceToggle)
+	{
+		tools::SelectState& l_Select = m_Editor.selectState();
+		const bool l_Local = l_Select.space == tools::TransformSpace::Local;
+		if (m_Ui.iconButton("selbar.space", l_Next(), ui::Icon::TransformSpace, l_Local, true, l_Local ? "Transform box follows the object. Click for the board's axes" : "Transform box uses the board's axes. Click to follow the object"))
+			l_Select.space = l_Local ? tools::TransformSpace::Global : tools::TransformSpace::Local;
+	}
+	if (l_Tilted)
+	{
+		if (m_Ui.iconButton("selbar.reset", l_Next(), ui::Icon::ResetTransform, false, true, "Make upright: remove rotation and flips"))
+			m_Editor.resetSelectionTransform();
 	}
 	if (l_HasText)
 	{

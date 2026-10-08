@@ -87,11 +87,7 @@ SelectTool::TextInfo SelectTool::textInfo(const ToolContext& p_Context) const
 		l_Info.any = true;
 		l_Info.id = l_Id;
 	}
-	if (l_Info.any && p_Context.selection.size() == 1)
-	{
-		const Affine2& l_Transform = p_Context.document.find(l_Info.id)->transform;
-		l_Info.singleUpright = std::abs(l_Transform.linear[0].y) < 1e-9 && std::abs(l_Transform.linear[1].x) < 1e-9 && l_Transform.linear[0].x > 0.0 && l_Transform.linear[1].y > 0.0;
-	}
+	l_Info.single = l_Info.any && p_Context.selection.size() == 1 && p_Context.document.find(l_Info.id)->transform.isInvertible();
 	return l_Info;
 }
 
@@ -99,7 +95,7 @@ bool SelectTool::edgeHandleShown(const Handle p_Handle, const ToolContext& p_Con
 {
 	if (isCorner(p_Handle))
 		return true;
-	if (const TextInfo l_Text = textInfo(p_Context); l_Text.any && (!l_Text.singleUpright || p_Handle == Handle::N || p_Handle == Handle::S))
+	if (const TextInfo l_Text = textInfo(p_Context); l_Text.any && (!l_Text.single || p_Handle == Handle::N || p_Handle == Handle::S))
 		return false;
 	const double l_Side = (p_Handle == Handle::N || p_Handle == Handle::S ? m_Frame.half.x : m_Frame.half.y) * 2.0 * p_Context.camera.pixelsPerUnit();
 	return l_Side >= EDGE_HANDLE_MIN_SIDE * p_Context.camera.pixelScale();
@@ -171,6 +167,18 @@ CursorKind SelectTool::cursorForHandle(const Handle p_Handle) const
 
 // ------------------------------------------------------------------------------------------------ frame
 
+// The box of one object in the object's own axes
+SelectionFrame SelectTool::orientedFrame(const Object& p_Object)
+{
+	const Rect l_Local = p_Object.localBounds();
+	const DMat2& l_Linear = p_Object.transform.linear;
+	return SelectionFrame{
+		.center = p_Object.transform.apply(l_Local.center()),
+		.angle = std::atan2(l_Linear[0].y, l_Linear[0].x),
+		.half = l_Local.size() * 0.5 * DVec2{ glm::length(l_Linear[0]), glm::length(l_Linear[1]) },
+	};
+}
+
 void SelectTool::ensureFrame(ToolContext& p_Context)
 {
 	const Selection& l_Selection = p_Context.selection;
@@ -181,14 +189,21 @@ void SelectTool::ensureFrame(ToolContext& p_Context)
 		return;
 	}
 	const bool l_Transforming = m_Gesture == Gesture::Move || m_Gesture == Gesture::Resize || m_Gesture == Gesture::Rotate;
-	const bool l_Stale = !m_HasFrame || m_FrameSelectionRevision != l_Selection.revision() || m_FrameDocumentRevision != p_Context.document.revision();
+	const bool l_Stale = !m_HasFrame || m_FrameSelectionRevision != l_Selection.revision() || m_FrameDocumentRevision != p_Context.document.revision() || m_FrameSpace != p_Context.select.space;
 	if (l_Transforming || !l_Stale)
 		return;
 
 	const Rect l_Bounds = l_Selection.bounds();
 	m_HasFrame = !l_Bounds.isEmpty();
+	m_FrameSpace = p_Context.select.space;
 	if (m_HasFrame)
-		m_Frame = SelectionFrame::fromBounds(l_Bounds);
+	{
+		// One object: its box follows its own axes (always for text, which only scales as a whole; for the rest when the
+		// local space is chosen). Otherwise the box surrounds everything upright.
+		const Object* l_Single = l_Selection.size() == 1 ? p_Context.document.find(l_Selection.ids().front()) : nullptr;
+		const bool l_Oriented = l_Single != nullptr && l_Single->transform.isInvertible() && (l_Single->text() != nullptr || p_Context.select.space == TransformSpace::Local);
+		m_Frame = l_Oriented ? orientedFrame(*l_Single) : SelectionFrame::fromBounds(l_Bounds);
+	}
 	m_FrameSelectionRevision = l_Selection.revision();
 	m_FrameDocumentRevision = p_Context.document.revision();
 }
@@ -352,7 +367,7 @@ void SelectTool::startTransform(const Gesture p_Gesture, ToolContext& p_Context)
 	m_TextResize = false;
 	if (p_Gesture == Gesture::Resize && (m_ActiveHandle == Handle::E || m_ActiveHandle == Handle::W))
 	{
-		if (const TextInfo l_Text = textInfo(p_Context); l_Text.singleUpright)
+		if (const TextInfo l_Text = textInfo(p_Context); l_Text.single)
 		{
 			const Object* l_Object = p_Context.document.find(l_Text.id);
 			m_TextResize = true;
@@ -438,25 +453,27 @@ void SelectTool::begin(const platform::PointerEvent& p_Event, ToolContext& p_Con
 // Dragging the east or west handle of a text box: the opposite edge stays, the lines wrap at the new width
 void SelectTool::applyTextResize(ToolContext& p_Context)
 {
+	// Measured along the box's own x axis, which is the text's own axis (turned and possibly mirrored)
 	const bool l_East = m_ActiveHandle == Handle::E;
-	const double l_Scale = m_TextBaseTransform.linear[0].x;
-	const double l_BaseLeft = m_TextBaseTransform.translation.x - static_cast<double>(m_TextBase.size.x) * 0.5 * l_Scale;
-	const double l_BaseRight = m_TextBaseTransform.translation.x + static_cast<double>(m_TextBase.size.x) * 0.5 * l_Scale;
-	const double l_Grab = (m_CurrentWorld - m_GrabOffset).x;
-	const double l_WidthWorld = l_East ? l_Grab - l_BaseLeft : l_BaseRight - l_Grab;
+	const double l_Scale = glm::length(m_TextBaseTransform.linear[0]);
+	const DVec2 l_Grab = m_BaseFrame.toLocal(m_CurrentWorld - m_GrabOffset);
+	const double l_WidthWorld = l_East ? l_Grab.x + m_BaseFrame.half.x : m_BaseFrame.half.x - l_Grab.x;
 	const float l_Wrap = std::max(static_cast<float>(l_WidthWorld / std::max(l_Scale, 1e-12)), m_TextBase.fontSize * 1.5f);
+	// The edge opposite to the dragged handle stays: the text's left edge, unless the text is mirrored
+	const bool l_Mirrored = glm::dot(m_TextBaseTransform.linear[0], Affine2::rotate(m_BaseFrame.angle).applyVector(DVec2{ 1.0, 0.0 })) < 0.0;
+	const bool l_KeepLeft = l_East != l_Mirrored;
 
 	TextData l_Data = m_TextBase;
 	l_Data.wrapWidth = l_Wrap;
 	l_Data.size = p_Context.text.measure(l_Data);
-	const Affine2 l_Transform = anchoredTextTransform(m_TextBaseTransform, m_TextBase.size, l_Data.size, l_East ? TextAlign::Left : TextAlign::Right);
+	const Affine2 l_Transform = anchoredTextTransform(m_TextBaseTransform, m_TextBase.size, l_Data.size, l_KeepLeft ? TextAlign::Left : TextAlign::Right);
 	p_Context.document.modify(m_TextResizeId, [&](Object& p_Object)
 	{
 		*p_Object.text() = l_Data;
 		p_Object.transform = l_Transform;
 	});
 	if (const Object* l_Object = p_Context.document.find(m_TextResizeId))
-		m_Frame = SelectionFrame::fromBounds(l_Object->worldBounds());
+		m_Frame = orientedFrame(*l_Object);
 }
 
 void SelectTool::applyTransform(const FrameTransform& p_Result, ToolContext& p_Context)

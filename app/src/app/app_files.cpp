@@ -94,6 +94,7 @@ void App::loadSettings()
 			m_Editor.setDeviceTool(l_Device, static_cast<tools::ToolKind>(l_Tool));
 	}
 	m_Editor.selectState().mode = l_S.getInt("select.mode", 0) == 1 ? tools::SelectMode::Lasso : tools::SelectMode::Box;
+	m_Editor.selectState().space = l_S.getInt("select.space", 1) == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
 
 	tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_Eraser.sizePoints = std::clamp(l_S.getFloat("eraser.size", l_Eraser.sizePoints), 4.f, 120.f);
@@ -136,6 +137,7 @@ void App::saveSettings()
 	for (size_t i = 0; i < 3; ++i)
 		l_S.setInt(TOOL_KEYS[i], static_cast<long long>(m_Editor.deviceTool(static_cast<platform::PointerDevice>(i))));
 	l_S.setInt("select.mode", m_Editor.selectState().mode == tools::SelectMode::Lasso ? 1 : 0);
+	l_S.setInt("select.space", m_Editor.selectState().space == tools::TransformSpace::Global ? 0 : 1);
 
 	const tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_S.setFloat("eraser.size", l_Eraser.sizePoints);

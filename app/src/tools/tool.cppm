@@ -96,9 +96,17 @@ enum class SelectMode : uint8_t
 	Lasso, // draw around the objects
 };
 
+// Which axes the transform box of a single object uses
+enum class TransformSpace : uint8_t
+{
+	Global, // the board's axes: the box always surrounds the object upright
+	Local,  // the object's own axes: the box turns with it (text always works this way)
+};
+
 struct SelectState
 {
 	SelectMode mode = SelectMode::Box;
+	TransformSpace space = TransformSpace::Local;
 };
 
 struct ToolContext

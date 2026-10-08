@@ -452,3 +452,32 @@ TEST(TextObject, DamagedTextDataIsRejectedNotTrusted)
 		EXPECT_FALSE(l_Result.ok);
 	}
 }
+
+TEST(ResetTransform, MakesObjectsUprightAroundTheirCentre)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_Id = addText(l_Doc, { 100.0, 100.0 }); // 60 x 20
+	const wb::ObjectId l_Flat = addText(l_Doc, { 0.0, 0.0 });
+	l_Doc.modify(l_Id, [](wb::Object& p_Object)
+	{
+		p_Object.transform = wb::Affine2::around({ 100.0, 100.0 }, wb::Affine2::rotate(0.7) * wb::Affine2::scale({ -2.0, 2.0 })) * p_Object.transform;
+	});
+	EXPECT_TRUE(wb::isTilted(*l_Doc.find(l_Id)));
+	EXPECT_FALSE(wb::isTilted(*l_Doc.find(l_Flat)));
+	const DVec2 l_CenterBefore = l_Doc.find(l_Id)->worldBounds().center();
+	const std::array<wb::ObjectId, 2> l_Ids{ l_Id, l_Flat };
+	wb::resetTransforms(l_Doc, l_History, l_Ids);
+	const wb::Object& l_Reset = *l_Doc.find(l_Id);
+	EXPECT_FALSE(wb::isTilted(l_Reset));
+	EXPECT_NEAR(l_Reset.transform.uniformScale(), 2.0, 1e-9);                        // overall size kept
+	EXPECT_NEAR(l_Reset.worldBounds().center().x, l_CenterBefore.x, 1e-9);           // centre kept
+	EXPECT_NEAR(l_Reset.worldBounds().center().y, l_CenterBefore.y, 1e-9);
+	EXPECT_EQ(l_History.undoCount(), 1u);
+	l_History.undo(l_Doc);
+	EXPECT_TRUE(wb::isTilted(*l_Doc.find(l_Id)));
+	// Nothing tilted: no history entry
+	const std::array<wb::ObjectId, 1> l_Only{ l_Flat };
+	wb::resetTransforms(l_Doc, l_History, l_Only);
+	EXPECT_EQ(l_History.undoCount(), 0u);
+}

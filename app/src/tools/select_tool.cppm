@@ -79,9 +79,10 @@ private:
 	struct TextInfo
 	{
 		bool any = false;
-		bool singleUpright = false;
+		bool single = false;
 		ObjectId id = INVALID_OBJECT_ID;
 	};
+	[[nodiscard]] static SelectionFrame orientedFrame(const Object& p_Object);
 	[[nodiscard]] TextInfo textInfo(const ToolContext& p_Context) const;
 	void applyTextResize(ToolContext& p_Context);
 	void ensureFrame(ToolContext& p_Context);
@@ -105,6 +106,7 @@ private:
 	// Transform box
 	SelectionFrame m_Frame{};
 	bool m_HasFrame = false;
+	TransformSpace m_FrameSpace = TransformSpace::Local;
 	uint64_t m_FrameSelectionRevision = 0;
 	uint64_t m_FrameDocumentRevision = 0;
 	Handle m_Hover = Handle::None;

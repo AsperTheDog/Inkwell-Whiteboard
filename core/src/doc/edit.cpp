@@ -177,6 +177,36 @@ void editText(Document& p_Document, History& p_History, const ObjectId p_Id, con
 	p_History.execute(p_Document, std::make_unique<SetTextCommand>(std::move(l_Entries), p_Name));
 }
 
+bool isTilted(const Object& p_Object)
+{
+	const DMat2& l_Linear = p_Object.transform.linear;
+	const double l_Scale = std::max(p_Object.transform.uniformScale(), 1e-300);
+	const double l_Epsilon = 1e-9 * l_Scale;
+	return std::abs(l_Linear[0].y) > l_Epsilon || std::abs(l_Linear[1].x) > l_Epsilon || l_Linear[0].x < 0.0 || l_Linear[1].y < 0.0 || std::abs(l_Linear[0].x - l_Linear[1].y) > 1e-6 * l_Scale;
+}
+
+void resetTransforms(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
+{
+	std::vector<TransformObjectsCommand::Entry> l_Entries;
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	{
+		if (!isTilted(*l_Object))
+			continue;
+		const double l_Scale = l_Object->transform.uniformScale();
+		const DVec2 l_LocalCenter = l_Object->localBounds().center();
+		const DVec2 l_Center = l_Object->transform.apply(l_LocalCenter);
+		Affine2 l_After;
+		l_After.linear = DMat2{ l_Scale };
+		l_After.translation = l_Center - l_After.linear * l_LocalCenter;
+		l_Entries.push_back(TransformObjectsCommand::Entry{ .id = l_Object->id, .before = l_Object->transform, .after = l_After });
+	}
+	if (l_Entries.empty())
+		return;
+	auto l_Command = std::make_unique<TransformObjectsCommand>(std::move(l_Entries), "Reset transform", false);
+	if (l_Command->changesAnything())
+		p_History.execute(p_Document, std::move(l_Command));
+}
+
 void recolorObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const Color p_Color)
 {
 	std::vector<ObjectId> l_Ids;

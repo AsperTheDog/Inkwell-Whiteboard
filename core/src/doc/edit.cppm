@@ -50,6 +50,13 @@ void editImages(Document& p_Document, History& p_History, std::span<const Object
 // Replaces the data of one text object (one undo step); the object keeps its anchored corner in place
 void editText(Document& p_Document, History& p_History, ObjectId p_Id, const TextData& p_After, const char* p_Name);
 
+// True when the object is rotated, mirrored or stretched unevenly (a reset would change it)
+[[nodiscard]] bool isTilted(const Object& p_Object);
+
+// Makes each object upright again: no rotation, no mirroring, no uneven stretch. Every object keeps its centre and
+// its overall size (one undo step).
+void resetTransforms(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
+
 void recolorObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, Color p_Color);
 
 // Applies p_World after each object's own transform (new = p_World * old). Consecutive calls with p_Mergeable
