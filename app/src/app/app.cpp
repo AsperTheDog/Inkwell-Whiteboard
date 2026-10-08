@@ -263,6 +263,12 @@ void App::requestRedraw(const uint32_t p_Frames)
 void App::handleEvent(const SDL_Event& p_Event)
 {
 	m_ImGui.processEvent(p_Event);
+	// Copying inside the app makes the system clipboard stale for pasting; a later change by another program does not
+	if (m_Editor.clipSerial() != m_SeenClipSerial)
+	{
+		m_SeenClipSerial = m_Editor.clipSerial();
+		m_ExternalClipboardNewer = false;
+	}
 
 	if (m_DialogEvent != 0 && p_Event.type == m_DialogEvent)
 	{
@@ -289,6 +295,18 @@ void App::handleEvent(const SDL_Event& p_Event)
 	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
 		m_PointerInWindow = false;
 		requestRedraw(1);
+		return;
+	case SDL_EVENT_CLIPBOARD_UPDATE:
+		m_ExternalClipboardNewer = true;
+		return;
+	case SDL_EVENT_DROP_BEGIN:
+		m_DropCount = 0;
+		return;
+	case SDL_EVENT_DROP_FILE:
+		handleDroppedFile(p_Event.drop);
+		requestRedraw();
+		return;
+	case SDL_EVENT_DROP_COMPLETE:
 		return;
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
 		m_Editor.handleFocusLost();
@@ -419,6 +437,11 @@ void App::renderFrame()
 	const double l_UiDt = m_LastUiNs == 0 ? 0.0 : std::min(static_cast<double>(l_CpuStart - m_LastUiNs) * 1e-9, 0.05);
 	m_LastUiNs = l_CpuStart;
 	updateTheme(l_UiDt);
+	if (m_AnimLastNs == 0)
+		m_AnimLastNs = l_CpuStart;
+	if (m_PlayAnimations)
+		m_AnimSeconds += std::min(static_cast<double>(l_CpuStart - m_AnimLastNs) * 1e-9, 0.25);
+	m_AnimLastNs = l_CpuStart;
 	{
 		const VkExtent2D l_Size = m_Swapchain.extent();
 		m_Ui.beginFrame(ui::FrameParams{ .viewport = Vec2{ static_cast<float>(l_Size.width), static_cast<float>(l_Size.height) }, .scale = m_Window.displayScale(), .dt = l_UiDt, .theme = m_Theme });
@@ -442,7 +465,7 @@ void App::renderFrame()
 	const std::optional<render::LiveStrokeView> l_Live = m_Editor.liveStroke();
 	{
 		const gfx::DebugLabel l_Label(l_Cmd, "canvas uploads");
-		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, l_Live ? &*l_Live : nullptr);
+		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, l_Live ? &*l_Live : nullptr, imageClock());
 		m_UiRenderer.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, m_FontAtlas, m_Ui.draw());
 	}
 
@@ -492,7 +515,7 @@ void App::renderFrame()
 	if (l_Capture)
 		writeScreenshot(l_Target->extent);
 
-	if (m_Ui.animating() || m_ThemeBlend != (m_DarkTheme ? 1.f : 0.f))
+	if (m_Canvas.animating() || m_Ui.animating() || m_ThemeBlend != (m_DarkTheme ? 1.f : 0.f))
 		requestRedraw(2); // keep frames coming while something eases
 	if (m_RedrawFrames > 0)
 		--m_RedrawFrames;

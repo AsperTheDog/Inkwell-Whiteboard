@@ -68,6 +68,12 @@ enum class Icon : uint32_t
 	Duplicate = 0xE401,
 	Forward = 0xE45F,
 	Backward = 0xE459,
+	Image = 0xE0F9,
+	FlipH = 0xE361,
+	FlipV = 0xE363,
+	Play = 0xE13F,
+	Pause = 0xE131,
+	ShrinkImage = 0xE540,
 };
 
 enum class FontFace : uint8_t

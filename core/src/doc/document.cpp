@@ -127,8 +127,50 @@ void Document::setOrder(const std::span<const ObjectId> p_Order)
 		l_Listener->onObjectsReordered();
 }
 
+AssetId Document::addAsset(ImageAsset p_Asset)
+{
+	uint64_t l_Hash = 14695981039346656037ull;
+	for (const uint8_t l_Byte : p_Asset.bytes)
+		l_Hash = (l_Hash ^ l_Byte) * 1099511628211ull;
+	l_Hash ^= p_Asset.bytes.size();
+	std::vector<AssetId>& l_Candidates = m_AssetsByHash[l_Hash];
+	for (const AssetId l_Id : l_Candidates)
+	{
+		if (m_Assets.at(l_Id).bytes == p_Asset.bytes)
+			return l_Id;
+	}
+	p_Asset.id = m_NextAsset++;
+	const AssetId l_Id = p_Asset.id;
+	l_Candidates.push_back(l_Id);
+	m_Assets.emplace(l_Id, std::move(p_Asset));
+	return l_Id;
+}
+
+bool Document::insertAsset(ImageAsset p_Asset)
+{
+	if (p_Asset.id == INVALID_ASSET_ID || m_Assets.contains(p_Asset.id))
+		return false;
+	uint64_t l_Hash = 14695981039346656037ull;
+	for (const uint8_t l_Byte : p_Asset.bytes)
+		l_Hash = (l_Hash ^ l_Byte) * 1099511628211ull;
+	l_Hash ^= p_Asset.bytes.size();
+	m_NextAsset = std::max(m_NextAsset, p_Asset.id + 1);
+	m_AssetsByHash[l_Hash].push_back(p_Asset.id);
+	m_Assets.emplace(p_Asset.id, std::move(p_Asset));
+	return true;
+}
+
+const ImageAsset* Document::findAsset(const AssetId p_Id) const
+{
+	const auto l_It = m_Assets.find(p_Id);
+	return l_It != m_Assets.end() ? &l_It->second : nullptr;
+}
+
 void Document::clear()
 {
+	m_Assets.clear();
+	m_AssetsByHash.clear();
+	m_NextAsset = 1;
 	m_Objects.clear();
 	m_ById.clear();
 	++m_Revision;

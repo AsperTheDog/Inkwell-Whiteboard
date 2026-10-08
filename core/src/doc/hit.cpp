@@ -78,6 +78,13 @@ Rect tightWorldBounds(const Object& p_Object)
 
 bool hitsPoint(const Object& p_Object, const DVec2 p_World, const double p_Tolerance)
 {
+	if (const ImageData* l_Image = p_Object.image())
+	{
+		if (!p_Object.worldBounds().inflated(p_Tolerance).contains(p_World) || !p_Object.transform.isInvertible())
+			return false;
+		const DVec2 l_Local = p_Object.transform.inverse().apply(p_World);
+		return l_Image->localBounds().inflated(p_Tolerance / std::max(p_Object.transform.uniformScale(), 1e-12)).contains(l_Local);
+	}
 	const StrokeData* l_Stroke = p_Object.stroke();
 	if (l_Stroke == nullptr || !p_Object.worldBounds().inflated(p_Tolerance).contains(p_World))
 		return false;
@@ -114,13 +121,56 @@ bool pointInPolygon(const DVec2 p_Point, const std::span<const DVec2> p_Polygon)
 	return l_Inside;
 }
 
+namespace
+{
+// A (possibly rotated or mirrored) image rectangle against a polygon
+bool imageTouchesPolygon(const Object& p_Object, const ImageData& p_Image, const std::span<const DVec2> p_Polygon)
+{
+	const Rect l_Local = p_Image.localBounds();
+	const std::array<DVec2, 4> l_Corners{
+		p_Object.transform.apply(l_Local.min),
+		p_Object.transform.apply(DVec2{ l_Local.max.x, l_Local.min.y }),
+		p_Object.transform.apply(l_Local.max),
+		p_Object.transform.apply(DVec2{ l_Local.min.x, l_Local.max.y }),
+	};
+	for (const DVec2 l_Corner : l_Corners)
+	{
+		if (pointInPolygon(l_Corner, p_Polygon))
+			return true;
+	}
+	if (p_Object.transform.isInvertible())
+	{
+		const Affine2 l_Inverse = p_Object.transform.inverse();
+		for (const DVec2 l_Vertex : p_Polygon)
+		{
+			if (l_Local.contains(l_Inverse.apply(l_Vertex)))
+				return true;
+		}
+	}
+	const size_t l_Count = p_Polygon.size();
+	for (size_t i = 0; i < 4; ++i)
+	{
+		for (size_t k = 0; k < l_Count; ++k)
+		{
+			if (segmentSegmentDistanceSq(l_Corners[i], l_Corners[(i + 1) % 4], p_Polygon[k], p_Polygon[(k + 1) % l_Count]) <= 1e-18)
+				return true;
+		}
+	}
+	return false;
+}
+} // namespace
+
 bool touchesPolygon(const Object& p_Object, const std::span<const DVec2> p_Polygon)
 {
-	const StrokeData* l_Stroke = p_Object.stroke();
-	if (l_Stroke == nullptr || p_Polygon.size() < 3)
+	if (p_Polygon.size() < 3)
 		return false;
 	const Rect l_Area = polygonBounds(p_Polygon);
 	if (!p_Object.worldBounds().intersects(l_Area))
+		return false;
+	if (const ImageData* l_Image = p_Object.image())
+		return imageTouchesPolygon(p_Object, *l_Image, p_Polygon);
+	const StrokeData* l_Stroke = p_Object.stroke();
+	if (l_Stroke == nullptr)
 		return false;
 
 	// A small area lying inside a thick stroke contains no vertex and crosses no edge of the stroke's centre line

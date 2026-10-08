@@ -233,6 +233,22 @@ void ReorderObjectsCommand::revert(Document& p_Document)
 	p_Document.setOrder(l_Order);
 }
 
+SetImageDataCommand::SetImageDataCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
+{
+}
+
+void SetImageDataCommand::apply(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (ImageData* l_Image = p_Object.image()) *l_Image = l_Entry.after; }, ObjectChange::Geometry | ObjectChange::Style);
+}
+
+void SetImageDataCommand::revert(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (ImageData* l_Image = p_Object.image()) *l_Image = l_Entry.before; }, ObjectChange::Geometry | ObjectChange::Style);
+}
+
 SetStrokeColorCommand::SetStrokeColorCommand(std::vector<ObjectId> p_Ids, const Color p_Color, std::string p_Name)
 	: m_Ids(std::move(p_Ids)), m_New(p_Color), m_Name(std::move(p_Name))
 {

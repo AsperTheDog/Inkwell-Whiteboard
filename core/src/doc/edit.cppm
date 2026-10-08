@@ -1,6 +1,7 @@
 // Editing operations on a set of objects (what the keyboard shortcuts and the selection bar do). Each one makes a
 // single undo step and returns the objects it created, if any.
 module;
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -19,6 +20,7 @@ struct ObjectClip
 {
 	std::vector<Object> objects; // back to front
 	Rect bounds{};               // tight world bounds of the copied objects
+	std::vector<ImageAsset> assets; // the pictures the copied images use (the clip can outlive the board it came from)
 
 	[[nodiscard]] bool empty() const { return objects.empty(); }
 };
@@ -34,6 +36,12 @@ std::vector<ObjectId> duplicateObjects(Document& p_Document, History& p_History,
 void deleteObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
 
 void reorderObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, ZOrderMove p_Move);
+
+// Mirrors the objects about the centre of their bounds, along the horizontal or the vertical axis of the board
+void flipObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, bool p_Horizontal);
+
+// Edits the image data of the image objects among p_Ids (one undo step). p_Edit returns false to leave an image alone.
+void editImages(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
 
 void recolorObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, Color p_Color);
 

@@ -20,6 +20,10 @@ export namespace wb
 using ObjectId = uint64_t;
 inline constexpr ObjectId INVALID_OBJECT_ID = 0;
 
+// Encoded image files live in the document's asset table; image objects refer to them
+using AssetId = uint64_t;
+inline constexpr AssetId INVALID_ASSET_ID = 0;
+
 enum class BrushKind : uint8_t
 {
 	Pen,
@@ -69,7 +73,21 @@ struct StrokeData
 	}
 };
 
-using ObjectPayload = std::variant<StrokeData>;
+// A picture (or animated GIF). The object-local rectangle is centred on the origin and p_Size units big; the pixels of
+// the asset are stretched over it, so recompressing an asset to fewer pixels does not change how the image looks.
+struct ImageData
+{
+	AssetId asset = INVALID_ASSET_ID;
+	Vec2 size{ 0.f };
+	bool playing = true;  // animated images: false freezes the animation on `frame`
+	uint32_t frame = 0;
+
+	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
+
+	bool operator==(const ImageData&) const = default;
+};
+
+using ObjectPayload = std::variant<StrokeData, ImageData>;
 
 struct Object
 {
@@ -91,6 +109,8 @@ struct Object
 
 	[[nodiscard]] StrokeData* stroke() { return std::get_if<StrokeData>(&payload); }
 	[[nodiscard]] const StrokeData* stroke() const { return std::get_if<StrokeData>(&payload); }
+	[[nodiscard]] ImageData* image() { return std::get_if<ImageData>(&payload); }
+	[[nodiscard]] const ImageData* image() const { return std::get_if<ImageData>(&payload); }
 
 private:
 	Rect m_LocalBounds{};

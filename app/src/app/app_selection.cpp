@@ -20,6 +20,9 @@ module;
 module wb.app;
 
 import wb.doc.commands;
+import wb.doc.object;
+import wb.render.canvas_renderer;
+import wb.render.image_store;
 import wb.editor;
 import wb.math;
 import wb.platform.input;
@@ -46,6 +49,30 @@ void App::buildSelectionBar()
 
 	const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
 	const Vec2 l_Viewport = m_Ui.viewport();
+
+	// What is selected decides which buttons the bar offers
+	bool l_HasStrokes = false;
+	size_t l_Pictures = 0;
+	size_t l_Animated = 0;
+	size_t l_AnimatedPlaying = 0;
+	for (const ObjectId l_Id : m_Editor.selection().ids())
+	{
+		const Object* l_Object = m_Editor.document().find(l_Id);
+		if (l_Object == nullptr)
+			continue;
+		if (l_Object->stroke() != nullptr)
+			l_HasStrokes = true;
+		if (const ImageData* l_Image = l_Object->image())
+		{
+			++l_Pictures;
+			if (m_Canvas.images().animated(l_Image->asset))
+			{
+				++l_Animated;
+				l_AnimatedPlaying += l_Image->playing ? 1 : 0;
+			}
+		}
+	}
+
 	const float l_Button = m_Ui.px(38.f);
 	const float l_Pad = m_Ui.px(5.f);
 	const float l_Gap = m_Ui.px(2.f);
@@ -54,7 +81,12 @@ void App::buildSelectionBar()
 	const std::string l_Count = std::to_string(m_Editor.selection().size());
 	const float l_CountWidth = m_Ui.font().measure(l_Count, l_CountPx) + m_Ui.px(22.f);
 
-	const float l_Width = l_Pad * 2.f + l_CountWidth + 4.f * l_Button + 3.f * l_Gap + l_Separator + l_Button;
+	// duplicate, delete, front, back, flip horizontally, flip vertically, then the extras
+	size_t l_Buttons = 6;
+	l_Buttons += l_Animated > 0 ? 1 : 0;
+	l_Buttons += l_Pictures > 0 ? 1 : 0;
+	const bool l_ShowColour = l_HasStrokes;
+	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);
 	const float l_Height = l_Button + l_Pad * 2.f;
 	const float l_Margin = m_Ui.px(14.f);
 	const float l_SelectionCenter = (l_Overlay.boundsMin.x + l_Overlay.boundsMax.x) * 0.5f;
@@ -92,14 +124,35 @@ void App::buildSelectionBar()
 		m_Editor.reorderSelection(ZOrderMove::ToFront);
 	if (m_Ui.iconButton("selbar.back", l_Next(), ui::Icon::SendToBack, false, true, "Send to back (Ctrl+Shift+[)"))
 		m_Editor.reorderSelection(ZOrderMove::ToBack);
+	if (m_Ui.iconButton("selbar.fliph", l_Next(), ui::Icon::FlipH, false, true, "Flip horizontally"))
+		m_Editor.flipSelection(true);
+	if (m_Ui.iconButton("selbar.flipv", l_Next(), ui::Icon::FlipV, false, true, "Flip vertically"))
+		m_Editor.flipSelection(false);
+	if (l_Animated > 0)
+	{
+		const bool l_Playing = l_AnimatedPlaying == l_Animated;
+		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Playing ? "Pause the animation" : "Play the animation"))
+			toggleSelectedPlayback();
+	}
+	if (l_Pictures > 0)
+	{
+		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
+			compressSelectedPictures();
+	}
 
-	l_Cursor += -l_Gap;
-	const float l_Line = l_Cursor + l_Separator * 0.5f;
-	m_Ui.draw().line(Vec2{ l_Line, l_Bar.min.y + m_Ui.px(12.f) }, Vec2{ l_Line, l_Bar.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
-	l_Cursor += l_Separator;
-
-	const ui::Rect2 l_ColorRect = l_Next();
-	if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, "Recolour the selected strokes"))
-		togglePopup(Popup::SelectionColor);
+	if (l_ShowColour)
+	{
+		l_Cursor += -l_Gap;
+		const float l_Line = l_Cursor + l_Separator * 0.5f;
+		m_Ui.draw().line(Vec2{ l_Line, l_Bar.min.y + m_Ui.px(12.f) }, Vec2{ l_Line, l_Bar.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
+		l_Cursor += l_Separator;
+		const ui::Rect2 l_ColorRect = l_Next();
+		if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, "Recolour the selected strokes"))
+			togglePopup(Popup::SelectionColor);
+	}
+	else if (m_Popup == Popup::SelectionColor)
+	{
+		closePopup("no strokes selected");
+	}
 }
 } // namespace wb

@@ -22,9 +22,11 @@ import wb.gfx.frames;
 import wb.gfx.swapchain;
 import wb.io.settings;
 import wb.math;
+import wb.platform.clipboard;
 import wb.platform.input;
 import wb.platform.window;
 import wb.render.canvas_renderer;
+import wb.render.image_store;
 import wb.session;
 import wb.tools.tool;
 import wb.ui.context;
@@ -81,6 +83,7 @@ private:
 		None,
 		Open,
 		Save,
+		Pictures,
 	};
 	// The floating panel that is open, if any
 	enum class Popup : uint8_t
@@ -125,6 +128,14 @@ private:
 	void buildDialogs();
 	void buildToast();
 	void toggleInterface();
+	// Pictures (app_images.cpp)
+	void importPictures(std::vector<platform::ClipboardPicture> p_Pictures, std::optional<Vec2> p_ScreenPosition);
+	bool pasteFromSystemClipboard();
+	void showInsertPictureDialog();
+	void handleDroppedFile(const SDL_DropEvent& p_Event);
+	void compressSelectedPictures();
+	void toggleSelectedPlayback();
+	[[nodiscard]] render::ImageClock imageClock() const { return render::ImageClock{ .seconds = m_AnimSeconds, .playing = m_PlayAnimations }; }
 	void openPopup(Popup p_Popup);
 	void closePopup(const char* p_Why = "");
 	void togglePopup(Popup p_Popup);
@@ -194,6 +205,12 @@ private:
 	bool m_ShowGrid = true;
 	bool m_ShowShortcuts = false;
 	bool m_HideUi = false; // F2: only the board is drawn
+	bool m_PlayAnimations = true;
+	double m_AnimSeconds = 0.0; // animation clock: advances while animations play
+	uint64_t m_AnimLastNs = 0;
+	bool m_ExternalClipboardNewer = true; // something other than our own copy was put on the system clipboard last
+	uint64_t m_SeenClipSerial = 0;
+	uint32_t m_DropCount = 0;
 	uint32_t m_RedrawFrames = 2; // frames still to draw after the last change (ImGui needs one extra to settle)
 	uint64_t m_LastDebugRefreshNs = 0;
 	uint64_t m_LastUpdateNs = 0;
@@ -246,6 +263,6 @@ private:
 	Action m_DialogAfter = Action::None;
 	std::mutex m_DialogMutex;
 	bool m_DialogReady = false;
-	std::optional<std::string> m_DialogPath;
+	std::vector<std::string> m_DialogPaths;
 };
 } // namespace wb

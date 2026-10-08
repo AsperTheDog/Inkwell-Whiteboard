@@ -11,6 +11,7 @@
 module;
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,6 +23,7 @@ export module wb.editor;
 
 import wb.math;
 import wb.doc.document;
+import wb.doc.object;
 import wb.doc.commands;
 import wb.doc.edit;
 import wb.doc.history;
@@ -99,6 +101,14 @@ public:
 	void cutSelection();
 	void paste();
 	void reorderSelection(ZOrderMove p_Move);
+	// Mirrors the selection about its centre
+	void flipSelection(bool p_Horizontal);
+	// Puts a picture on the board, centred on p_WorldCenter and sized to look natural at the current zoom, and selects it
+	ObjectId insertPicture(ImageAsset p_Asset, DVec2 p_WorldCenter);
+	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
+	void editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
+	// Changes whenever something is copied or cut inside the app (the system clipboard may hold something newer)
+	[[nodiscard]] uint64_t clipSerial() const { return m_ClipSerial; }
 	void recolorSelection(Color p_Color);
 	// Moves the selection by p_Points logical points on screen (zoom independent)
 	void nudgeSelection(Vec2 p_Points);
@@ -168,6 +178,7 @@ private:
 	bool m_HoverEraser = false;          // the pen's eraser end is in use / hovering
 
 	ObjectClip m_Clip;
+	uint64_t m_ClipSerial = 0;
 	DVec2 m_LastPasteCenter{ 0.0 };
 	int m_PasteRepeat = 0;
 	uint64_t m_LastNudgeNs = 0;

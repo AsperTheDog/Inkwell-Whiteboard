@@ -23,6 +23,7 @@ import wb.util.range_allocator;
 import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.buffer;
+import wb.render.image_store;
 
 export namespace wb::render
 {
@@ -62,11 +63,15 @@ public:
 	void detach();
 
 	// Outside a rendering scope: uploads pending strokes and builds this frame's instances
-	void prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd, uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live);
+	void prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd, uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live, const ImageClock& p_Clock);
 	// Inside the rendering scope of the frame target
 	void record(VkCommandBuffer p_Cmd, const Camera& p_Camera, const GridStyle& p_Grid) const;
 
 	[[nodiscard]] const CanvasStats& stats() const { return m_Stats; }
+	// Frames must keep coming: an animated picture is on screen, or pictures are still loading
+	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy(); }
+	[[nodiscard]] ImageStore& images() { return m_Images; }
+	[[nodiscard]] const ImageStore& images() const { return m_Images; }
 
 	// DocumentListener
 	void onObjectAdded(const Object& p_Object) override;
@@ -88,10 +93,13 @@ private:
 		uint64_t count = 0;
 	};
 
+	static constexpr uint32_t NO_IMAGE = UINT32_MAX;
+
 	struct Draw
 	{
 		uint32_t instance = 0;
 		uint32_t vertexCount = 0;
+		uint32_t image = NO_IMAGE; // index into m_ImageDraws for pictures
 	};
 
 	struct FrameResources
@@ -121,6 +129,9 @@ private:
 	std::array<FrameResources, gfx::FRAMES_IN_FLIGHT> m_Frames{};
 	uint32_t m_Slot = 0;
 	std::vector<Draw> m_Draws;
+	std::vector<ImageDraw> m_ImageDraws;
+	ImageStore m_Images;
+	bool m_Animating = false;
 
 	VkDescriptorSetLayout m_SetLayout = VK_NULL_HANDLE;
 	VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;

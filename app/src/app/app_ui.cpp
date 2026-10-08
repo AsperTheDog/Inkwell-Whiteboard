@@ -356,7 +356,7 @@ void App::buildToolbar()
 	const float l_Separator = m_Ui.px(17.f);
 	constexpr std::array<tools::ToolKind, 4> ORDER{ tools::ToolKind::Select, tools::ToolKind::Pen, tools::ToolKind::Eraser, tools::ToolKind::Hand };
 
-	const float l_Width = l_Pad * 2.f + l_Chip + l_Separator + 4.f * l_Button + 3.f * l_Gap + l_Separator + 2.f * l_Button + l_Gap;
+	const float l_Width = l_Pad * 2.f + l_Chip + l_Separator + 5.f * l_Button + 4.f * l_Gap + l_Separator + 2.f * l_Button + l_Gap;
 	const float l_Height = l_Button + l_Pad * 2.f;
 	const Rect2 l_Bar = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, l_Viewport.y - l_Margin - l_Height }, Vec2{ l_Width, l_Height });
 	m_ToolbarRect = l_Bar;
@@ -411,7 +411,9 @@ void App::buildToolbar()
 		}
 		l_X += l_Button + l_Gap;
 	}
-	l_X += -l_Gap;
+	if (m_Ui.iconButton("toolbar.picture", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Image, false, !m_Editor.isBusy(), "Insert a picture (Ctrl+I). You can also paste or drop pictures"))
+		showInsertPictureDialog();
+	l_X += l_Button;
 	l_Divider();
 
 	if (m_Ui.iconButton("toolbar.undo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Undo, false, m_Editor.history().canUndo() && !m_Editor.isBusy(), "Undo (Ctrl+Z)"))

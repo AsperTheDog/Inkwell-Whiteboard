@@ -8,6 +8,7 @@ module;
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -26,6 +27,16 @@ inline constexpr uint32_t Geometry = 1u << 1; // payload shape (stroke points, i
 inline constexpr uint32_t Style = 1u << 2;    // color, size and other appearance
 inline constexpr uint32_t All = Transform | Geometry | Style;
 } // namespace ObjectChange
+
+// An image file as it was imported (PNG, JPEG, GIF, BMP...), kept byte for byte so saving never re-encodes it
+struct ImageAsset
+{
+	AssetId id = INVALID_ASSET_ID;
+	std::vector<uint8_t> bytes;
+	uint32_t width = 0;  // pixels of the first frame
+	uint32_t height = 0;
+	std::string name;    // file name it came from, for the user's benefit
+};
 
 class DocumentListener
 {
@@ -77,6 +88,14 @@ public:
 	[[nodiscard]] bool empty() const { return m_Objects.empty(); }
 	[[nodiscard]] Rect contentBounds() const;
 
+	// ---- image assets (immutable once added; an edit makes a new asset)
+	// Stores the asset and returns its id. Identical bytes share one asset.
+	AssetId addAsset(ImageAsset p_Asset);
+	// Loading: stores the asset under the id it was saved with. False when the id is taken or invalid.
+	bool insertAsset(ImageAsset p_Asset);
+	[[nodiscard]] const ImageAsset* findAsset(AssetId p_Id) const;
+	[[nodiscard]] const std::unordered_map<AssetId, ImageAsset>& assets() const { return m_Assets; }
+
 	// Incremented by every mutation
 	[[nodiscard]] uint64_t revision() const { return m_Revision; }
 
@@ -87,7 +106,10 @@ private:
 	std::vector<std::unique_ptr<Object>> m_Objects; // back to front
 	std::unordered_map<ObjectId, Object*> m_ById;
 	std::vector<DocumentListener*> m_Listeners;
+	std::unordered_map<AssetId, ImageAsset> m_Assets;
+	std::unordered_map<uint64_t, std::vector<AssetId>> m_AssetsByHash;
 	ObjectId m_NextId = 1;
+	AssetId m_NextAsset = 1;
 	uint64_t m_Revision = 0;
 };
 } // namespace wb

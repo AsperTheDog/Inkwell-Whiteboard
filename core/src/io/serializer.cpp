@@ -38,12 +38,18 @@ constexpr uint32_t tag(const char (&p_Text)[5])
 constexpr uint32_t TAG_META = tag("META");
 constexpr uint32_t TAG_VIEW = tag("VIEW");
 constexpr uint32_t TAG_OBJS = tag("OBJS");
+constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_END = tag("END ");
 
 enum class ObjectType : uint8_t
 {
 	Stroke = 1,
+	Image = 2,
 };
+
+constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
+constexpr size_t MAX_NAME_BYTES = 1024;
+constexpr uint64_t MAX_ASSET_BYTES = 1ull << 31;
 
 constexpr size_t TRANSFORM_BYTES = 6 * sizeof(double);
 constexpr size_t STROKE_HEADER_BYTES = 4 * sizeof(float) + sizeof(float) + 1 + sizeof(uint32_t);
@@ -264,6 +270,85 @@ bool readStroke(Reader& p_Reader, Object& p_Object, bool& p_Skipped)
 	return true;
 }
 
+void writeImage(Writer& p_Writer, const Object& p_Object, const ImageData& p_Image)
+{
+	p_Writer.u64(p_Object.id);
+	p_Writer.u8(static_cast<uint8_t>(ObjectType::Image));
+	p_Writer.u32(static_cast<uint32_t>(IMAGE_BODY_BYTES));
+	writeTransform(p_Writer, p_Object.transform);
+	p_Writer.u64(p_Image.asset);
+	p_Writer.f32(p_Image.size.x);
+	p_Writer.f32(p_Image.size.y);
+	p_Writer.u8(p_Image.playing ? 1 : 0);
+	p_Writer.u32(p_Image.frame);
+}
+
+bool readImage(Reader& p_Reader, Object& p_Object)
+{
+	if (!readTransform(p_Reader, p_Object.transform))
+		return false;
+	ImageData l_Image;
+	l_Image.asset = p_Reader.u64();
+	l_Image.size.x = p_Reader.f32();
+	l_Image.size.y = p_Reader.f32();
+	l_Image.playing = p_Reader.u8() != 0;
+	l_Image.frame = p_Reader.u32();
+	if (!p_Reader.ok() || l_Image.asset == INVALID_ASSET_ID || !finite(l_Image.size.x) || !finite(l_Image.size.y) || l_Image.size.x <= 0.f || l_Image.size.y <= 0.f)
+		return false;
+	p_Object.payload = l_Image;
+	return true;
+}
+
+void writeAssets(Writer& p_Writer, const Document& p_Document)
+{
+	// Only assets some object still uses are saved (undone or deleted images do not bloat the file)
+	std::vector<AssetId> l_Used;
+	std::unordered_set<AssetId> l_Seen;
+	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	{
+		if (const ImageData* l_Image = l_Object->image(); l_Image != nullptr && l_Seen.insert(l_Image->asset).second)
+			l_Used.push_back(l_Image->asset);
+	}
+	p_Writer.beginChunk(TAG_ASET);
+	p_Writer.u32(static_cast<uint32_t>(l_Used.size()));
+	for (const AssetId l_Id : l_Used)
+	{
+		const ImageAsset* l_Asset = p_Document.findAsset(l_Id);
+		p_Writer.u64(l_Id);
+		p_Writer.u32(l_Asset != nullptr ? l_Asset->width : 0);
+		p_Writer.u32(l_Asset != nullptr ? l_Asset->height : 0);
+		p_Writer.string(l_Asset != nullptr ? std::string_view(l_Asset->name) : std::string_view());
+		p_Writer.u64(l_Asset != nullptr ? l_Asset->bytes.size() : 0);
+		if (l_Asset != nullptr)
+			p_Writer.raw(l_Asset->bytes.data(), l_Asset->bytes.size());
+	}
+	p_Writer.endChunk();
+}
+
+bool parseAssets(const std::span<const uint8_t> p_Payload, std::vector<ImageAsset>& p_Assets)
+{
+	Reader l_Reader(p_Payload);
+	const uint32_t l_Count = l_Reader.u32();
+	if (!l_Reader.ok())
+		return false;
+	std::unordered_set<AssetId> l_Seen;
+	for (uint32_t i = 0; i < l_Count; ++i)
+	{
+		ImageAsset l_Asset;
+		l_Asset.id = l_Reader.u64();
+		l_Asset.width = l_Reader.u32();
+		l_Asset.height = l_Reader.u32();
+		l_Asset.name = l_Reader.string(MAX_NAME_BYTES);
+		const uint64_t l_Size = l_Reader.u64();
+		if (!l_Reader.ok() || l_Size > MAX_ASSET_BYTES || l_Size > l_Reader.remaining() || l_Asset.id == INVALID_ASSET_ID || !l_Seen.insert(l_Asset.id).second)
+			return false;
+		const std::span<const uint8_t> l_Bytes = l_Reader.take(static_cast<size_t>(l_Size));
+		l_Asset.bytes.assign(l_Bytes.begin(), l_Bytes.end());
+		p_Assets.push_back(std::move(l_Asset));
+	}
+	return l_Reader.ok();
+}
+
 struct ParsedMeta
 {
 	uint64_t nextId = 0;
@@ -295,7 +380,7 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		if (!l_Reader.ok() || l_Id == INVALID_OBJECT_ID || !l_Seen.insert(l_Id).second)
 			return false;
 
-		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke))
+		if (l_Type != static_cast<uint8_t>(ObjectType::Stroke) && l_Type != static_cast<uint8_t>(ObjectType::Image))
 		{
 			++p_Skipped;
 			continue;
@@ -304,8 +389,15 @@ bool parseObjects(const std::span<const uint8_t> p_Payload, std::vector<std::uni
 		l_Object->id = l_Id;
 		Reader l_BodyReader(l_Body);
 		bool l_Skipped = false;
-		if (!readStroke(l_BodyReader, *l_Object, l_Skipped))
+		if (l_Type == static_cast<uint8_t>(ObjectType::Image))
+		{
+			if (!readImage(l_BodyReader, *l_Object))
+				return false;
+		}
+		else if (!readStroke(l_BodyReader, *l_Object, l_Skipped))
+		{
 			return false;
+		}
 		if (l_Skipped)
 			++p_Skipped;
 		else
@@ -327,8 +419,14 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 {
 	size_t l_Estimate = 256 + p_Meta.sourcePath.size();
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	{
 		if (const StrokeData* l_Stroke = l_Object->stroke())
 			l_Estimate += OBJECT_HEADER_BYTES + strokeBodyBytes(*l_Stroke);
+		else if (l_Object->image() != nullptr)
+			l_Estimate += OBJECT_HEADER_BYTES + IMAGE_BODY_BYTES;
+	}
+	for (const auto& [l_Id, l_Asset] : p_Document.assets())
+		l_Estimate += l_Asset.bytes.size() + 64;
 
 	Writer l_Writer;
 	l_Writer.reserve(l_Estimate);
@@ -347,11 +445,17 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 	l_Writer.f64(p_Meta.viewZoom);
 	l_Writer.endChunk();
 
+	writeAssets(l_Writer, p_Document);
+
 	l_Writer.beginChunk(TAG_OBJS);
 	l_Writer.u32(static_cast<uint32_t>(p_Document.size()));
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	{
 		if (const StrokeData* l_Stroke = l_Object->stroke())
 			writeStroke(l_Writer, *l_Object, *l_Stroke);
+		else if (const ImageData* l_Image = l_Object->image())
+			writeImage(l_Writer, *l_Object, *l_Image);
+	}
 	l_Writer.endChunk();
 
 	l_Writer.beginChunk(TAG_END);
@@ -374,6 +478,7 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	std::optional<ParsedMeta> l_ParsedMeta;
 	std::optional<std::array<double, 3>> l_View;
 	std::vector<std::unique_ptr<Object>> l_Objects;
+	std::vector<ImageAsset> l_Assets;
 	bool l_HaveObjects = false;
 	bool l_HaveEnd = false;
 	uint32_t l_Skipped = 0;
@@ -416,6 +521,10 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 				return failure("The file is damaged (bad object data).");
 			l_HaveObjects = true;
 			break;
+		case TAG_ASET:
+			if (!l_Assets.empty() || !parseAssets(l_Payload, l_Assets))
+				return failure("The file is damaged (bad image data).");
+			break;
 		case TAG_END:
 			l_HaveEnd = true;
 			break;
@@ -428,6 +537,17 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 		return failure("The file is incomplete (truncated).");
 	if (!l_ParsedMeta || !l_HaveObjects)
 		return failure("The file is damaged (missing data).");
+	// Images whose picture is missing cannot be shown: drop them like objects of an unknown kind
+	{
+		std::unordered_set<AssetId> l_Known;
+		for (const ImageAsset& l_Asset : l_Assets)
+			l_Known.insert(l_Asset.id);
+		l_Skipped += static_cast<uint32_t>(std::erase_if(l_Objects, [&](const std::unique_ptr<Object>& p_Object)
+		{
+			const ImageData* l_Image = p_Object->image();
+			return l_Image != nullptr && !l_Known.contains(l_Image->asset);
+		}));
+	}
 	if (l_ParsedMeta->objectCount != l_Objects.size() + l_Skipped)
 		return failure("The file is damaged (object count mismatch).");
 
@@ -435,6 +555,8 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	p_Document.clear();
 	if (l_ParsedMeta->nextId > 0)
 		p_Document.reserveId(l_ParsedMeta->nextId - 1);
+	for (ImageAsset& l_Asset : l_Assets)
+		p_Document.insertAsset(std::move(l_Asset));
 	for (std::unique_ptr<Object>& l_Object : l_Objects)
 		p_Document.insert(std::move(l_Object));
 

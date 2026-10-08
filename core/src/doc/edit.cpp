@@ -1,7 +1,9 @@
 module;
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -54,10 +56,16 @@ std::vector<ObjectId> insertCopies(Document& p_Document, History& p_History, con
 ObjectClip copyObjects(const Document& p_Document, const std::span<const ObjectId> p_Ids)
 {
 	ObjectClip l_Clip;
+	std::unordered_set<AssetId> l_Assets;
 	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
 	{
 		l_Clip.objects.push_back(*l_Object);
 		l_Clip.bounds.expand(tightWorldBounds(*l_Object));
+		if (const ImageData* l_Image = l_Object->image(); l_Image != nullptr && l_Assets.insert(l_Image->asset).second)
+		{
+			if (const ImageAsset* l_Asset = p_Document.findAsset(l_Image->asset))
+				l_Clip.assets.push_back(*l_Asset);
+		}
 	}
 	return l_Clip;
 }
@@ -67,10 +75,21 @@ std::vector<ObjectId> pasteObjects(Document& p_Document, History& p_History, con
 	if (p_Clip.empty())
 		return {};
 	const Affine2 l_Shift = Affine2::translate(p_Center - p_Clip.bounds.center());
+	// The pictures go into this board's asset table (identical ones are shared); copies refer to the new ids
+	std::unordered_map<AssetId, AssetId> l_AssetMap;
+	for (const ImageAsset& l_Asset : p_Clip.assets)
+		l_AssetMap[l_Asset.id] = p_Document.addAsset(l_Asset);
 	std::vector<std::unique_ptr<Object>> l_Sources;
 	l_Sources.reserve(p_Clip.objects.size());
 	for (const Object& l_Object : p_Clip.objects)
+	{
 		l_Sources.push_back(std::make_unique<Object>(l_Object));
+		if (ImageData* l_Image = l_Sources.back()->image())
+		{
+			if (const auto l_It = l_AssetMap.find(l_Image->asset); l_It != l_AssetMap.end())
+				l_Image->asset = l_It->second;
+		}
+	}
 	return insertCopies(p_Document, p_History, l_Sources, l_Shift, p_Name);
 }
 
@@ -102,6 +121,33 @@ void reorderObjects(Document& p_Document, History& p_History, const std::span<co
 	l_Command->apply(p_Document);
 	if (l_Command->changedOrder())
 		p_History.push(std::move(l_Command));
+}
+
+void flipObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const bool p_Horizontal)
+{
+	Rect l_Bounds{};
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+		l_Bounds.expand(tightWorldBounds(*l_Object));
+	if (l_Bounds.isEmpty())
+		return;
+	const Affine2 l_Mirror = Affine2::around(l_Bounds.center(), Affine2::scale(p_Horizontal ? DVec2{ -1.0, 1.0 } : DVec2{ 1.0, -1.0 }));
+	transformObjects(p_Document, p_History, p_Ids, l_Mirror, p_Horizontal ? "Flip horizontally" : "Flip vertically", false);
+}
+
+void editImages(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
+{
+	std::vector<SetImageDataCommand::Entry> l_Entries;
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	{
+		const ImageData* l_Image = l_Object->image();
+		if (l_Image == nullptr)
+			continue;
+		ImageData l_After = *l_Image;
+		if (p_Edit(l_After) && !(l_After == *l_Image))
+			l_Entries.push_back(SetImageDataCommand::Entry{ .id = l_Object->id, .before = *l_Image, .after = l_After });
+	}
+	if (!l_Entries.empty())
+		p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), p_Name));
 }
 
 void recolorObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const Color p_Color)

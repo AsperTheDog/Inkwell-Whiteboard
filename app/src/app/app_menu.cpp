@@ -125,7 +125,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 12, 9, 1 };
+	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 13, 10, 1 };
 	static constexpr std::array<const char*, 4> TITLES{ "Board", "Edit", "View", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -204,6 +204,11 @@ void App::buildMenu()
 				m_Editor.undo();
 			if (l_Row(ui::Icon::Redo, "Redo", "Ctrl+Y", m_Editor.history().canRedo() && l_Idle))
 				m_Editor.redo();
+			if (l_Row(ui::Icon::Image, "Insert picture...", "Ctrl+I", l_Idle))
+			{
+				showInsertPictureDialog();
+				l_Close = true;
+			}
 			if (l_Row(ui::Icon::Cut, "Cut", "Ctrl+X", l_HasSelection))
 			{
 				m_Editor.cutSelection();
@@ -265,6 +270,8 @@ void App::buildMenu()
 				m_ShowGrid = !m_ShowGrid;
 			if (l_Row(ui::Icon::Moon, "Dark theme", "", true, m_DarkTheme))
 				m_DarkTheme = !m_DarkTheme;
+			if (l_Row(ui::Icon::Play, "Play animations", "", true, m_PlayAnimations))
+				m_PlayAnimations = !m_PlayAnimations;
 			if (l_Row(ui::Icon::Layers, "Hide interface", "F2"))
 			{
 				toggleInterface();
@@ -352,6 +359,7 @@ const std::vector<ShortcutSection>& rightSections()
 			{ "Ctrl + A", "Select all" },
 			{ "Ctrl + C / X / V", "Copy / cut / paste" },
 			{ "Ctrl + D", "Duplicate" },
+			{ "Ctrl + I", "Insert a picture" },
 			{ "Delete", "Delete the selection" },
 			{ "Arrows (+ Shift)", "Nudge by 1 (10) points" },
 			{ "Ctrl + ] / [", "Bring forward / send back" },

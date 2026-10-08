@@ -59,7 +59,10 @@ FrameTransform resizeFrame(const SelectionFrame& p_Frame, const Handle p_Handle,
 		const double l_Span = p_Handle - p_Pivot;
 		if (std::abs(l_Span) < MIN_HALF_EXTENT)
 			return 1.0;
-		return std::clamp((p_Target - p_Pivot) / l_Span, MIN_SCALE, MAX_SCALE);
+		// Dragging past the opposite edge mirrors (a negative factor); the size never collapses to nothing
+		const double l_Raw = (p_Target - p_Pivot) / l_Span;
+		const double l_Magnitude = std::clamp(std::abs(l_Raw), MIN_SCALE, MAX_SCALE);
+		return l_Raw < 0.0 ? -l_Magnitude : l_Magnitude;
 	};
 	double l_Kx = l_Factor(l_Direction.x, l_Handle.x, l_Pivot.x, l_Target.x);
 	double l_Ky = l_Factor(l_Direction.y, l_Handle.y, l_Pivot.y, l_Target.y);
@@ -67,9 +70,9 @@ FrameTransform resizeFrame(const SelectionFrame& p_Frame, const Handle p_Handle,
 	if (p_Options.keepAspect)
 	{
 		// Follow whichever axis the pointer moved further along; an edge handle drags the other axis with it
-		const double l_Uniform = l_Direction.x == 0.0 ? l_Ky : (l_Direction.y == 0.0 ? l_Kx : std::max(l_Kx, l_Ky));
-		l_Kx = l_Uniform;
-		l_Ky = l_Uniform;
+		const double l_Magnitude = l_Direction.x == 0.0 ? std::abs(l_Ky) : (l_Direction.y == 0.0 ? std::abs(l_Kx) : std::max(std::abs(l_Kx), std::abs(l_Ky)));
+		l_Kx = l_Direction.x == 0.0 ? l_Magnitude : std::copysign(l_Magnitude, l_Kx);
+		l_Ky = l_Direction.y == 0.0 ? l_Magnitude : std::copysign(l_Magnitude, l_Ky);
 	}
 
 	// Scale about the pivot (in box space); an edge handle with locked aspect scales the free axis about the centre line
@@ -80,7 +83,7 @@ FrameTransform resizeFrame(const SelectionFrame& p_Frame, const Handle p_Handle,
 
 	SelectionFrame l_Frame = p_Frame;
 	l_Frame.center = l_World.apply(p_Frame.center);
-	l_Frame.half = p_Frame.half * DVec2{ l_Kx, l_Ky };
+	l_Frame.half = p_Frame.half * DVec2{ std::abs(l_Kx), std::abs(l_Ky) };
 	return FrameTransform{ .transform = l_World, .frame = l_Frame };
 }
 

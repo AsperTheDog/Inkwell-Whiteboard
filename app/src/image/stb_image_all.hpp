@@ -1,4 +1,7 @@
-// The one translation unit that compiles the stb implementations.
+#pragma once
+// stb image headers (declarations only) for the global module fragment of the codec module. The implementations
+// live in stb_impl.cpp.
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -10,17 +13,9 @@
 #pragma GCC diagnostic ignored "-Wextra"
 #endif
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include <stb_image_resize2.h>
-
-#define STB_TRUETYPE_IMPLEMENTATION
-#include <stb_truetype.h>
+#include <stb_image_write.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #pragma warning(pop)

@@ -73,6 +73,7 @@ void App::loadSettings()
 	const Settings& l_S = m_Settings;
 
 	m_DarkTheme = l_S.getBool("ui.dark", m_DarkTheme);
+	m_PlayAnimations = l_S.getBool("anim.play", m_PlayAnimations);
 	m_ShowGrid = l_S.getBool("ui.grid", m_ShowGrid);
 	m_LastDirectory = l_S.getString("files.lastDirectory");
 	for (size_t i = 0; i < m_RecentColors.size(); ++i)
@@ -117,6 +118,7 @@ void App::saveSettings()
 {
 	Settings l_S = m_Settings; // keeps keys written by other versions
 	l_S.setBool("ui.dark", m_DarkTheme);
+	l_S.setBool("anim.play", m_PlayAnimations);
 	l_S.setBool("ui.grid", m_ShowGrid);
 	l_S.set("files.lastDirectory", m_LastDirectory);
 	for (size_t i = 0; i < m_RecentColors.size(); ++i)
@@ -264,7 +266,9 @@ void SDLCALL App::dialogCallback(void* p_User, const char* const* p_Files, int)
 	App* l_App = static_cast<App*>(p_User);
 	{
 		const std::lock_guard<std::mutex> l_Lock(l_App->m_DialogMutex);
-		l_App->m_DialogPath = (p_Files != nullptr && p_Files[0] != nullptr) ? std::optional<std::string>(p_Files[0]) : std::nullopt;
+		l_App->m_DialogPaths.clear();
+		for (int i = 0; p_Files != nullptr && p_Files[i] != nullptr; ++i)
+			l_App->m_DialogPaths.emplace_back(p_Files[i]);
 		l_App->m_DialogReady = true;
 	}
 	SDL_Event l_Event{};
@@ -274,22 +278,41 @@ void SDLCALL App::dialogCallback(void* p_User, const char* const* p_Files, int)
 
 void App::handleDialogResult()
 {
-	std::optional<std::string> l_Path;
+	std::vector<std::string> l_Paths;
 	{
 		const std::lock_guard<std::mutex> l_Lock(m_DialogMutex);
 		if (!m_DialogReady)
 			return;
 		m_DialogReady = false;
-		l_Path = std::move(m_DialogPath);
-		m_DialogPath.reset();
+		l_Paths = std::move(m_DialogPaths);
+		m_DialogPaths.clear();
 	}
 	const DialogKind l_Kind = std::exchange(m_DialogKind, DialogKind::None);
 	const Action l_After = std::exchange(m_DialogAfter, Action::None);
 	requestRedraw();
-	if (!l_Path)
+	if (l_Paths.empty())
 		return; // cancelled (or the dialog failed): the board stays as it is
 
-	std::filesystem::path l_File = pathFromUtf8(*l_Path);
+	if (l_Kind == DialogKind::Pictures)
+	{
+		std::vector<platform::ClipboardPicture> l_Pictures;
+		for (const std::string& l_Path : l_Paths)
+		{
+			platform::ClipboardPicture l_Picture;
+			const std::filesystem::path l_PicturePath = pathFromUtf8(l_Path);
+			if (const IoResult l_Read = readFile(l_PicturePath, l_Picture.bytes, 512ull << 20); !l_Read.ok)
+			{
+				showMessage("A picture could not be read.\n\n" + l_Read.error);
+				continue;
+			}
+			l_Picture.name = pathToUtf8(l_PicturePath.filename());
+			l_Pictures.push_back(std::move(l_Picture));
+		}
+		importPictures(std::move(l_Pictures), std::nullopt);
+		return;
+	}
+
+	std::filesystem::path l_File = pathFromUtf8(l_Paths.front());
 	if (l_Kind == DialogKind::Open)
 	{
 		openPath(l_File);
@@ -318,6 +341,12 @@ bool App::handleFileShortcut(const SDL_KeyboardEvent& p_Event)
 	case SDLK_N:
 		requestAction(Action::NewBoard);
 		return true;
+	case SDLK_I:
+		showInsertPictureDialog();
+		return true;
+	case SDLK_V:
+		// A picture copied in another program wins over objects copied inside the app earlier
+		return m_ExternalClipboardNewer && pasteFromSystemClipboard();
 	default:
 		return false;
 	}

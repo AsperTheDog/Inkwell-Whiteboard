@@ -136,6 +136,28 @@ private:
 	std::string m_Name;
 };
 
+// Replaces the data of image objects (play/pause, a recompressed asset...)
+class SetImageDataCommand final : public Command
+{
+ public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		ImageData before{};
+		ImageData after{};
+	};
+
+	SetImageDataCommand(std::vector<Entry> p_Entries, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
 // Recolours strokes (the alpha channel of each stroke is kept)
 class SetStrokeColorCommand final : public Command
 {

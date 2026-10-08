@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -486,6 +487,7 @@ void Editor::copySelection()
 	if (m_Selection.empty())
 		return;
 	m_Clip = copyObjects(m_Document, m_Selection.orderedIds());
+	++m_ClipSerial;
 	m_PasteRepeat = 0;
 }
 
@@ -529,6 +531,45 @@ void Editor::recolorSelection(const Color p_Color)
 	if (isBusy() || m_Selection.empty())
 		return;
 	recolorObjects(m_Document, m_History, m_Selection.orderedIds(), p_Color);
+}
+
+void Editor::flipSelection(const bool p_Horizontal)
+{
+	if (isBusy() || m_Selection.empty())
+		return;
+	flipObjects(m_Document, m_History, m_Selection.orderedIds(), p_Horizontal);
+}
+
+ObjectId Editor::insertPicture(ImageAsset p_Asset, const DVec2 p_WorldCenter)
+{
+	if (isBusy() || p_Asset.width == 0 || p_Asset.height == 0)
+		return INVALID_OBJECT_ID;
+	const uint32_t l_Width = p_Asset.width;
+	const uint32_t l_Height = p_Asset.height;
+	const AssetId l_Asset = m_Document.addAsset(std::move(p_Asset));
+
+	// One picture pixel is one point on screen, unless that would be more than most of the window
+	const DVec2 l_ViewPoints = m_Camera.viewport() / m_Camera.pixelScale();
+	const double l_Fit = std::min({ 1.0, 0.6 * l_ViewPoints.x / static_cast<double>(l_Width), 0.6 * l_ViewPoints.y / static_cast<double>(l_Height) });
+	const double l_WorldScale = l_Fit / m_Camera.zoom();
+
+	auto l_Object = std::make_unique<Object>();
+	l_Object->id = m_Document.allocateId();
+	l_Object->transform = Affine2::translate(p_WorldCenter) * Affine2::scale(DVec2{ l_WorldScale });
+	l_Object->payload = ImageData{ .asset = l_Asset, .size = Vec2{ static_cast<float>(l_Width), static_cast<float>(l_Height) } };
+	const ObjectId l_Id = l_Object->id;
+	std::vector<std::unique_ptr<Object>> l_Objects;
+	l_Objects.push_back(std::move(l_Object));
+	m_History.execute(m_Document, std::make_unique<AddObjectsCommand>(std::move(l_Objects), "Insert picture"));
+	m_Selection.set(std::vector<ObjectId>{ l_Id });
+	return l_Id;
+}
+
+void Editor::editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
+{
+	if (isBusy() || m_Selection.empty())
+		return;
+	editImages(m_Document, m_History, m_Selection.orderedIds(), p_Name, p_Edit);
 }
 
 void Editor::nudgeSelection(const Vec2 p_Points)

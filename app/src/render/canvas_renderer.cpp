@@ -26,6 +26,7 @@ import wb.gfx.commands;
 import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.pipeline;
+import wb.render.image_store;
 
 namespace wb::render
 {
@@ -157,6 +158,7 @@ void CanvasRenderer::init(const gfx::GraphicsContext& p_Context, const VkFormat 
 		m_Frames[i].descriptorSet = l_Sets[i];
 
 	createPipelines(p_Context, p_ColorFormat);
+	m_Images.init(p_Context, p_ColorFormat);
 
 	m_MaxPoolPoints = p_Context.info().limits.maxStorageBufferRange / sizeof(GpuPoint);
 	const uint64_t l_Initial = std::min(INITIAL_POOL_POINTS, m_MaxPoolPoints);
@@ -183,6 +185,7 @@ void CanvasRenderer::createPipelines(const gfx::GraphicsContext& p_Context, cons
 void CanvasRenderer::destroy(const gfx::GraphicsContext& p_Context)
 {
 	detach();
+	m_Images.destroy(p_Context);
 	const VkDevice l_Device = p_Context.device();
 	for (FrameResources& l_Frame : m_Frames)
 	{
@@ -247,6 +250,7 @@ void CanvasRenderer::onObjectRemoved(const Object& p_Object)
 
 void CanvasRenderer::onDocumentCleared()
 {
+	m_Images.clear();
 	for (const auto& [l_Id, l_Gpu] : m_Strokes)
 		releaseRange(l_Gpu.offset, l_Gpu.count);
 	m_Strokes.clear();
@@ -355,9 +359,12 @@ void CanvasRenderer::uploadPending(const gfx::GraphicsContext& p_Context, gfx::F
 
 // ------------------------------------------------------------------------------------------------ per frame
 
-void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, const VkCommandBuffer p_Cmd, const uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live)
+void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, const VkCommandBuffer p_Cmd, const uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live, const ImageClock& p_Clock)
 {
 	m_Slot = p_Slot;
+	m_Images.update(p_Context, p_Frames, p_Cmd);
+	m_ImageDraws.clear();
+	m_Animating = false;
 	m_CurrentTimeline = p_Frames.submittedValue() + 1;
 	processFrees(p_Frames.completedValue(p_Context));
 	uploadPending(p_Context, p_Frames, p_Staging, p_Cmd);
@@ -376,6 +383,16 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 	{
 		for (const std::unique_ptr<Object>& l_Object : m_Document->objects())
 		{
+			if (const ImageData* l_Image = l_Object->image())
+			{
+				if (!l_Object->worldBounds().inflated(2.0 / p_Camera.pixelsPerUnit()).intersects(l_Visible))
+					continue;
+				const ImageLookup l_Lookup = m_Images.lookup(*m_Document, *l_Image, p_Clock);
+				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Image->size });
+				m_Animating = m_Animating || l_Lookup.animatedAndPlaying;
+				continue;
+			}
 			const StrokeData* l_Stroke = l_Object->stroke();
 			if (l_Stroke == nullptr)
 				continue;
@@ -474,16 +491,37 @@ void CanvasRenderer::record(const VkCommandBuffer p_Cmd, const Camera& p_Camera,
 	if (m_Draws.empty())
 		return;
 
-	const gfx::DebugLabel l_Label(p_Cmd, "strokes");
+	const gfx::DebugLabel l_Label(p_Cmd, "board");
 	const StrokePushConstants l_Push{
 		.viewportSize = { static_cast<float>(l_Viewport.x), static_cast<float>(l_Viewport.y) },
 		.minRadius = 0.5f,
 		.aaWidth = 1.f,
 	};
-	vkCmdBindPipeline(p_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_StrokePipeline);
-	vkCmdBindDescriptorSets(p_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_StrokeLayout, 0, 1, &m_Frames[m_Slot].descriptorSet, 0, nullptr);
-	vkCmdPushConstants(p_Cmd, m_StrokeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(l_Push), &l_Push);
+	const VkExtent2D l_Extent{ static_cast<uint32_t>(l_Viewport.x), static_cast<uint32_t>(l_Viewport.y) };
+	bool l_StrokesBound = false;
+	bool l_ImagesBound = false;
 	for (const Draw& l_Draw : m_Draws)
+	{
+		if (l_Draw.image != NO_IMAGE)
+		{
+			if (!l_ImagesBound)
+			{
+				m_Images.bind(p_Cmd);
+				l_ImagesBound = true;
+				l_StrokesBound = false;
+			}
+			m_Images.draw(p_Cmd, l_Extent, m_ImageDraws[l_Draw.image]);
+			continue;
+		}
+		if (!l_StrokesBound)
+		{
+			vkCmdBindPipeline(p_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_StrokePipeline);
+			vkCmdBindDescriptorSets(p_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_StrokeLayout, 0, 1, &m_Frames[m_Slot].descriptorSet, 0, nullptr);
+			vkCmdPushConstants(p_Cmd, m_StrokeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(l_Push), &l_Push);
+			l_StrokesBound = true;
+			l_ImagesBound = false;
+		}
 		vkCmdDraw(p_Cmd, l_Draw.vertexCount, 1, 0, l_Draw.instance);
+	}
 }
 } // namespace wb::render

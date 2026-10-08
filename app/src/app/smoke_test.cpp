@@ -21,6 +21,9 @@ module wb.app;
 import wb.doc.document;
 import wb.doc.object;
 import wb.doc.selection;
+import wb.doc.history;
+import wb.platform.clipboard;
+import wb.render.image_store;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
@@ -40,6 +43,107 @@ constexpr uint64_t EVENT_INTERVAL_NS = 4'000'000; // 250 Hz, like a typical pen
 constexpr size_t EVENTS_PER_FRAME = 6;
 
 Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
+std::vector<ObjectId> s_SmokePictures;
+size_t s_SmokeObjectsBefore = 0;
+
+void appendPngBytes(void* p_Context, void* p_Data, const int p_Size)
+{
+	auto* l_Out = static_cast<std::vector<uint8_t>*>(p_Context);
+	l_Out->insert(l_Out->end(), static_cast<const uint8_t*>(p_Data), static_cast<const uint8_t*>(p_Data) + p_Size);
+}
+
+// A PNG with a gradient, a transparent corner and a border
+std::vector<uint8_t> makeTestPng(const int p_Width, const int p_Height)
+{
+	std::vector<uint8_t> l_Pixels(static_cast<size_t>(p_Width) * static_cast<size_t>(p_Height) * 4);
+	for (int y = 0; y < p_Height; ++y)
+	{
+		for (int x = 0; x < p_Width; ++x)
+		{
+			uint8_t* l_Pixel = &l_Pixels[(static_cast<size_t>(y) * static_cast<size_t>(p_Width) + static_cast<size_t>(x)) * 4];
+			const bool l_Border = x < 4 || y < 4 || x >= p_Width - 4 || y >= p_Height - 4;
+			const bool l_Hole = x < p_Width / 4 && y < p_Height / 4;
+			l_Pixel[0] = l_Border ? 20 : static_cast<uint8_t>(255 * x / p_Width);
+			l_Pixel[1] = l_Border ? 20 : static_cast<uint8_t>(255 * y / p_Height);
+			l_Pixel[2] = l_Border ? 20 : 160;
+			l_Pixel[3] = l_Hole ? 0 : 255;
+		}
+	}
+	std::vector<uint8_t> l_Bytes;
+	stbi_write_png_to_func(&appendPngBytes, &l_Bytes, p_Width, p_Height, 4, l_Pixels.data(), p_Width * 4);
+	return l_Bytes;
+}
+
+// An animated GIF (a square moving across a pale background). Valid but uncompressed: the LZW stream restarts every few pixels.
+std::vector<uint8_t> makeTestGif(const int p_Size, const int p_Frames)
+{
+	std::vector<uint8_t> l_Out{ 'G', 'I', 'F', '8', '9', 'a' };
+	const auto l_U16 = [&](const int p_Value) { l_Out.push_back(static_cast<uint8_t>(p_Value & 0xFF)); l_Out.push_back(static_cast<uint8_t>((p_Value >> 8) & 0xFF)); };
+	l_U16(p_Size);
+	l_U16(p_Size);
+	l_Out.push_back(0xF3); // global palette of 16 colours
+	l_Out.push_back(0);
+	l_Out.push_back(0);
+	static constexpr uint8_t GIF_COLORS[16][3] = { { 255, 255, 255 }, { 235, 240, 250 }, { 229, 57, 53 }, { 251, 140, 0 }, { 253, 216, 53 }, { 67, 160, 71 }, { 0, 172, 193 }, { 30, 136, 229 }, { 94, 53, 177 }, { 216, 27, 96 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } };
+	for (const auto& l_Color : GIF_COLORS)
+		l_Out.insert(l_Out.end(), l_Color, l_Color + 3);
+
+	for (int l_Frame = 0; l_Frame < p_Frames; ++l_Frame)
+	{
+		l_Out.insert(l_Out.end(), { 0x21, 0xF9, 0x04, 0x04, 20, 0, 0, 0 }); // 200 ms
+		l_Out.push_back(0x2C);
+		l_U16(0);
+		l_U16(0);
+		l_U16(p_Size);
+		l_U16(p_Size);
+		l_Out.push_back(0);
+		l_Out.push_back(4); // minimum code size
+
+		std::vector<uint8_t> l_Stream;
+		uint32_t l_Bits = 0;
+		int l_BitCount = 0;
+		const auto l_Code = [&](const uint32_t p_Value)
+		{
+			l_Bits |= p_Value << l_BitCount;
+			l_BitCount += 5;
+			while (l_BitCount >= 8)
+			{
+				l_Stream.push_back(static_cast<uint8_t>(l_Bits & 0xFF));
+				l_Bits >>= 8;
+				l_BitCount -= 8;
+			}
+		};
+		const int l_Square = p_Size / 4;
+		const int l_Left = (p_Size - l_Square) * l_Frame / std::max(p_Frames - 1, 1);
+		int l_SincePause = 0;
+		l_Code(16); // clear
+		for (int y = 0; y < p_Size; ++y)
+		{
+			for (int x = 0; x < p_Size; ++x)
+			{
+				const bool l_Inside = x >= l_Left && x < l_Left + l_Square && y >= (p_Size - l_Square) / 2 && y < (p_Size + l_Square) / 2;
+				l_Code(l_Inside ? static_cast<uint32_t>(2 + l_Frame % 8) : 1u);
+				if (++l_SincePause == 12)
+				{
+					l_Code(16);
+					l_SincePause = 0;
+				}
+			}
+		}
+		l_Code(17); // end of information
+		if (l_BitCount > 0)
+			l_Stream.push_back(static_cast<uint8_t>(l_Bits & 0xFF));
+		for (size_t l_Pos = 0; l_Pos < l_Stream.size(); l_Pos += 255)
+		{
+			const size_t l_Chunk = std::min<size_t>(255, l_Stream.size() - l_Pos);
+			l_Out.push_back(static_cast<uint8_t>(l_Chunk));
+			l_Out.insert(l_Out.end(), l_Stream.begin() + static_cast<std::ptrdiff_t>(l_Pos), l_Stream.begin() + static_cast<std::ptrdiff_t>(l_Pos + l_Chunk));
+		}
+		l_Out.push_back(0);
+	}
+	l_Out.push_back(0x3B);
+	return l_Out;
+}
 
 std::vector<Vec2> sampleCurve(const int p_Count, const auto& p_Function)
 {
@@ -386,6 +490,88 @@ void App::driveSmokeTest()
 		m_Editor.flyTo(m_Editor.camera().center(), m_Options.smokeZoom);
 		return;
 	case 15:
+	{
+		// Pictures: a still PNG and an animated GIF, inserted like a paste does
+		m_Editor.clearSelection();
+		s_SmokeObjectsBefore = m_Editor.document().size();
+		std::vector<platform::ClipboardPicture> l_Pictures;
+		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = makeTestPng(320, 200), .name = "gradient.png" });
+		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = makeTestGif(96, 6), .name = "mover.gif" });
+		l_Pictures.push_back(platform::ClipboardPicture{ .bytes = { 1, 2, 3 }, .name = "garbage.bin" });
+		importPictures(std::move(l_Pictures), l_C + Vec2{ 330.f * l_S, 90.f * l_S });
+		return;
+	}
+	case 16:
+	{
+		const Document& l_Document = m_Editor.document();
+		s_SmokePictures.clear();
+		for (const ObjectId l_Id : m_Editor.selection().ids())
+			s_SmokePictures.push_back(l_Id);
+		if (l_Document.size() != s_SmokeObjectsBefore + 2 || s_SmokePictures.size() != 2 || l_Document.assets().size() < 2)
+		{
+			spdlog::error("Smoke test (pictures): expected two pictures, found {} new objects", l_Document.size() - s_SmokeObjectsBefore);
+			m_Failed = true;
+			return;
+		}
+		m_Editor.flipSelection(true);
+		// Give the decoder threads time to finish: the frame loop keeps running while pictures load
+		return;
+	}
+	case 17:
+	{
+		if (m_Canvas.images().busy())
+		{
+			--m_SmokeStep; // wait for the decoders
+			return;
+		}
+		bool l_Ok = true;
+		for (const ObjectId l_Id : s_SmokePictures)
+		{
+			const Object* l_Object = m_Editor.document().find(l_Id);
+			const render::ImageInfo l_Info = m_Canvas.images().info(l_Object->image()->asset);
+			if (!l_Info.ready)
+				l_Ok = false;
+		}
+		const render::ImageInfo l_Gif = m_Canvas.images().info(m_Editor.document().find(s_SmokePictures.back())->image()->asset);
+		if (!l_Ok || l_Gif.frames != 6 || l_Gif.durationMs != 1200)
+		{
+			spdlog::error("Smoke test (pictures): decoding went wrong (gif frames {}, {} ms)", l_Gif.frames, l_Gif.durationMs);
+			m_Failed = true;
+		}
+		// Undo the flip, redo it, and undo/redo the insertion itself
+		const size_t l_Size = m_Editor.document().size();
+		m_Editor.undo();
+		m_Editor.undo();
+		m_Editor.redo();
+		m_Editor.redo();
+		if (m_Editor.document().size() != l_Size)
+		{
+			spdlog::error("Smoke test (pictures): undo/redo changed the object count");
+			m_Failed = true;
+		}
+		// Pause the animation on its current frame, then let it play again
+		m_Editor.selection().set(std::vector<ObjectId>{ s_SmokePictures.back() });
+		toggleSelectedPlayback();
+		const bool l_Paused = !m_Editor.document().find(s_SmokePictures.back())->image()->playing;
+		toggleSelectedPlayback();
+		const bool l_Playing = m_Editor.document().find(s_SmokePictures.back())->image()->playing;
+		if (!l_Paused || !l_Playing)
+		{
+			spdlog::error("Smoke test (pictures): pausing and playing did not work");
+			m_Failed = true;
+		}
+		if (!m_Failed)
+			spdlog::info("Smoke test: pictures (png + animated gif), flip, undo/redo and pause OK");
+		// Rotate the still one (live, without history) to look at its edges
+		const ObjectId l_Still = s_SmokePictures.front();
+		m_Editor.document().modify(l_Still, [&](Object& p_Object)
+		{
+			p_Object.transform = Affine2::around(p_Object.transform.translation, Affine2::rotate(0.3)) * p_Object.transform;
+		}, ObjectChange::Transform);
+		m_Editor.selection().set(std::vector<ObjectId>{ s_SmokePictures.front(), s_SmokePictures.back() });
+		return;
+	}
+	case 18:
 	{
 		// Leave a panel open for the screenshot
 		const std::string& l_Ui = m_Options.smokeUi;
