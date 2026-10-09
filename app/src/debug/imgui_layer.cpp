@@ -46,7 +46,7 @@ void ImGuiLayer::init(const gfx::GraphicsContext& p_Context, const platform::Win
 
 	const VkFormat l_ColorFormat = p_Swapchain.format();
 	ImGui_ImplVulkan_InitInfo l_Info{};
-	l_Info.ApiVersion = VK_API_VERSION_1_3;
+	l_Info.ApiVersion = p_Context.info().apiVersion;
 	l_Info.Instance = p_Context.instance();
 	l_Info.PhysicalDevice = p_Context.physicalDevice();
 	l_Info.Device = p_Context.device();

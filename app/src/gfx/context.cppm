@@ -1,8 +1,8 @@
 // Vulkan instance, surface, device, queue and VMA allocator.
 //
-// Baseline is Vulkan 1.3 core and nothing more: only features that 1.3 makes mandatory are required, so any
-// conformant 1.3 driver (discrete, integrated, virtual or software) can run the app. Optional capabilities are
-// detected and recorded in DeviceInfo.
+// Baseline is Vulkan 1.2 core plus dynamic rendering, synchronization2 and demote-to-helper, which are core in 1.3 and
+// otherwise taken from their extensions. Any conformant driver (discrete, integrated, virtual or software) with that can
+// run the app. Optional capabilities are detected and recorded in DeviceInfo.
 module;
 #include <cstdint>
 #include <exception>
@@ -40,6 +40,10 @@ struct DeviceInfo
 
 	// Optional capabilities
 	bool samplerAnisotropy = false;
+	// The device is Vulkan 1.2 and gets these 1.3 features through extensions (apiVersion is then 1.2)
+	bool extDynamicRendering = false;
+	bool extSynchronization2 = false;
+	bool extDemote = false;
 	bool timestamps = false; // the graphics queue supports timestamp queries
 	float timestampPeriodNs = 0.f;
 };
@@ -98,6 +102,7 @@ private:
 	VmaAllocator m_Allocator = VK_NULL_HANDLE;
 	VkQueue m_Queue = VK_NULL_HANDLE;
 	uint32_t m_QueueFamily = 0;
+	uint32_t m_InstanceApi = 0;
 	DeviceInfo m_Info{};
 };
 } // namespace wb::gfx

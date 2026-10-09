@@ -29,7 +29,7 @@ function(wb_compile_shaders p_target p_shaderDir)
 		add_custom_command(
 			OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>/${l_name}.stamp"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${p_target}>/shaders"
-			COMMAND "${WB_SLANGC}" "${l_shader}" -target spirv -profile spirv_1_6 -fvk-use-entrypoint-name
+			COMMAND "${WB_SLANGC}" "${l_shader}" -target spirv -profile spirv_1_5 -fvk-use-entrypoint-name
 				-matrix-layout-column-major -I "${p_shaderDir}/lib" ${l_debugFlags} -o "${l_out}"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>"
 			COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>/${l_name}.stamp"

@@ -22,7 +22,13 @@ namespace wb::gfx
 namespace
 {
 constexpr const char* VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
-constexpr uint32_t REQUIRED_API_VERSION = VK_API_VERSION_1_3;
+// Vulkan 1.3 is used as is. A 1.2 device is accepted when it exposes the 1.3 features that matter (dynamic rendering,
+// synchronization2, demote-to-helper) as extensions; the rest of the baseline is core in 1.2.
+constexpr uint32_t MIN_API_VERSION = VK_API_VERSION_1_2;
+constexpr uint32_t MAX_API_VERSION = VK_API_VERSION_1_3;
+constexpr const char* EXT_DYNAMIC_RENDERING = VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME;
+constexpr const char* EXT_SYNCHRONIZATION2 = VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME;
+constexpr const char* EXT_DEMOTE = VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME;
 
 std::atomic<uint32_t> s_ValidationErrors{ 0 };
 std::atomic<uint32_t> s_ValidationWarnings{ 0 };
@@ -90,35 +96,76 @@ const char* deviceTypeName(const VkPhysicalDeviceType p_Type)
 	}
 }
 
-// Feature structs of everything the app needs; all of these are mandatory in Vulkan 1.3.
+// What a device offers beyond the 1.2 baseline: its effective version, and which of the 1.3 features it exposes as extensions
+struct DeviceSupport
+{
+	uint32_t version = 0;
+	bool dynamicRendering = false;
+	bool synchronization2 = false;
+	bool demote = false;
+
+	[[nodiscard]] bool core13() const { return version >= VK_API_VERSION_1_3; }
+};
+
+// Feature structs of everything the app needs. On 1.3 the 1.3 core struct is chained; on 1.2 the extension structs are.
 struct FeatureChain
 {
 	VkPhysicalDeviceFeatures2 core{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 	VkPhysicalDeviceVulkan12Features v12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 	VkPhysicalDeviceVulkan13Features v13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	VkPhysicalDeviceDynamicRenderingFeatures dynamicRendering{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
+	VkPhysicalDeviceSynchronization2Features synchronization2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
+	VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures demote{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES };
 
-	FeatureChain()
+	explicit FeatureChain(const DeviceSupport& p_Support)
 	{
-		core.pNext = &v12;
-		v12.pNext = &v13;
+		VkBaseOutStructure* l_Tail = reinterpret_cast<VkBaseOutStructure*>(&core);
+		const auto l_Link = [&](auto& p_Struct)
+		{
+			l_Tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&p_Struct);
+			l_Tail = reinterpret_cast<VkBaseOutStructure*>(&p_Struct);
+		};
+		l_Link(v12);
+		if (p_Support.core13())
+		{
+			l_Link(v13);
+			return;
+		}
+		if (p_Support.dynamicRendering)
+			l_Link(dynamicRendering);
+		if (p_Support.synchronization2)
+			l_Link(synchronization2);
+		if (p_Support.demote)
+			l_Link(demote);
 	}
 	FeatureChain(const FeatureChain&) = delete;
 	FeatureChain& operator=(const FeatureChain&) = delete;
 };
 
-// Returns the name of the first missing required feature, or nothing if all are supported
-std::optional<std::string_view> missingRequiredFeature(const FeatureChain& p_Features)
+// Returns the name of the first missing required feature (phrased for the user), or nothing if all are supported
+std::optional<std::string> missingRequiredFeature(const FeatureChain& p_Features, const DeviceSupport& p_Support)
 {
 	const VkPhysicalDeviceVulkan12Features& l_V12 = p_Features.v12;
-	const VkPhysicalDeviceVulkan13Features& l_V13 = p_Features.v13;
-	if (!l_V13.dynamicRendering)
-		return "dynamicRendering";
-	if (!l_V13.synchronization2)
-		return "synchronization2";
-	if (!l_V13.maintenance4)
-		return "maintenance4";
-	if (!l_V13.shaderDemoteToHelperInvocation)
-		return "shaderDemoteToHelperInvocation";
+	if (p_Support.core13())
+	{
+		const VkPhysicalDeviceVulkan13Features& l_V13 = p_Features.v13;
+		if (!l_V13.dynamicRendering)
+			return "dynamicRendering";
+		if (!l_V13.synchronization2)
+			return "synchronization2";
+		if (!l_V13.shaderDemoteToHelperInvocation)
+			return "shaderDemoteToHelperInvocation";
+	}
+	else
+	{
+		const std::string l_Hint = " (a Vulkan 1.2 driver needs the ";
+		if (!p_Support.dynamicRendering || !p_Features.dynamicRendering.dynamicRendering)
+			return "dynamicRendering" + l_Hint + EXT_DYNAMIC_RENDERING + " extension)";
+		if (!p_Support.synchronization2 || !p_Features.synchronization2.synchronization2)
+			return "synchronization2" + l_Hint + EXT_SYNCHRONIZATION2 + " extension)";
+		if (!p_Support.demote || !p_Features.demote.shaderDemoteToHelperInvocation)
+			return "shaderDemoteToHelperInvocation" + l_Hint + EXT_DEMOTE + " extension)";
+	}
 	if (!l_V12.timelineSemaphore)
 		return "timelineSemaphore";
 	if (!l_V12.descriptorIndexing)
@@ -136,11 +183,20 @@ std::optional<std::string_view> missingRequiredFeature(const FeatureChain& p_Fea
 	return std::nullopt;
 }
 
+// WB_VK_API=1.2 pretends the driver is Vulkan 1.2 (to test the extension path on a 1.3 GPU)
+uint32_t versionCap()
+{
+	if (const char* l_Env = SDL_getenv("WB_VK_API"); l_Env != nullptr && std::string_view(l_Env) == "1.2")
+		return VK_API_VERSION_1_2;
+	return MAX_API_VERSION;
+}
+
 struct Candidate
 {
 	VkPhysicalDevice device = VK_NULL_HANDLE;
 	uint32_t queueFamily = 0;
 	int64_t score = 0;
+	DeviceSupport support;
 };
 } // namespace
 
@@ -155,8 +211,9 @@ void GraphicsContext::init(const platform::Window& p_Window)
 		throw UnsupportedGpuError("No Vulkan driver was found.\nPlease install or update your graphics driver.");
 
 	const uint32_t l_LoaderVersion = volkGetInstanceVersion();
-	if (l_LoaderVersion < REQUIRED_API_VERSION)
-		throw UnsupportedGpuError("The installed Vulkan runtime is version " + versionString(l_LoaderVersion) + ", but Vulkan 1.3 is required.\nPlease update your graphics driver.");
+	if (l_LoaderVersion < MIN_API_VERSION)
+		throw UnsupportedGpuError("The installed Vulkan runtime is version " + versionString(l_LoaderVersion) + ", but Vulkan 1.2 or newer is required.\nPlease update your graphics driver.");
+	m_InstanceApi = std::min({ l_LoaderVersion, MAX_API_VERSION, versionCap() });
 
 	createInstance();
 	m_Surface = p_Window.createSurface(m_Instance);
@@ -204,7 +261,7 @@ void GraphicsContext::createInstance()
 		.applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
 		.pEngineName = "Inkwell",
 		.engineVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
-		.apiVersion = REQUIRED_API_VERSION,
+		.apiVersion = m_InstanceApi,
 	};
 
 	const VkDebugUtilsMessengerCreateInfoEXT l_MessengerInfo{
@@ -258,9 +315,11 @@ void GraphicsContext::pickPhysicalDevice()
 
 		if (l_Forced != nullptr && l_Forced[0] != '\0' && l_Name.find(l_Forced) == std::string::npos)
 			continue;
-		if (l_Props.apiVersion < REQUIRED_API_VERSION)
+		DeviceSupport l_Support;
+		l_Support.version = std::min(l_Props.apiVersion, m_InstanceApi);
+		if (l_Support.version < MIN_API_VERSION)
 		{
-			l_Reject("supports Vulkan " + versionString(l_Props.apiVersion) + ", needs 1.3");
+			l_Reject("supports Vulkan " + versionString(l_Props.apiVersion) + ", needs 1.2 or newer. Updating the graphics driver may fix this");
 			continue;
 		}
 
@@ -274,11 +333,14 @@ void GraphicsContext::pickPhysicalDevice()
 			continue;
 		}
 
-		FeatureChain l_Features;
+		l_Support.dynamicRendering = hasExtension(l_Exts, EXT_DYNAMIC_RENDERING);
+		l_Support.synchronization2 = hasExtension(l_Exts, EXT_SYNCHRONIZATION2);
+		l_Support.demote = hasExtension(l_Exts, EXT_DEMOTE);
+		FeatureChain l_Features(l_Support);
 		vkGetPhysicalDeviceFeatures2(l_Device, &l_Features.core);
-		if (const std::optional<std::string_view> l_Missing = missingRequiredFeature(l_Features))
+		if (const std::optional<std::string> l_Missing = missingRequiredFeature(l_Features, l_Support))
 		{
-			l_Reject("missing feature " + std::string(*l_Missing));
+			l_Reject("missing feature " + *l_Missing);
 			continue;
 		}
 
@@ -342,12 +404,12 @@ void GraphicsContext::pickPhysicalDevice()
 
 		spdlog::info("GPU candidate '{}' ({}, Vulkan {}), score {}", l_Name, deviceTypeName(l_Props.deviceType), versionString(l_Props.apiVersion), l_Score);
 		if (!l_Best || l_Score > l_Best->score)
-			l_Best = Candidate{ .device = l_Device, .queueFamily = *l_Family, .score = l_Score };
+			l_Best = Candidate{ .device = l_Device, .queueFamily = *l_Family, .score = l_Score, .support = l_Support };
 	}
 
 	if (!l_Best)
 	{
-		std::string l_Message = "No compatible GPU was found. Inkwell needs a GPU with Vulkan 1.3 support.";
+		std::string l_Message = "No compatible GPU was found. Inkwell needs a GPU with Vulkan 1.2 or newer.\nUpdating the graphics driver usually fixes this.";
 		if (l_Forced != nullptr && l_Forced[0] != '\0')
 			l_Message += "\n(WB_GPU is set to '" + std::string(l_Forced) + "'.)";
 		if (!l_Rejections.empty())
@@ -357,6 +419,9 @@ void GraphicsContext::pickPhysicalDevice()
 
 	m_PhysicalDevice = l_Best->device;
 	m_QueueFamily = l_Best->queueFamily;
+	m_Info.extDynamicRendering = !l_Best->support.core13() && l_Best->support.dynamicRendering;
+	m_Info.extSynchronization2 = !l_Best->support.core13() && l_Best->support.synchronization2;
+	m_Info.extDemote = !l_Best->support.core13() && l_Best->support.demote;
 
 	VkPhysicalDeviceDriverProperties l_Driver{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
 	VkPhysicalDeviceProperties2 l_Props2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &l_Driver };
@@ -377,7 +442,7 @@ void GraphicsContext::pickPhysicalDevice()
 	m_Info.name = l_Props.deviceName;
 	m_Info.driver = std::string(l_Driver.driverName) + " " + l_Driver.driverInfo;
 	m_Info.type = l_Props.deviceType;
-	m_Info.apiVersion = l_Props.apiVersion;
+	m_Info.apiVersion = l_Best->support.version; // what the app can use: the lower of the driver's and the instance's
 	m_Info.vendorId = l_Props.vendorID;
 	m_Info.deviceId = l_Props.deviceID;
 	m_Info.limits = l_Props.limits;
@@ -395,7 +460,13 @@ void GraphicsContext::pickPhysicalDevice()
 
 void GraphicsContext::createDevice()
 {
-	FeatureChain l_Features;
+	DeviceSupport l_Support;
+	l_Support.version = m_Info.apiVersion;
+	l_Support.dynamicRendering = m_Info.extDynamicRendering;
+	l_Support.synchronization2 = m_Info.extSynchronization2;
+	l_Support.demote = m_Info.extDemote;
+
+	FeatureChain l_Features(l_Support);
 	l_Features.core.features.samplerAnisotropy = m_Info.samplerAnisotropy ? VK_TRUE : VK_FALSE;
 	l_Features.v12.timelineSemaphore = VK_TRUE;
 	l_Features.v12.descriptorIndexing = VK_TRUE;
@@ -404,10 +475,25 @@ void GraphicsContext::createDevice()
 	l_Features.v12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
 	l_Features.v12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
 	l_Features.v12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
-	l_Features.v13.dynamicRendering = VK_TRUE;
-	l_Features.v13.synchronization2 = VK_TRUE;
-	l_Features.v13.maintenance4 = VK_TRUE;
-	l_Features.v13.shaderDemoteToHelperInvocation = VK_TRUE; // `discard` in Slang
+
+	std::vector<const char*> l_Extensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+	if (l_Support.core13())
+	{
+		l_Features.v13.dynamicRendering = VK_TRUE;
+		l_Features.v13.synchronization2 = VK_TRUE;
+		l_Features.v13.maintenance4 = VK_TRUE;
+		l_Features.v13.shaderDemoteToHelperInvocation = VK_TRUE; // `discard` in Slang
+	}
+	else
+	{
+		l_Features.dynamicRendering.dynamicRendering = VK_TRUE;
+		l_Features.synchronization2.synchronization2 = VK_TRUE;
+		l_Features.demote.shaderDemoteToHelperInvocation = VK_TRUE;
+		l_Extensions.push_back(EXT_DYNAMIC_RENDERING);
+		l_Extensions.push_back(EXT_SYNCHRONIZATION2);
+		l_Extensions.push_back(EXT_DEMOTE);
+		spdlog::info("Vulkan {} driver: using the dynamic rendering, synchronization2 and demote-to-helper extensions", versionString(l_Support.version));
+	}
 
 	constexpr float l_Priority = 1.f;
 	const VkDeviceQueueCreateInfo l_QueueInfo{
@@ -417,17 +503,25 @@ void GraphicsContext::createDevice()
 		.pQueuePriorities = &l_Priority,
 	};
 
-	const char* const l_Extensions[]{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 	const VkDeviceCreateInfo l_CreateInfo{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &l_Features.core,
 		.queueCreateInfoCount = 1,
 		.pQueueCreateInfos = &l_QueueInfo,
-		.enabledExtensionCount = 1,
-		.ppEnabledExtensionNames = l_Extensions,
+		.enabledExtensionCount = static_cast<uint32_t>(l_Extensions.size()),
+		.ppEnabledExtensionNames = l_Extensions.data(),
 	};
 	WB_VK_CHECK(vkCreateDevice(m_PhysicalDevice, &l_CreateInfo, nullptr, &m_Device));
 	volkLoadDevice(m_Device);
+	if (!l_Support.core13())
+	{
+		// The rest of the code calls the core names; the extension versions have identical signatures
+		vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
+		vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
+		vkQueueSubmit2 = vkQueueSubmit2KHR;
+		vkCmdBeginRendering = vkCmdBeginRenderingKHR;
+		vkCmdEndRendering = vkCmdEndRenderingKHR;
+	}
 	vkGetDeviceQueue(m_Device, m_QueueFamily, 0, &m_Queue);
 	setName(m_Queue, VK_OBJECT_TYPE_QUEUE, "main queue");
 }
@@ -439,7 +533,7 @@ void GraphicsContext::createAllocator()
 		.physicalDevice = m_PhysicalDevice,
 		.device = m_Device,
 		.instance = m_Instance,
-		.vulkanApiVersion = REQUIRED_API_VERSION,
+		.vulkanApiVersion = m_Info.apiVersion,
 	};
 	WB_VK_CHECK(vmaImportVulkanFunctionsFromVolk(&l_ImportInfo, &l_Functions));
 

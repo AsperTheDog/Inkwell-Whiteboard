@@ -16,7 +16,7 @@ Windows and Linux.
 
 ## Running a release
 
-Extract the archive and run `inkwell` / `inkwell.exe`. Needs a Vulkan 1.3 driver. The Linux build needs
+Extract the archive and run `inkwell` / `inkwell.exe`. Needs a Vulkan 1.2 or newer driver (1.2 drivers must expose dynamic rendering, synchronization2 and demote-to-helper as extensions). The Linux build needs
 glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39+).
 
 ## Building
@@ -28,7 +28,7 @@ Dependencies:
 | CMake 3.28+ | |
 | C++23 compiler with modules | MSVC 19.34+ (Visual Studio) on Windows, Clang 17+ and Ninja on Linux |
 | `slangc` | Vulkan SDK, or a Slang release (shaders) |
-| Vulkan 1.3 driver | validation layers optional (used in Debug) |
+| Vulkan 1.2+ driver | validation layers optional (used in Debug) |
 | Linux only | SDL3's usual X11/Wayland development packages |
 | Python 3 / bash / curl | only for the fetch and packaging scripts |
 

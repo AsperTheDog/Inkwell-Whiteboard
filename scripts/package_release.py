@@ -5,7 +5,7 @@
     scripts/package_release.py linux     -> (run inside WSL / on Linux) dist/Inkwell-<version>-linux-x64.tar.gz
 
 Build first: `cmake --build build --config Release` on Windows, `scripts/build_linux.sh release` on Linux.
-Linux needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and later) and Vulkan 1.3 drivers.
+Linux needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and later) and Vulkan 1.2+ drivers.
 Windows also bundles the Visual C++ runtime DLLs, so no redistributable has to be installed.
 """
 import glob
@@ -25,7 +25,7 @@ README = """Inkwell {version}
 
 An infinite-canvas whiteboard with pen, highlighter, shapes, ruler, text, pictures, videos and PDF import.
 
-Run {exe} to start. Nothing has to be installed besides a graphics driver with Vulkan 1.3.
+Run {exe} to start. Nothing has to be installed besides a graphics driver with Vulkan 1.2 or newer.
 
   Ctrl+S / Ctrl+O   save / open a board (.wbrd)
   Ctrl+I            insert a picture, video or PDF
