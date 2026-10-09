@@ -1,6 +1,7 @@
 // Editing operations on a set of objects (what the keyboard shortcuts and the selection bar do). Each one makes a
 // single undo step and returns the objects it created, if any.
 module;
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <vector>
@@ -52,6 +53,29 @@ void editVideos(Document& p_Document, History& p_History, std::span<const Object
 
 // Replaces the data of one text object (one undo step); the object keeps its anchored corner in place
 void editText(Document& p_Document, History& p_History, ObjectId p_Id, const TextData& p_After, const char* p_Name);
+
+// Locks or unlocks the objects (one undo step). Locked objects are skipped by every other edit here, by the eraser
+// and by marquee selection; they can still be clicked to select them, which is how they are unlocked again.
+void lockObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, bool p_Locked);
+
+enum class AlignMode : uint8_t
+{
+	Left,
+	CenterX,
+	Right,
+	Top,
+	CenterY,
+	Bottom,
+	DistributeX, // equal gaps between the objects, the outermost two stay
+	DistributeY,
+};
+
+// Lines the objects up with the box around all of them (or spaces them evenly). Only moves objects (one undo step).
+void alignObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, AlignMode p_Mode);
+
+// Evens out wobbles in the strokes among p_Ids (one undo step); every call smooths a little more. Returns how many
+// strokes changed.
+size_t smoothStrokes(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
 
 // True when the object is rotated, mirrored or stretched unevenly (a reset would change it)
 [[nodiscard]] bool isTilted(const Object& p_Object);

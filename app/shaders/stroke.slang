@@ -15,7 +15,8 @@ struct StrokeInstance
 	float4 color;        // straight alpha
 	uint firstPoint;
 	uint pointCount;
-	uint2 padding;
+	uint stride;         // only every stride-th point is used (level of detail for strokes far smaller than the screen)
+	uint firstSegment;   // segments of the strokes before this one in its draw call
 };
 
 static const uint STROKE_FLAG_LIVE = 1; // points live in the per-frame buffer (stroke being drawn)
@@ -30,6 +31,8 @@ struct PushConstants
 	float2 viewportSize;
 	float minRadius; // strokes thinner than this (pixels) are drawn at this radius with reduced alpha
 	float aaWidth;   // anti-aliasing ramp width in pixels
+	uint firstInstance; // one draw call covers consecutive strokes: instances [firstInstance, firstInstance + instanceCount)
+	uint instanceCount;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -42,6 +45,7 @@ struct ScreenPoint
 
 ScreenPoint loadPoint(StrokeInstance inst, uint index)
 {
+	index = min(index * inst.stride, max(inst.pointCount, 1u) - 1u);
 	float4 p = (inst.flags & STROKE_FLAG_LIVE) != 0 ? gLivePoints[inst.firstPoint + index] : gPoints[inst.firstPoint + index];
 	float2x2 m = float2x2(inst.linear.x, inst.linear.z, inst.linear.y, inst.linear.w); // rows
 	ScreenPoint result;
@@ -53,14 +57,14 @@ ScreenPoint loadPoint(StrokeInstance inst, uint index)
 
 uint segmentCount(StrokeInstance inst)
 {
-	return max(inst.pointCount, 2u) - 1u;
+	return (max(inst.pointCount, 2u) - 2u) / inst.stride + 1u;
 }
 
 // Endpoints of segment s (a single point is a zero-length segment: a dot)
 void loadSegment(StrokeInstance inst, uint s, out ScreenPoint a, out ScreenPoint b)
 {
 	a = loadPoint(inst, s);
-	b = loadPoint(inst, min(s + 1, inst.pointCount - 1));
+	b = loadPoint(inst, s + 1);
 }
 
 float cross2(float2 a, float2 b)
@@ -107,12 +111,30 @@ struct VSOutput
 	nointerpolation uint segment : SEGMENT;
 };
 
-[shader("vertex")]
-VSOutput vsMain(uint vertexId : SV_VulkanVertexID, uint instanceId : SV_VulkanInstanceID)
+// The stroke a segment of the draw call belongs to: the last instance that starts at or before it
+uint findInstance(uint segment)
 {
-	StrokeInstance inst = gInstances[instanceId];
-	uint s = vertexId / 6;
+	uint lo = pc.firstInstance;
+	uint hi = pc.firstInstance + pc.instanceCount - 1;
+	while (lo < hi)
+	{
+		uint mid = (lo + hi + 1) >> 1;
+		if (gInstances[mid].firstSegment <= segment)
+			lo = mid;
+		else
+			hi = mid - 1;
+	}
+	return lo;
+}
+
+[shader("vertex")]
+VSOutput vsMain(uint vertexId : SV_VulkanVertexID)
+{
+	uint segment = vertexId / 6;
 	uint corner = vertexId % 6;
+	uint instanceId = findInstance(segment);
+	StrokeInstance inst = gInstances[instanceId];
+	uint s = segment - inst.firstSegment;
 
 	ScreenPoint a, b;
 	loadSegment(inst, s, a, b);

@@ -12,6 +12,7 @@ module;
 
 module wb.app;
 
+import wb.brush.shapes;
 import wb.brush.stroke_builder;
 import wb.doc.commands;
 import wb.editor;
@@ -20,6 +21,7 @@ import wb.io.settings;
 import wb.math;
 import wb.platform.input;
 import wb.session;
+import wb.tools.laser;
 import wb.tools.tool;
 
 namespace wb
@@ -39,7 +41,7 @@ void App::initPersistence()
 	if (m_Options.smokeTestFrames > 0)
 		return; // the scripted session must not read or write the user's data
 
-	if (char* l_Path = SDL_GetPrefPath("Whiteboard", "Whiteboard"))
+	if (char* l_Path = SDL_GetPrefPath("Inkwell", "Inkwell"))
 	{
 		m_PrefDir = pathFromUtf8(l_Path);
 		SDL_free(l_Path);
@@ -96,6 +98,14 @@ void App::loadSettings()
 	m_Editor.selectState().mode = l_S.getInt("select.mode", 0) == 1 ? tools::SelectMode::Lasso : tools::SelectMode::Box;
 	m_Editor.selectState().space = l_S.getInt("select.space", 1) == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
 
+	tools::BrushState& l_Marker = m_Editor.highlighterBrush();
+	l_Marker.color = Color{ l_S.getFloat("marker.r", l_Marker.color.r), l_S.getFloat("marker.g", l_Marker.color.g), l_S.getFloat("marker.b", l_Marker.color.b), l_Marker.color.a };
+	l_Marker.sizePoints = std::clamp(l_S.getFloat("marker.size", l_Marker.sizePoints), 0.5f, 80.f);
+	const long long l_Shape = l_S.getInt("shape.kind", static_cast<long long>(m_Editor.shapeState().kind));
+	if (l_Shape >= 0 && l_Shape < SHAPE_KIND_COUNT)
+		m_Editor.shapeState().kind = static_cast<ShapeKind>(l_Shape);
+	m_Editor.laser().setTrailSeconds(l_S.getFloat("laser.trailSeconds", m_Editor.laser().trailSeconds()));
+
 	tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_Eraser.sizePoints = std::clamp(l_S.getFloat("eraser.size", l_Eraser.sizePoints), 4.f, 120.f);
 	l_Eraser.mode = l_S.getInt("eraser.mode", static_cast<long long>(l_Eraser.mode)) == 1 ? tools::EraserMode::Stroke : tools::EraserMode::Segment;
@@ -103,6 +113,7 @@ void App::loadSettings()
 	BrushSettings& l_B = m_Editor.brushSettings();
 	l_B.smoothingMinCutoff = l_S.getFloat("feel.minCutoff", l_B.smoothingMinCutoff);
 	l_B.smoothingBeta = l_S.getFloat("feel.beta", l_B.smoothingBeta);
+	l_B.ropePx = std::clamp(l_S.getFloat("feel.rope", l_B.ropePx), 0.f, 200.f);
 	l_B.pressureSmoothing = l_S.getFloat("feel.pressureSmoothing", l_B.pressureSmoothing);
 	l_B.pressureGamma = l_S.getFloat("feel.pressureGamma", l_B.pressureGamma);
 	l_B.minWidthFraction = l_S.getFloat("feel.minWidth", l_B.minWidthFraction);
@@ -139,6 +150,14 @@ void App::saveSettings()
 	l_S.setInt("select.mode", m_Editor.selectState().mode == tools::SelectMode::Lasso ? 1 : 0);
 	l_S.setInt("select.space", m_Editor.selectState().space == tools::TransformSpace::Global ? 0 : 1);
 
+	const tools::BrushState& l_Marker = m_Editor.highlighterBrush();
+	l_S.setFloat("marker.r", l_Marker.color.r);
+	l_S.setFloat("marker.g", l_Marker.color.g);
+	l_S.setFloat("marker.b", l_Marker.color.b);
+	l_S.setFloat("marker.size", l_Marker.sizePoints);
+	l_S.setInt("shape.kind", static_cast<long long>(m_Editor.shapeState().kind));
+	l_S.setFloat("laser.trailSeconds", m_Editor.laser().trailSeconds());
+
 	const tools::EraserState& l_Eraser = m_Editor.eraser();
 	l_S.setFloat("eraser.size", l_Eraser.sizePoints);
 	l_S.setInt("eraser.mode", l_Eraser.mode == tools::EraserMode::Stroke ? 1 : 0);
@@ -146,6 +165,7 @@ void App::saveSettings()
 	const BrushSettings& l_B = m_Editor.brushSettings();
 	l_S.setFloat("feel.minCutoff", l_B.smoothingMinCutoff);
 	l_S.setFloat("feel.beta", l_B.smoothingBeta);
+	l_S.setFloat("feel.rope", l_B.ropePx);
 	l_S.setFloat("feel.pressureSmoothing", l_B.pressureSmoothing);
 	l_S.setFloat("feel.pressureGamma", l_B.pressureGamma);
 	l_S.setFloat("feel.minWidth", l_B.minWidthFraction);
@@ -241,7 +261,7 @@ void App::showOpenDialog()
 {
 	if (m_DialogKind != DialogKind::None)
 		return; // one dialog at a time
-	static const SDL_DialogFileFilter s_Filters[] = { { "Whiteboard boards", "wbrd" } };
+	static const SDL_DialogFileFilter s_Filters[] = { { "Inkwell boards", "wbrd" } };
 	m_DialogKind = DialogKind::Open;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 1, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), false);
 }
@@ -250,7 +270,7 @@ void App::showSaveDialog(const Action p_After)
 {
 	if (m_DialogKind != DialogKind::None)
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Whiteboard boards", "wbrd" } };
+	static const SDL_DialogFileFilter s_Filters[] = { { "Inkwell boards", "wbrd" } };
 	m_DialogKind = DialogKind::Save;
 	m_DialogAfter = p_After;
 
@@ -295,6 +315,14 @@ void App::handleDialogResult()
 	if (l_Paths.empty())
 		return; // cancelled (or the dialog failed): the board stays as it is
 
+	if (l_Kind == DialogKind::ExportPng)
+	{
+		const std::filesystem::path l_Folder = pathFromUtf8(l_Paths.front()).parent_path();
+		if (!l_Folder.empty())
+			m_LastDirectory = pathToUtf8(l_Folder);
+		startExport(pathFromUtf8(l_Paths.front()));
+		return;
+	}
 	if (l_Kind == DialogKind::Fonts)
 	{
 		importFontFiles(l_Paths);
@@ -305,6 +333,11 @@ void App::handleDialogResult()
 		std::vector<platform::ClipboardPicture> l_Pictures;
 		for (const std::string& l_Path : l_Paths)
 		{
+			if (const std::string l_Extension = pathFromUtf8(l_Path).extension().string(); l_Extension == ".pdf" || l_Extension == ".PDF")
+			{
+				startPdfImport(pathFromUtf8(l_Path));
+				continue;
+			}
 			platform::ClipboardPicture l_Picture;
 			const std::filesystem::path l_PicturePath = pathFromUtf8(l_Path);
 			if (const IoResult l_Read = readFile(l_PicturePath, l_Picture.bytes, 512ull << 20); !l_Read.ok)
@@ -351,6 +384,11 @@ bool App::handleFileShortcut(const SDL_KeyboardEvent& p_Event)
 	case SDLK_I:
 		showInsertPictureDialog();
 		return true;
+	case SDLK_E:
+		if (!l_Shift)
+			return false;
+		openExportDialog();
+		return true;
 	case SDLK_V:
 		// A picture copied in another program wins over objects copied inside the app earlier
 		return m_ExternalClipboardNewer && pasteFromSystemClipboard();
@@ -366,7 +404,7 @@ void App::updateTitle()
 	std::string l_Title = m_Session.displayName();
 	if (m_Session.dirty())
 		l_Title += "*";
-	l_Title += " - Whiteboard";
+	l_Title += " - Inkwell";
 	if (l_Title == m_LastTitle)
 		return;
 	m_LastTitle = l_Title;

@@ -1,86 +1,79 @@
-# Whiteboard
+# Inkwell
 
-An infinite-canvas vector whiteboard in the spirit of Microsoft Whiteboard, written in C++23 (named modules) on
-Vulkan 1.3 and SDL3.
+> **Disclaimer:** this project has been heavily AI assisted. I mainly just wanted something free that would replace MS Whiteboard now that it has been shut down. AI has written most of the code under close supervision and guidance, I have tweaked both the AI and the code directly several times to keep things working and clean, but AI has done most of the work. I do not consider this to be a personal project of mine nor something from my portfolio. I published it in case someone found it useful since the app is genuinely good and covers most of what I thought anyone would need from such a tool. Contributions are welcome.
+
+A native infinite-canvas whiteboard in the spirit of Microsoft Whiteboard. C++23 (named modules), Vulkan 1.3, SDL3.
+Windows and Linux.
+
+## Features
+
+- Pen with pressure and tilt (Windows Ink, Wacom, Huion, XP-Pen), highlighter, shapes, ruler, adjustable stroke smoothing
+- Text, pictures, animated GIFs, videos (with sound), PDF import
+- Select, move, scale, rotate, align, group lock, duplicate, z-order
+- Laser pointer with a fading trail
+- Undo/redo, autosave with recovery, save file export/import, PNG export
+- Light and dark themes
+
+## Running a release
+
+Extract the archive and run `inkwell` / `inkwell.exe`. Needs a Vulkan 1.3 driver. The Linux build needs
+glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39+).
 
 ## Building
 
-The build is described in `whiteboard.pyke` and turned into CMake by [Pyke](https://github.com/AsperTheDog/Pyke).
-The generated `CMakeLists.txt` files are committed, so plain CMake works without Pyke.
+Dependencies:
 
-Requirements:
+| Need | Notes |
+|---|---|
+| CMake 3.28+ | |
+| C++23 compiler with modules | MSVC 19.34+ (Visual Studio) on Windows, Clang 17+ and Ninja on Linux |
+| `slangc` | Vulkan SDK, or a Slang release (shaders) |
+| Vulkan 1.3 driver | validation layers optional (used in Debug) |
+| Linux only | SDL3's usual X11/Wayland development packages |
+| Python 3 / bash / curl | only for the fetch and packaging scripts |
 
-- A GPU and driver with **Vulkan 1.3** (any type: discrete, integrated or software such as llvmpipe).
-- CMake 3.28+ and a compiler with C++20 modules support (MSVC 19.34+, Clang 17+).
-- `slangc` (from the Vulkan SDK) to compile shaders.
-- Optional: the Vulkan SDK validation layers (used automatically in debug builds).
-
-### Windows
-
-```powershell
-git submodule update --init
-pyke build            # Release in build/  (pyke build --debug for Debug)
-# or: cmake -S . -B build && cmake --build build --config Debug
-build\app\Debug\whiteboard.exe
-```
-
-### Linux / WSL
+SDL3, volk, Vulkan-Headers, VMA, glm, spdlog and GoogleTest are downloaded by CMake. Dear ImGui and stb are git
+submodules. FFmpeg and PDFium are prebuilt binaries fetched by script (not in git).
 
 ```bash
-git submodule update --init
-scripts/build_linux.sh debug --test     # clang + Ninja into build-linux-debug/
-scripts/build_linux.sh debug --run
+git clone --recurse-submodules <repo>
+cd inkwell
+scripts/fetch_ffmpeg.sh            # win64 or linux64, picked automatically (LGPL shared build)
+scripts/fetch_pdfium.sh
 ```
 
-The script picks up the newest `~/toolchains/LLVM-*` and `~/toolchains/cmake-*` (or `CC`/`CXX` and PATH).
-SDL3 needs the usual X11/Wayland development packages. Validation layers: `sudo apt install vulkan-validationlayers`.
-Shaders need a Linux `slangc`: the build looks in `~/toolchains/slang/bin` (Slang release tarball) and the Vulkan SDK.
+Windows:
 
-### Useful switches
+```powershell
+cmake -S . -B build
+cmake --build build --config Release --target whiteboard
+build\app\Release\inkwell.exe
+```
 
-| Variable / flag | Effect |
-|---|---|
-| `WB_VALIDATION=0/1` | Force Vulkan validation off/on (default: on in Debug builds) |
-| `WB_GPU=<substring>` | Pick the GPU whose name contains the substring |
-| `--smoke-test[=N]` | Run a scripted drawing session for N frames (default 240) and exit; exit code 3 on any validation message |
-| `--screenshot <file.png>` | With `--smoke-test`: save the last frame |
-| `--smoke-zoom=Z` | With `--smoke-test`: zoom of the final view |
+Linux (picks up `~/toolchains/LLVM-*` and `~/toolchains/cmake-*`, or `CC`/`CXX` and PATH):
 
-## Controls
+```bash
+scripts/build_linux.sh release [--test] [--run]    # into build-linux-release/
+```
 
-| Input | Action |
-|---|---|
-| Left mouse / pen tip | Draw |
-| Right or middle drag, pen barrel button drag, Space + drag | Pan |
-| Wheel / touchpad scroll | Pan (Shift: horizontal) |
-| Ctrl + wheel, touchpad pinch | Zoom at the pointer |
-| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / 100% |
-| Home | Fit all content (recenter) |
-| Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) | Undo / redo |
-| F3 | Debug overlay (GPU, frame times, pen diagnostics, brush tuning) |
-| F11 | Fullscreen |
+Tests: `cmake --build build --config Release --target wb_tests`, then `ctest` in `build/`.
+Release archives: `python scripts/package_release.py windows|linux` (output in `dist/`).
 
-**Tablets:** SDL3 reads pens through Windows Ink on Windows. For Wacom, Huion and XP-Pen tablets make sure
-"Windows Ink" is enabled in the tablet driver settings; the F3 overlay shows live pressure and tilt.
+The build is described in `whiteboard.pyke` ([Pyke](https://github.com/AsperTheDog/Pyke)); the generated CMake files
+are committed, so Pyke is not required.
+
+Switches: `WB_VALIDATION=0/1`, `WB_GPU=<name substring>`, `--smoke-test[=N] [--smoke-ui=<mode>]`.
 
 ## Layout
 
 ```
-whiteboard.pyke    build description (source of truth for the CMake files)
-core/              wb_core: platform-independent model (math, document, brush geometry, commands, I/O)
-app/               the application: platform (SDL3), gfx (Vulkan), render, ui, tools, debug overlay
-  shaders/         Slang shaders, compiled to SPIR-V next to the executable
-  assets/          runtime assets copied next to the executable
-tests/             GoogleTest unit tests for wb_core
-libs/              generated wrapper targets for third-party libraries
-vendor/            git submodules (imgui, stb)
-cmake/             CMake helpers (shader compilation)
+core/      platform-independent model: math, document, brush geometry, commands, file I/O
+app/       SDL3 platform, Vulkan renderer, UI, tools, shaders (Slang), assets
+tests/     GoogleTest unit tests
+scripts/   Linux build, FFmpeg/PDFium fetch, release packaging
 ```
 
-## Code conventions
+## Licenses
 
-- Allman braces, tabs, `m_` members, `l_` locals, `p_` parameters, `s_` statics, `PascalCase` types, `camelCase` functions.
-- Each module is a `.cppm` interface plus an optional `.cpp` implementation unit (`module x;`).
-- Third-party and standard headers are `#include`d in the global module fragment (`module;`) of every unit that
-  uses them; they are never re-exported. In particular, code doing glm arithmetic includes `<glm/glm.hpp>` itself.
-- Macros cannot cross module boundaries, so the few that are needed live in small headers (`gfx/vk_check.hpp`).
+Inkwell is MIT licensed ([LICENSE](LICENSE)). Third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) and shipped
+in the `licenses/` folder of each release. FFmpeg is used as the unmodified LGPL build and loaded dynamically.

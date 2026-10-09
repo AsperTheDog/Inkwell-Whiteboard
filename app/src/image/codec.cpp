@@ -90,7 +90,7 @@ std::optional<Decoded> decode(const std::span<const uint8_t> p_Bytes, const Deco
 	const std::optional<ImageInfo> l_Info = probe(p_Bytes);
 	if (!l_Info)
 	{
-		p_Error = "This is not a picture Whiteboard can read.";
+		p_Error = "This is not a picture Inkwell can read.";
 		return std::nullopt;
 	}
 	const int l_Size = static_cast<int>(p_Bytes.size());
@@ -183,7 +183,7 @@ std::optional<Recompressed> recompress(const std::span<const uint8_t> p_Bytes, c
 	const std::optional<ImageInfo> l_Info = probe(p_Bytes);
 	if (!l_Info || l_Info->gif)
 	{
-		p_Error = l_Info ? "Animated pictures cannot be recompressed." : "This is not a picture Whiteboard can read.";
+		p_Error = l_Info ? "Animated pictures cannot be recompressed." : "This is not a picture Inkwell can read.";
 		return std::nullopt;
 	}
 	int l_Width = 0, l_Height = 0, l_Components = 0;

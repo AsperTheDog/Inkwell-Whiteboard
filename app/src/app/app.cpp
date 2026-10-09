@@ -124,6 +124,8 @@ void App::run()
 			if (!pumpEvents(!l_CanRender || !needsRedraw()))
 				break;
 			m_Session.tick(SDL_GetTicksNS());
+			pollExport();
+			pollPdfImport();
 			updateTitle();
 			if (!l_CanRender || m_Window.isMinimized() || m_Window.pixelSize().isZero())
 				continue;
@@ -142,6 +144,8 @@ void App::run()
 
 			if (m_Options.smokeTestFrames > 0)
 				driveSmokeTest();
+			if (m_Options.perfStrokes > 0)
+				drivePerfTest();
 
 			updateCursor();
 			if (!needsRedraw())
@@ -161,7 +165,9 @@ void App::run()
 
 void App::init()
 {
-	m_Window.create("Whiteboard");
+	if (m_Options.perfStrokes > 0)
+		m_PresentPolicy = gfx::PresentPolicy::Immediate;
+	m_Window.create("Inkwell");
 	m_Context.init(m_Window);
 	m_Swapchain.create(m_Context, m_Window.pixelSize(), m_PresentPolicy);
 	m_Frames.init(m_Context);
@@ -172,7 +178,7 @@ void App::init()
 	{
 		text::FontRegistry& l_Fonts = m_Editor.textSystem().fonts();
 		l_Fonts.addBundledDirectory(fontDirectory() / "text");
-		if (char* l_Pref = SDL_GetPrefPath("Whiteboard", "Whiteboard"))
+		if (char* l_Pref = SDL_GetPrefPath("Inkwell", "Inkwell"))
 		{
 			l_Fonts.setUserDirectory(std::filesystem::path(reinterpret_cast<const char8_t*>(l_Pref)) / "fonts");
 			SDL_free(l_Pref);
@@ -460,7 +466,7 @@ void App::updateCursor()
 
 bool App::needsRedraw() const
 {
-	return m_RedrawFrames > 0 || m_SwapchainDirty || m_Options.smokeTestFrames > 0;
+	return m_RedrawFrames > 0 || m_SwapchainDirty || m_Options.smokeTestFrames > 0 || m_Options.perfStrokes > 0;
 }
 
 void App::recreateSwapchain()
@@ -527,6 +533,9 @@ void App::renderFrame()
 
 	const Camera& l_Camera = m_Editor.camera();
 	const std::optional<render::LiveStrokeView> l_Live = m_Editor.liveStroke();
+	const bool l_Exporting = exportReady();
+	if (l_Exporting)
+		recordExport(l_Cmd);
 	{
 		const gfx::DebugLabel l_Label(l_Cmd, "canvas uploads");
 		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, l_Live ? &*l_Live : nullptr, imageClock());
@@ -578,6 +587,8 @@ void App::renderFrame()
 		m_SwapchainDirty = true;
 	if (l_Capture)
 		writeScreenshot(l_Target->extent);
+	if (l_Exporting)
+		finishExport();
 
 	if (m_Canvas.animating() || m_Ui.animating() || m_ThemeBlend != (m_DarkTheme ? 1.f : 0.f))
 		requestRedraw(2); // keep frames coming while something eases
@@ -670,6 +681,7 @@ void App::buildDebugPanel()
 		BrushSettings& l_Settings = m_Editor.brushSettings();
 		ImGui::SliderFloat("Smoothing min cutoff (Hz)", &l_Settings.smoothingMinCutoff, 0.2f, 20.f, "%.2f", ImGuiSliderFlags_Logarithmic);
 		ImGui::SetItemTooltip("Lower = steadier lines when drawing slowly, but more lag");
+		ImGui::SliderFloat("Stabilizer rope (px)", &l_Settings.ropePx, 0.f, 80.f, "%.0f");
 		ImGui::SliderFloat("Smoothing speed beta", &l_Settings.smoothingBeta, 0.f, 0.2f, "%.4f");
 		ImGui::SetItemTooltip("Higher = less lag when drawing fast");
 		ImGui::SliderFloat("Pressure smoothing", &l_Settings.pressureSmoothing, 0.f, 0.9f);

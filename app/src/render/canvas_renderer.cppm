@@ -28,6 +28,24 @@ import wb.render.video_store;
 import wb.render.text_renderer;
 import wb.text.system;
 
+namespace wb::render
+{
+// GPU layout of one stroke draw (must match the Slang shader)
+struct GpuStrokeInstance
+{
+	float linear[4]; // column-major 2x2
+	float translation[2];
+	float radiusScale;
+	uint32_t flags;
+	float color[4];
+	uint32_t firstPoint;
+	uint32_t pointCount;
+	uint32_t stride; // draw every stride-th point: strokes far smaller than the screen need no more
+	uint32_t firstSegment; // segments of the strokes before this one in its draw call
+};
+static_assert(sizeof(GpuStrokeInstance) == 64);
+} // namespace wb::render
+
 export namespace wb::render
 {
 // The stroke currently being drawn (points relative to origin, in world units)
@@ -73,9 +91,17 @@ public:
 	// Inside the rendering scope of the frame target
 	void record(VkCommandBuffer p_Cmd, const Camera& p_Camera, const GridStyle& p_Grid) const;
 
+	// For drawing the board to an image: only these objects are drawn (nullptr: all of them), and strokes still
+	// waiting for their upload are all uploaded by the next prepare() instead of a few per frame
+	void setExportMode(const std::unordered_set<ObjectId>* p_Only, bool p_UploadAll)
+	{
+		m_ExportOnly = p_Only;
+		m_UploadAll = p_UploadAll;
+	}
+
 	[[nodiscard]] const CanvasStats& stats() const { return m_Stats; }
 	// Frames must keep coming: an animated picture is on screen, or pictures are still loading
-	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete || m_Videos.animating(); }
+	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete || m_Videos.animating() || !m_PendingUploads.empty(); }
 	[[nodiscard]] ImageStore& images() { return m_Images; }
 	[[nodiscard]] const ImageStore& images() const { return m_Images; }
 	// The videos drawn in the last frame, back to front
@@ -92,8 +118,10 @@ public:
 private:
 	struct GpuStroke
 	{
+		ObjectId owner = INVALID_OBJECT_ID; // free slot when invalid
 		uint64_t offset = 0; // in points
 		uint32_t count = 0;
+		float spacing = 0.f; // average distance between points (local units), to thin the stroke out when zoomed far away
 	};
 
 	struct PendingFree
@@ -105,10 +133,13 @@ private:
 
 	static constexpr uint32_t NO_IMAGE = UINT32_MAX;
 
+	// Consecutive strokes share one draw call (the vertex shader finds each segment's stroke), so a board full of
+	// strokes costs a handful of calls
 	struct Draw
 	{
-		uint32_t instance = 0;
-		uint32_t vertexCount = 0;
+		uint32_t instance = 0;      // first stroke instance
+		uint32_t instanceCount = 0;
+		uint32_t segments = 0;      // in the whole run
 		uint32_t image = NO_IMAGE; // index into m_ImageDraws for pictures
 		uint32_t text = NO_IMAGE;  // draw index of m_Text for text
 	};
@@ -122,14 +153,21 @@ private:
 
 	void createPipelines(const gfx::GraphicsContext& p_Context, VkFormat p_ColorFormat);
 	void releaseRange(uint64_t p_Offset, uint64_t p_Count);
+	[[nodiscard]] GpuStroke* gpuStrokeOf(const Object& p_Object);
+	void forgetStroke(const Object& p_Object);
 	void processFrees(uint64_t p_CompletedTimeline);
-	void uploadPending(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd);
+	void uploadPending(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd, const Rect& p_Visible);
 	void ensurePoolCapacity(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, VkCommandBuffer p_Cmd, uint64_t p_ExtraPoints);
 	static void ensureCapacity(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::Buffer& p_Buffer, VkDeviceSize p_Bytes, const char* p_Name);
 
 	Document* m_Document = nullptr;
-	std::unordered_map<ObjectId, GpuStroke> m_Strokes;
+	// GPU data of the strokes, found through Object::renderSlot (slot 0 is never used)
+	std::vector<GpuStroke> m_Strokes{ GpuStroke{} };
+	std::vector<uint32_t> m_FreeSlots;
+	uint32_t m_StrokeCount = 0;
 	std::unordered_set<ObjectId> m_PendingUploads;
+	const std::unordered_set<ObjectId>* m_ExportOnly = nullptr;
+	bool m_UploadAll = false;
 	std::vector<PendingFree> m_PendingFrees;
 	uint64_t m_CurrentTimeline = 0; // value the next submitted frame will signal
 
@@ -137,9 +175,10 @@ private:
 	RangeAllocator m_PoolAllocator;
 	uint64_t m_MaxPoolPoints = 0;
 
-	std::array<FrameResources, gfx::FRAMES_IN_FLIGHT> m_Frames{};
+	std::array<FrameResources, gfx::RENDER_SLOTS> m_Frames{};
 	uint32_t m_Slot = 0;
 	std::vector<Draw> m_Draws;
+	std::vector<GpuStrokeInstance> m_Instances; // scratch, rebuilt every frame
 	std::vector<ImageDraw> m_ImageDraws;
 	ImageStore m_Images;
 	VideoStore m_Videos;

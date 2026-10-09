@@ -14,6 +14,8 @@ import wb.doc.history;
 import wb.doc.selection;
 import wb.view.camera;
 import wb.brush.stroke_builder;
+import wb.brush.shapes;
+import wb.view.ruler;
 import wb.platform.input;
 import wb.text.system;
 
@@ -26,9 +28,12 @@ enum class ToolKind : uint8_t
 	Select,
 	Hand, // drags the view around, like the scroll wheel does with a pointer
 	Text, // click to type; the editor runs the text session
+	Highlighter,
+	Shape,
+	Laser,
 };
 
-inline constexpr size_t TOOL_KIND_COUNT = 5;
+inline constexpr size_t TOOL_KIND_COUNT = 8;
 
 enum class CursorKind : uint8_t
 {
@@ -109,6 +114,11 @@ struct SelectState
 	TransformSpace space = TransformSpace::Local;
 };
 
+struct ShapeState
+{
+	ShapeKind kind = ShapeKind::Rectangle;
+};
+
 struct ToolContext
 {
 	Document& document;
@@ -117,6 +127,9 @@ struct ToolContext
 	SelectState& select;
 	const Camera& camera;
 	BrushState& brush;
+	BrushState& highlighter;
+	ShapeState& shape;
+	const Ruler& ruler;
 	EraserState& eraser;
 	BrushSettings& brushSettings;
 	text::TextSystem& text;

@@ -34,6 +34,9 @@ import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
 import wb.tools.select;
+import wb.tools.shape;
+import wb.tools.laser;
+import wb.view.ruler;
 
 namespace wb
 {
@@ -57,7 +60,7 @@ bool isPanButton(const platform::PointerButton p_Button)
 } // namespace
 
 Editor::Editor()
-	: m_Pen(std::make_unique<tools::PenTool>()), m_Eraser(std::make_unique<tools::EraserTool>()), m_Select(std::make_unique<tools::SelectTool>()), m_Hand(std::make_unique<tools::HandTool>()), m_TextTool(std::make_unique<tools::TextTool>())
+	: m_Pen(std::make_unique<tools::PenTool>()), m_Highlighter(std::make_unique<tools::PenTool>(BrushKind::Highlighter)), m_ShapeTool(std::make_unique<tools::ShapeTool>()), m_Laser(std::make_unique<tools::LaserTool>()), m_Eraser(std::make_unique<tools::EraserTool>()), m_Select(std::make_unique<tools::SelectTool>()), m_Hand(std::make_unique<tools::HandTool>()), m_TextTool(std::make_unique<tools::TextTool>())
 {
 	m_ActiveTool = m_Pen.get();
 }
@@ -76,6 +79,9 @@ tools::ToolContext Editor::toolContext()
 		.select = m_SelectState,
 		.camera = m_Camera,
 		.brush = m_Brush,
+		.highlighter = m_HighlighterBrush,
+		.shape = m_ShapeState,
+		.ruler = m_Ruler,
 		.eraser = m_EraserState,
 		.brushSettings = m_BrushSettings,
 		.text = m_TextSystem,
@@ -94,6 +100,12 @@ tools::Tool* Editor::toolFor(const tools::ToolKind p_Kind) const
 		return m_Hand.get();
 	case tools::ToolKind::Text:
 		return m_TextTool.get();
+	case tools::ToolKind::Highlighter:
+		return m_Highlighter.get();
+	case tools::ToolKind::Shape:
+		return m_ShapeTool.get();
+	case tools::ToolKind::Laser:
+		return m_Laser.get();
 	default:
 		return m_Pen.get();
 	}
@@ -166,14 +178,18 @@ std::optional<EraserCursor> Editor::eraserCursor() const
 
 std::optional<EraserCursor> Editor::brushCursor() const
 {
-	if (m_Panning || m_SpaceHeld || toolInEffect() != m_Pen.get())
+	if (m_Panning || m_SpaceHeld)
 		return std::nullopt;
-	return EraserCursor{ .center = m_LastPointer, .radiusPixels = m_Brush.effectivePoints(m_Camera.zoom()) * 0.5f * static_cast<float>(m_Camera.pixelScale()) };
+	const tools::Tool* l_Tool = toolInEffect();
+	if (l_Tool != m_Pen.get() && l_Tool != m_Highlighter.get())
+		return std::nullopt;
+	const tools::BrushState& l_Brush = l_Tool == m_Highlighter.get() ? m_HighlighterBrush : m_Brush;
+	return EraserCursor{ .center = m_LastPointer, .radiusPixels = l_Brush.effectivePoints(m_Camera.zoom()) * 0.5f * static_cast<float>(m_Camera.pixelScale()) };
 }
 
 bool Editor::isBusy() const
 {
-	return m_Panning || m_SwallowPointer || m_TextSession.dragging() || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
+	return m_RulerDrag != RulerDrag::None || m_Panning || m_SwallowPointer || m_TextSession.dragging() || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
 }
 
 tools::CursorKind Editor::cursor() const
@@ -185,7 +201,13 @@ tools::CursorKind Editor::cursor() const
 
 std::optional<render::LiveStrokeView> Editor::liveStroke() const
 {
-	const StrokeBuilder& l_Builder = m_Pen->builder();
+	if (m_ShapeTool->isBusy())
+	{
+		if (m_ShapeTool->preview().empty())
+			return std::nullopt;
+		return render::LiveStrokeView{ .origin = m_ShapeTool->origin(), .color = m_ShapeTool->color(), .committed = m_ShapeTool->preview(), .tail = {} };
+	}
+	const StrokeBuilder& l_Builder = (m_Highlighter->builder().isActive() ? m_Highlighter : m_Pen)->builder();
 	if (!l_Builder.isActive())
 		return std::nullopt;
 	return render::LiveStrokeView{
@@ -255,6 +277,8 @@ void Editor::handlePointer(const platform::PointerEvent& p_Event)
 
 	// Text editing: a press inside the box places the caret; a press anywhere else ends the editing and carries on
 	const DVec2 l_World = m_Camera.screenToWorld(DVec2{ p_Event.position });
+	if (m_Ruler.visible && handleRulerPointer(p_Event, l_World))
+		return;
 	if (m_TextSession.active() && m_TextSession.pointer(p_Event, l_World))
 		return;
 
@@ -293,7 +317,7 @@ void Editor::handlePointer(const platform::PointerEvent& p_Event)
 	if (m_ActiveTool != nullptr)
 	{
 		// Starting to draw leaves the selection behind
-		if (p_Event.phase == platform::PointerPhase::Down && p_Event.button == platform::PointerButton::Primary && m_ActiveTool->kind() == tools::ToolKind::Pen)
+		if (p_Event.phase == platform::PointerPhase::Down && p_Event.button == platform::PointerButton::Primary && (m_ActiveTool->kind() == tools::ToolKind::Pen || m_ActiveTool->kind() == tools::ToolKind::Highlighter))
 			m_Selection.clear();
 		tools::ToolContext l_Context = toolContext();
 		m_ActiveTool->onPointer(p_Event, l_Context);
@@ -402,6 +426,10 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 			if (!p_Event.repeat)
 				duplicateSelection();
 			return l_Handled();
+		case SDLK_L:
+			if (!p_Event.repeat)
+				toggleSelectionLock();
+			return l_Handled();
 		case SDLK_RIGHTBRACKET:
 			if (!p_Event.repeat)
 				reorderSelection(l_Shift ? ZOrderMove::ToFront : ZOrderMove::Forward);
@@ -461,6 +489,19 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 	case SDLK_T:
 		l_Tool = tools::ToolKind::Text;
 		break;
+	case SDLK_M:
+		l_Tool = tools::ToolKind::Highlighter;
+		break;
+	case SDLK_S:
+		l_Tool = tools::ToolKind::Shape;
+		break;
+	case SDLK_L:
+		l_Tool = tools::ToolKind::Laser;
+		break;
+	case SDLK_R:
+		if (!p_Event.repeat)
+			toggleRuler();
+		return true;
 	default:
 		break;
 	}
@@ -540,6 +581,47 @@ void Editor::deleteSelection()
 		return;
 	const std::vector<ObjectId> l_Ids = m_Selection.orderedIds();
 	deleteObjects(m_Document, m_History, l_Ids);
+}
+
+Editor::LockState Editor::selectionLockState() const
+{
+	size_t l_Locked = 0;
+	size_t l_Total = 0;
+	for (const ObjectId l_Id : m_Selection.ids())
+	{
+		if (const Object* l_Object = m_Document.find(l_Id))
+		{
+			++l_Total;
+			l_Locked += l_Object->locked ? 1 : 0;
+		}
+	}
+	return l_Locked == 0 ? LockState::None : (l_Locked == l_Total ? LockState::All : LockState::Some);
+}
+
+void Editor::setSelectionLocked(const bool p_Locked)
+{
+	if (isBusy() || m_Selection.empty())
+		return;
+	lockObjects(m_Document, m_History, m_Selection.orderedIds(), p_Locked);
+}
+
+void Editor::alignSelection(const AlignMode p_Mode)
+{
+	if (isBusy() || m_Selection.size() < 2)
+		return;
+	alignObjects(m_Document, m_History, m_Selection.orderedIds(), p_Mode);
+}
+
+void Editor::smoothSelection()
+{
+	if (isBusy() || m_Selection.empty())
+		return;
+	smoothStrokes(m_Document, m_History, m_Selection.orderedIds());
+}
+
+void Editor::toggleSelectionLock()
+{
+	setSelectionLocked(selectionLockState() == LockState::None);
 }
 
 void Editor::duplicateSelection()
@@ -670,6 +752,48 @@ ObjectId Editor::insertMedia(ImageAsset p_Asset, const DVec2 p_WorldCenter, cons
 	return l_Id;
 }
 
+std::vector<ObjectId> Editor::insertPages(std::vector<PageImage> p_Pages)
+{
+	if (isBusy() || p_Pages.empty())
+		return {};
+	constexpr double PAGE_GAP = 32.0;
+	const double l_ZoomFit = 0.7 * (m_Camera.viewport().x / m_Camera.pixelScale()) / std::max(1.0, static_cast<double>(p_Pages.front().size.x));
+	const double l_Top = m_Camera.screenToWorld(DVec2{ 0.0, 70.0 * m_Camera.pixelScale() }).y;
+	const double l_CenterX = m_Camera.center().x;
+
+	std::vector<std::unique_ptr<Object>> l_Objects;
+	std::vector<ObjectId> l_Ids;
+	double l_Y = l_Top;
+	DVec2 l_FirstCenter{ l_CenterX, l_Top };
+	for (PageImage& l_Page : p_Pages)
+	{
+		if (l_Page.asset.width == 0 || l_Page.asset.height == 0)
+			continue;
+		const AssetId l_Asset = m_Document.addAsset(std::move(l_Page.asset));
+		auto l_Object = std::make_unique<Object>();
+		l_Object->id = m_Document.allocateId();
+		const DVec2 l_Center{ l_CenterX, l_Y + static_cast<double>(l_Page.size.y) * 0.5 };
+		if (l_Objects.empty())
+			l_FirstCenter = l_Center;
+		l_Object->transform = Affine2::translate(l_Center);
+		l_Object->payload = ImageData{ .asset = l_Asset, .size = l_Page.size };
+		l_Object->locked = true;
+		l_Ids.push_back(l_Object->id);
+		l_Objects.push_back(std::move(l_Object));
+		l_Y += static_cast<double>(l_Page.size.y) + PAGE_GAP;
+	}
+	if (l_Objects.empty())
+		return {};
+	m_History.execute(m_Document, std::make_unique<AddObjectsCommand>(std::move(l_Objects), "Insert PDF"));
+	m_Selection.clear();
+	// Put the top of the first page near the top of the window
+	const double l_Zoom = std::clamp(l_ZoomFit, Camera::MIN_ZOOM, 4.0);
+	const double l_Ppu = l_Zoom * m_Camera.pixelScale();
+	const double l_PageTop = l_FirstCenter.y - static_cast<double>(p_Pages.front().size.y) * 0.5;
+	startFlyTo(DVec2{ l_CenterX, l_PageTop + (m_Camera.viewport().y * 0.5 - 70.0 * m_Camera.pixelScale()) / l_Ppu }, l_Zoom);
+	return l_Ids;
+}
+
 void Editor::editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
 {
 	if (isBusy() || m_Selection.empty())
@@ -720,7 +844,7 @@ SplitBoard Editor::saveBoardSplit(const std::string& p_SourcePath, const size_t 
 	l_Meta.viewCenter = m_Camera.center();
 	l_Meta.viewZoom = m_Camera.zoom();
 	l_Meta.sourcePath = p_SourcePath;
-	return serializeBoardSplit(m_Document, l_Meta, p_BigAssetBytes);
+	return serializeBoardSplit(m_Document, l_Meta, p_BigAssetBytes, true);
 }
 
 LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta)
@@ -817,7 +941,75 @@ void Editor::startFlyTo(const DVec2 p_Center, const double p_Zoom)
 	m_TargetZoom = std::clamp(p_Zoom, Camera::MIN_ZOOM, Camera::MAX_ZOOM);
 }
 
+void Editor::toggleRuler()
+{
+	m_Ruler.visible = !m_Ruler.visible;
+	if (!m_Ruler.visible)
+		return;
+	// Lay it across the middle of the view, about as long as half of it
+	const DVec2 l_View = m_Camera.viewport() / m_Camera.pixelsPerUnit();
+	m_Ruler.center = m_Camera.center();
+	m_Ruler.angle = 0.0;
+	m_Ruler.length = std::clamp(std::round(l_View.x * 0.5 / Ruler::CENTIMETRE) * Ruler::CENTIMETRE, Ruler::MIN_LENGTH, Ruler::MAX_LENGTH);
+}
+
+bool Editor::handleRulerPointer(const platform::PointerEvent& p_Event, const DVec2 p_World)
+{
+	constexpr double GRAB_PIXELS = 10.0;
+	const double l_Tolerance = std::min(GRAB_PIXELS * m_Camera.pixelScale() / m_Camera.pixelsPerUnit(), Ruler::THICKNESS * 0.3);
+
+	if (m_RulerDrag != RulerDrag::None)
+	{
+		if (p_Event.phase == platform::PointerPhase::Move)
+		{
+			if (m_RulerDrag == RulerDrag::Move)
+			{
+				m_Ruler.center = p_World - m_RulerGrab;
+			}
+			else
+			{
+				const DVec2 l_Arm = p_World - m_Ruler.center;
+				if (glm::length(l_Arm) > 1e-6)
+				{
+					constexpr double PI_VALUE = 3.14159265358979323846;
+					const double l_Angle = std::atan2(l_Arm.y, l_Arm.x);
+					m_Ruler.angle = (p_Event.modifiers & platform::Modifier::Shift) != 0 ? snapRulerAngle(l_Angle, PI_VALUE / 12.0, PI_VALUE) : snapRulerAngle(l_Angle, PI_VALUE / 4.0, 0.025);
+				}
+			}
+		}
+		else if (p_Event.phase == platform::PointerPhase::Up || p_Event.phase == platform::PointerPhase::Cancel)
+		{
+			m_RulerDrag = RulerDrag::None;
+		}
+		return true;
+	}
+
+	if (p_Event.phase != platform::PointerPhase::Down || p_Event.button != platform::PointerButton::Primary)
+		return false;
+	if (m_ActiveTool != nullptr && m_ActiveTool->isBusy())
+		return false;
+	if (glm::length(p_World - m_Ruler.knobCenter()) <= Ruler::knobRadius() + l_Tolerance * 0.5)
+	{
+		m_RulerDrag = RulerDrag::Turn;
+		return true;
+	}
+	if (m_Ruler.inBody(p_World) && !m_Ruler.snapEdge(p_World, l_Tolerance))
+	{
+		m_RulerDrag = RulerDrag::Move;
+		m_RulerGrab = p_World - m_Ruler.center;
+		return true;
+	}
+	return false;
+}
+
 bool Editor::update(const double p_DeltaSeconds)
+{
+	const bool l_Camera = updateCamera(p_DeltaSeconds);
+	const bool l_Laser = m_Laser->update(SDL_GetTicksNS());
+	return l_Camera || l_Laser;
+}
+
+bool Editor::updateCamera(const double p_DeltaSeconds)
 {
 	// Frame-rate independent exponential approach
 	const double l_T = 1.0 - std::exp(-ANIMATION_RATE * std::clamp(p_DeltaSeconds, 0.0, 0.1));
@@ -927,7 +1119,7 @@ bool Editor::beginEditingSelectedText()
 		return false;
 	const ObjectId l_Id = m_Selection.ids().front();
 	const Object* l_Object = m_Document.find(l_Id);
-	if (l_Object == nullptr || l_Object->text() == nullptr)
+	if (l_Object == nullptr || l_Object->text() == nullptr || l_Object->locked)
 		return false;
 	m_TextSession.beginExisting(l_Id, std::nullopt);
 	return m_TextSession.active();

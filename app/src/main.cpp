@@ -99,6 +99,8 @@ wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 			l_Options.smokeDark = true;
 		else if (l_Arg.starts_with("--smoke-ui="))
 			l_Options.smokeUi = p_Argv[i] + 11;
+		else if (l_Arg.starts_with("--perf-test="))
+			l_Options.perfStrokes = static_cast<uint32_t>(std::strtoul(p_Argv[i] + 12, nullptr, 10));
 		else if (l_Arg == "--screenshot" && i + 1 < p_Argc)
 			l_Options.screenshotPath = p_Argv[++i];
 	}
@@ -126,7 +128,7 @@ int main(int p_Argc, char** p_Argv)
 #endif
 
 	SDL_SetMainReady();
-	SDL_SetAppMetadata("Whiteboard", "0.1.0", "dev.whiteboard.app");
+	SDL_SetAppMetadata("Inkwell", "0.1.0", "dev.inkwell.app");
 	wb::platform::InputRouter::configureHints();
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
@@ -154,15 +156,15 @@ int main(int p_Argc, char** p_Argv)
 	{
 		spdlog::critical("{}", l_Error.what());
 		if (l_Options.smokeTestFrames == 0)
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Whiteboard - unsupported GPU", l_Error.what(), nullptr);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Inkwell - unsupported GPU", l_Error.what(), nullptr);
 		l_ExitCode = 2;
 	}
 	catch (const std::exception& l_Error)
 	{
 		spdlog::critical("Fatal error: {}", l_Error.what());
-		const std::string l_Message = std::string("Whiteboard hit a fatal error and has to close.\n\n") + l_Error.what();
+		const std::string l_Message = std::string("Inkwell hit a fatal error and has to close.\n\n") + l_Error.what();
 		if (l_Options.smokeTestFrames == 0)
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Whiteboard", l_Message.c_str(), nullptr);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Inkwell", l_Message.c_str(), nullptr);
 		l_ExitCode = 1;
 	}
 

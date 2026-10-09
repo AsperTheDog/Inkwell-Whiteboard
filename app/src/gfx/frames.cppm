@@ -24,6 +24,10 @@ import wb.gfx.swapchain;
 export namespace wb::gfx
 {
 inline constexpr uint32_t FRAMES_IN_FLIGHT = 2;
+// Renderers keep one set of per-frame resources for every frame in flight, plus one for drawing the board to an
+// image (export) in the middle of a frame without disturbing what the frame itself draws
+inline constexpr uint32_t EXPORT_SLOT = FRAMES_IN_FLIGHT;
+inline constexpr uint32_t RENDER_SLOTS = FRAMES_IN_FLIGHT + 1;
 
 struct FrameTarget
 {

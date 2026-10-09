@@ -122,7 +122,7 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 	}
 	else if (l_Rejected > 0)
 	{
-		showToast("That is not a picture or video Whiteboard can read");
+		showToast("That is not a picture or video Inkwell can read");
 	}
 	requestRedraw();
 }
@@ -164,7 +164,7 @@ void App::showInsertPictureDialog()
 {
 	if (m_DialogKind != DialogKind::None || m_Editor.isBusy())
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures and videos", "png;jpg;jpeg;gif;bmp;tga;psd;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
+	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures, videos and PDFs", "png;jpg;jpeg;gif;bmp;tga;psd;pdf;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
 	m_DialogKind = DialogKind::Pictures;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
 }
@@ -186,6 +186,12 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 	if (const std::string l_Extension = l_Path.extension().string(); l_Extension == ".ttf" || l_Extension == ".otf" || l_Extension == ".ttc" || l_Extension == ".TTF" || l_Extension == ".OTF")
 	{
 		importFontFiles({ std::string(p_Event.data) });
+		return;
+	}
+
+	if (const std::string l_Extension = l_Path.extension().string(); l_Extension == ".pdf" || l_Extension == ".PDF")
+	{
+		startPdfImport(l_Path);
 		return;
 	}
 

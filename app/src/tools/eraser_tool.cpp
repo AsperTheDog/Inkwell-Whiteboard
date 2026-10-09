@@ -2,6 +2,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 #include <glm/glm.hpp>
@@ -83,9 +84,14 @@ void EraserTool::eraseAlong(const DVec2 p_From, const DVec2 p_To, ToolContext& p
 	std::vector<Hit> l_Hits;
 
 	// Collect first: replacing objects invalidates the iteration
-	for (const std::unique_ptr<Object>& l_Object : p_Context.document.objects())
+	const std::span<const Rect> l_Bounds = p_Context.document.boundsList();
+	const std::span<const std::unique_ptr<Object>> l_Objects = p_Context.document.objects();
+	for (size_t l_Index = 0; l_Index < l_Objects.size(); ++l_Index)
 	{
-		if (l_Object->stroke() == nullptr || !l_Object->worldBounds().intersects(l_Area))
+		if (!l_Bounds[l_Index].intersects(l_Area))
+			continue;
+		const std::unique_ptr<Object>& l_Object = l_Objects[l_Index];
+		if (l_Object->stroke() == nullptr || l_Object->locked)
 			continue;
 		if (p_Context.eraser.mode == EraserMode::Stroke)
 		{

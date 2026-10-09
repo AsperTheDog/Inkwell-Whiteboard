@@ -15,3 +15,10 @@ compile_commands.json
 
 # Prebuilt FFmpeg (see scripts/fetch_ffmpeg.sh)
 /vendor/ffmpeg/
+
+# Prebuilt PDFium (see scripts/fetch_pdfium.sh)
+/vendor/pdfium/
+
+# Release archives (scripts/package_release.py)
+/dist/
+*.log

@@ -59,6 +59,12 @@ ui::Icon toolIcon(const tools::ToolKind p_Kind)
 		return ui::Icon::Hand;
 	case tools::ToolKind::Text:
 		return ui::Icon::Type;
+	case tools::ToolKind::Highlighter:
+		return ui::Icon::Highlighter;
+	case tools::ToolKind::Shape:
+		return ui::Icon::Shapes;
+	case tools::ToolKind::Laser:
+		return ui::Icon::Laser;
 	}
 	return ui::Icon::None;
 }
@@ -122,8 +128,10 @@ void App::closePopup(const char* p_Why)
 	if (m_Popup == Popup::None)
 		return;
 	spdlog::debug("Popup {} closed: {}", static_cast<int>(m_Popup), p_Why);
-	if (m_Popup == Popup::Pen && m_PickerOpen)
+	if ((m_Popup == Popup::Pen || m_Popup == Popup::Shape) && m_PickerOpen)
 		pushRecentColor(m_Editor.brush().color);
+	else if (m_Popup == Popup::Highlighter && m_PickerOpen)
+		pushRecentColor(m_Editor.highlighterBrush().color);
 	m_Popup = Popup::None;
 	m_PickerOpen = false;
 	requestRedraw();
@@ -167,6 +175,12 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 	{
 		if (!p_Event.repeat && (l_Escape || l_Enter))
 			m_MessageOpen = false;
+		return true;
+	}
+	if (m_ShowExport)
+	{
+		if (!p_Event.repeat && l_Escape)
+			m_ShowExport = false;
 		return true;
 	}
 	if (m_PromptOpen)
@@ -229,6 +243,9 @@ void App::buildCanvasOverlays()
 	const float l_Scale = m_Ui.scale();
 	const Color l_Accent = l_Theme.accent;
 
+	buildRulerOverlay();
+	buildLaserOverlay();
+
 	const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
 	if (l_Overlay.marquee)
 		l_Draw.rectBorder(Rect2{ l_Overlay.marqueeMin, l_Overlay.marqueeMax }, 2.f * l_Scale, ui::withAlpha(l_Accent, 0.1f), l_Accent, 1.5f * l_Scale);
@@ -240,6 +257,14 @@ void App::buildCanvasOverlays()
 		for (const auto& [l_Min, l_Max] : l_Overlay.objectBoxes)
 			l_Draw.outline(Rect2{ l_Min, l_Max }, 1.5f * l_Scale, ui::withAlpha(l_Accent, 0.5f), 1.f * l_Scale);
 		l_Draw.polyline(l_Overlay.corners, 1.5f * l_Scale, l_Accent, true);
+		if (l_Overlay.locked)
+		{
+			const float l_Badge = 11.f * l_Scale;
+			const Vec2 l_Center = (l_Overlay.corners[0] + l_Overlay.corners[1]) * 0.5f - Vec2{ 0.f, l_Badge * 1.7f };
+			l_Draw.circle(l_Center, l_Badge, l_Theme.handleFill);
+			l_Draw.ring(l_Center, l_Badge, l_Accent, 1.5f * l_Scale);
+			l_Draw.icon(ui::Icon::Lock, l_Center, m_Ui.fontPx(13.f), l_Accent);
+		}
 
 		if (l_Overlay.interactive)
 		{
@@ -360,9 +385,12 @@ void App::buildToolbar()
 	const float l_Pad = m_Ui.px(6.f);
 	const float l_Chip = m_Ui.px(30.f);
 	const float l_Separator = m_Ui.px(17.f);
-	constexpr std::array<tools::ToolKind, 5> ORDER{ tools::ToolKind::Select, tools::ToolKind::Pen, tools::ToolKind::Eraser, tools::ToolKind::Text, tools::ToolKind::Hand };
+	// Groups, each told apart by a divider: pick and move, ink, text and pictures, aids, undo
+	constexpr float BUTTONS = 12.f;
+	constexpr float GAPS = 7.f;     // between neighbours inside a group
+	constexpr float DIVIDERS = 5.f; // including the one after the device chip
 
-	const float l_Width = l_Pad * 2.f + l_Chip + l_Separator + 6.f * l_Button + 5.f * l_Gap + l_Separator + 2.f * l_Button + l_Gap;
+	const float l_Width = l_Pad * 2.f + l_Chip + BUTTONS * l_Button + GAPS * l_Gap + DIVIDERS * l_Separator;
 	const float l_Height = l_Button + l_Pad * 2.f;
 	const Rect2 l_Bar = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, l_Viewport.y - l_Margin - l_Height }, Vec2{ l_Width, l_Height });
 	m_ToolbarRect = l_Bar;
@@ -393,19 +421,32 @@ void App::buildToolbar()
 	l_Divider();
 
 	const tools::ToolKind l_Selected = m_Editor.selectedTool();
-	// Indexed by tool kind: pen, eraser, select, hand, text
-	static const char* const TIPS[] = { "Pen (P). Click again for colours and size", "Eraser (E). Click again for options", "Select (V). Click again for box or lasso", "Hand (H). Drag to move the board", "Text (T). Click again for font, size and colour" };
-	static const char* const SIMPLE_TIPS[] = { "Pen (P)", "Eraser (E)", "Select (V)", "Hand (H). Drag to move the board", "Text (T). Click the board and type" };
-	for (const tools::ToolKind l_Kind : ORDER)
+	// Indexed by tool kind: pen, eraser, select, hand, text, highlighter, shapes, laser
+	static const char* const TIPS[] = { "Pen (P). Click again for colours and size", "Eraser (E). Click again for options", "Select (V). Click again for box or lasso", "Hand (H). Drag to move the board", "Text (T). Click again for font, size and colour", "Highlighter (M). Click again for colour and size", "Shapes (S). Click again to pick a shape", "Laser pointer (L). Click again to set the trail length" };
+	static const char* const SIMPLE_TIPS[] = { "Pen (P)", "Eraser (E)", "Select (V)", "Hand (H). Drag to move the board", "Text (T). Click the board and type", "Highlighter (M)", "Shapes (S). Drag on the board", "Laser pointer (L). Hold and move" };
+	const auto l_ToolButton = [&](const tools::ToolKind p_Kind)
 	{
 		const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button });
-		m_ToolRects[static_cast<size_t>(l_Kind)] = l_Rect;
-		const bool l_IsSelected = l_Selected == l_Kind;
+		m_ToolRects[static_cast<size_t>(p_Kind)] = l_Rect;
+		const bool l_IsSelected = l_Selected == p_Kind;
 		const Color l_PenColor = m_Editor.brush().color;
-		const char* l_Tip = l_IsSelected ? TIPS[static_cast<size_t>(l_Kind)] : SIMPLE_TIPS[static_cast<size_t>(l_Kind)];
-		if (m_Ui.iconButton(std::string("toolbar.tool") + std::to_string(static_cast<int>(l_Kind)), l_Rect, toolIcon(l_Kind), l_IsSelected, true, l_Tip, l_Kind == tools::ToolKind::Pen ? &l_PenColor : nullptr))
+		const Color l_MarkerColor = m_Editor.highlighterBrush().color;
+		const Color* l_Badge = p_Kind == tools::ToolKind::Pen ? &l_PenColor : (p_Kind == tools::ToolKind::Highlighter ? &l_MarkerColor : nullptr);
+		const char* l_Tip = l_IsSelected ? TIPS[static_cast<size_t>(p_Kind)] : SIMPLE_TIPS[static_cast<size_t>(p_Kind)];
+		if (m_Ui.iconButton(std::string("toolbar.tool") + std::to_string(static_cast<int>(p_Kind)), l_Rect, toolIcon(p_Kind), l_IsSelected, true, l_Tip, l_Badge))
 		{
-			const Popup l_Wanted = l_Kind == tools::ToolKind::Pen ? Popup::Pen : (l_Kind == tools::ToolKind::Eraser ? Popup::Eraser : (l_Kind == tools::ToolKind::Select ? Popup::Select : (l_Kind == tools::ToolKind::Text ? Popup::Text : Popup::None)));
+			Popup l_Wanted = Popup::None;
+			switch (p_Kind)
+			{
+			case tools::ToolKind::Pen: l_Wanted = Popup::Pen; break;
+			case tools::ToolKind::Eraser: l_Wanted = Popup::Eraser; break;
+			case tools::ToolKind::Select: l_Wanted = Popup::Select; break;
+			case tools::ToolKind::Text: l_Wanted = Popup::Text; break;
+			case tools::ToolKind::Highlighter: l_Wanted = Popup::Highlighter; break;
+			case tools::ToolKind::Shape: l_Wanted = Popup::Shape; break;
+			case tools::ToolKind::Laser: l_Wanted = Popup::Laser; break;
+			default: break;
+			}
 			if (l_IsSelected && l_Wanted == Popup::Text)
 			{
 				openTextPopup(true);
@@ -416,20 +457,46 @@ void App::buildToolbar()
 			}
 			else
 			{
-				m_Editor.setTool(l_Kind);
+				m_Editor.setTool(p_Kind);
 				closePopup("another tool picked");
 			}
 		}
-		l_X += l_Button + l_Gap;
-	}
-	if (m_Ui.iconButton("toolbar.picture", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Image, false, !m_Editor.isBusy(), "Insert a picture (Ctrl+I). You can also paste or drop pictures"))
+		l_X += l_Button;
+	};
+	const auto l_Space = [&] { l_X += l_Gap; };
+
+	l_ToolButton(tools::ToolKind::Select);
+	l_Space();
+	l_ToolButton(tools::ToolKind::Hand);
+	l_Divider();
+
+	l_ToolButton(tools::ToolKind::Pen);
+	l_Space();
+	l_ToolButton(tools::ToolKind::Highlighter);
+	l_Space();
+	l_ToolButton(tools::ToolKind::Shape);
+	l_Space();
+	l_ToolButton(tools::ToolKind::Eraser);
+	l_Divider();
+
+	l_ToolButton(tools::ToolKind::Text);
+	l_Space();
+	if (m_Ui.iconButton("toolbar.picture", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Image, false, !m_Editor.isBusy(), "Insert a picture or PDF (Ctrl+I). You can also paste or drop them"))
 		showInsertPictureDialog();
 	l_X += l_Button;
 	l_Divider();
 
+	if (m_Ui.iconButton("toolbar.ruler", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Ruler, m_Editor.rulerVisible(), true, "Ruler (R). Draw along its edge for straight lines"))
+		m_Editor.toggleRuler();
+	l_X += l_Button;
+	l_Space();
+	l_ToolButton(tools::ToolKind::Laser);
+	l_Divider();
+
 	if (m_Ui.iconButton("toolbar.undo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Undo, false, m_Editor.history().canUndo() && !m_Editor.isBusy(), "Undo (Ctrl+Z)"))
 		m_Editor.undo();
-	l_X += l_Button + l_Gap;
+	l_X += l_Button;
+	l_Space();
 	if (m_Ui.iconButton("toolbar.redo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Redo, false, m_Editor.history().canRedo() && !m_Editor.isBusy(), "Redo (Ctrl+Y)"))
 		m_Editor.redo();
 }

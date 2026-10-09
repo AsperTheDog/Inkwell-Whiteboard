@@ -126,7 +126,7 @@ struct Input
 		av_dict_free(&l_Options);
 		if (l_Result < 0)
 		{
-			p_Error = "This is not a video file Whiteboard can read.";
+			p_Error = "This is not a video file Inkwell can read.";
 			return false; // avformat_open_input freed (and nulled) the context
 		}
 		if (avformat_find_stream_info(format, nullptr) < 0)
@@ -860,7 +860,7 @@ std::unique_ptr<Player> Player::open(Blob p_Data, const Options& p_Options, std:
 	const AVStream* l_Stream = l_Format->streams[l_Impl.videoIndex];
 	if (!openDecoder(l_Stream, true, l_Impl.videoCodec))
 	{
-		p_Error = "Whiteboard cannot decode this kind of video.";
+		p_Error = "Inkwell cannot decode this kind of video.";
 		return nullptr;
 	}
 	discardOtherStreams(l_Format, l_Impl.videoIndex);

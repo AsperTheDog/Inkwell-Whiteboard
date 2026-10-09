@@ -58,7 +58,7 @@ void Settings::load(const std::filesystem::path& p_Path)
 
 IoResult Settings::save(const std::filesystem::path& p_Path) const
 {
-	std::string l_Text = "# Whiteboard settings\n";
+	std::string l_Text = "# Inkwell settings\n";
 	for (const auto& [l_Key, l_Value] : m_Values)
 		l_Text += l_Key + "=" + l_Value + "\n";
 	return writeFileAtomic(p_Path, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(l_Text.data()), l_Text.size()));

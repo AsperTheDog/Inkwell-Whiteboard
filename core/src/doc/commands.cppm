@@ -204,6 +204,44 @@ private:
 	std::string m_Name;
 };
 
+// Replaces the points of strokes (smoothing)
+class SetStrokePointsCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		std::vector<StrokePoint> before;
+		std::vector<StrokePoint> after;
+	};
+
+	SetStrokePointsCommand(std::vector<Entry> p_Entries, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
+// Locks or unlocks objects
+class SetLockedCommand final : public Command
+{
+public:
+	SetLockedCommand(std::vector<ObjectId> p_Ids, bool p_Locked, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+
+private:
+	std::vector<ObjectId> m_Ids;
+	bool m_Locked = false;
+	std::string m_Name;
+};
+
 // Recolours strokes and text (the alpha channel of each is kept)
 class SetStrokeColorCommand final : public Command
 {

@@ -91,7 +91,7 @@ void TextSession::beginExisting(const ObjectId p_Id, const std::optional<DVec2> 
 	end();
 	const Object* l_Object = m_Document.find(p_Id);
 	const TextData* l_Text = l_Object != nullptr ? l_Object->text() : nullptr;
-	if (l_Text == nullptr)
+	if (l_Text == nullptr || l_Object->locked)
 		return;
 	m_Id = p_Id;
 	m_Data = *l_Text;

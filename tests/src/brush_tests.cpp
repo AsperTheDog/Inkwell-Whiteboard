@@ -184,3 +184,31 @@ TEST(RangeAllocator, GrowMergesWithTail)
 	EXPECT_EQ(*l_B, 6u);
 	EXPECT_EQ(l_Alloc.used(), 20u);
 }
+
+TEST(StrokeBuilder, StabilizerRopeIronsOutWobblesAndStillReachesTheEnd)
+{
+	const auto l_Draw = [](const float p_Rope)
+	{
+		wb::BrushSettings l_Settings;
+		l_Settings.ropePx = p_Rope;
+		wb::StrokeBuilder l_Builder;
+		l_Builder.begin(input(100.f, 500.f, 0), false, 4.f, {}, makeCamera(), l_Settings);
+		for (int i = 1; i <= 120; ++i)
+			l_Builder.add(input(100.f + static_cast<float>(i) * 5.f, 500.f + (i % 2 == 0 ? 6.f : -6.f), static_cast<uint64_t>(i) * 4));
+		const wb::StrokeInput l_Last = input(700.f, 500.f, 500);
+		return l_Builder.finish(&l_Last);
+	};
+	const wb::StrokeData l_Plain = l_Draw(0.f);
+	const wb::StrokeData l_Roped = l_Draw(40.f);
+	// Away from the ends the wobble nearly vanishes with the rope
+	const auto l_Wobble = [](const wb::StrokeData& p_Stroke)
+	{
+		float l_Max = 0.f;
+		for (size_t i = p_Stroke.points.size() / 4; i < p_Stroke.points.size() * 3 / 4; ++i)
+			l_Max = std::max(l_Max, std::abs(p_Stroke.points[i].position.y - p_Stroke.points[p_Stroke.points.size() / 2].position.y));
+		return l_Max;
+	};
+	EXPECT_LT(l_Wobble(l_Roped), l_Wobble(l_Plain) * 0.5f);
+	// The stroke still ends at the pen-up position (the first point is the origin)
+	EXPECT_NEAR(l_Roped.points.back().position.x, 600.f, 1.f);
+}

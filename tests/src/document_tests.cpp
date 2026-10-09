@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 #include <gtest/gtest.h>
@@ -171,4 +173,58 @@ TEST(History, CapacityDropsOldest)
 	EXPECT_TRUE(l_History.undo(l_Doc));
 	EXPECT_FALSE(l_History.undo(l_Doc));
 	EXPECT_EQ(l_Doc.size(), 2u);
+}
+
+namespace
+{
+void expectBoundsMatch(const wb::Document& p_Document)
+{
+	const std::span<const wb::Rect> l_Bounds = p_Document.boundsList();
+	ASSERT_EQ(l_Bounds.size(), p_Document.size());
+	for (size_t i = 0; i < l_Bounds.size(); ++i)
+	{
+		EXPECT_EQ(l_Bounds[i].min, p_Document.objects()[i]->worldBounds().min) << "slot " << i;
+		EXPECT_EQ(l_Bounds[i].max, p_Document.objects()[i]->worldBounds().max) << "slot " << i;
+	}
+}
+} // namespace
+
+TEST(Document, BoundsListStaysInStepWithTheObjects)
+{
+	wb::Document l_Doc;
+	expectBoundsMatch(l_Doc);
+	std::vector<wb::ObjectId> l_Ids;
+	for (int i = 0; i < 10; ++i)
+	{
+		auto l_Object = makeStroke(l_Doc, static_cast<float>(i) * 100.f);
+		l_Ids.push_back(l_Object->id);
+		l_Doc.insert(std::move(l_Object), i % 3 == 0 ? 0 : SIZE_MAX);
+		expectBoundsMatch(l_Doc);
+	}
+
+	// A few moved objects are patched, many are rebuilt
+	l_Doc.modify(l_Ids[4], [](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate({ 500.0, 500.0 }); });
+	expectBoundsMatch(l_Doc);
+	for (int round = 0; round < 3; ++round)
+	{
+		for (const wb::ObjectId l_Id : l_Ids)
+			l_Doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate({ static_cast<double>(round) * 7.0, static_cast<double>(l_Id) }); });
+		for (int k = 0; k < 6; ++k)
+			l_Doc.modify(l_Ids[static_cast<size_t>(k)], [&](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate({ 1.0, static_cast<double>(k) }); });
+		expectBoundsMatch(l_Doc);
+	}
+
+	// Edit, then remove before anything reads the list
+	l_Doc.modify(l_Ids[2], [](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate({ 9.0, 9.0 }); });
+	(void)l_Doc.take(l_Ids[2]);
+	expectBoundsMatch(l_Doc);
+
+	l_Doc.moveTo(l_Ids[0], 5);
+	expectBoundsMatch(l_Doc);
+	std::vector<wb::ObjectId> l_Reversed = order(l_Doc);
+	std::ranges::reverse(l_Reversed);
+	l_Doc.setOrder(l_Reversed);
+	expectBoundsMatch(l_Doc);
+	l_Doc.clear();
+	expectBoundsMatch(l_Doc);
 }

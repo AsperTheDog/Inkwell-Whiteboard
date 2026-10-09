@@ -431,3 +431,106 @@ TEST(Document, SetOrderValidates)
 	l_Doc.setOrder(std::array<wb::ObjectId, 2>{ l_A, l_B });
 	EXPECT_EQ(order(l_Doc), (std::vector<wb::ObjectId>{ l_C, l_A, l_B }));
 }
+
+// ---------------------------------------------------------------------------------------------- locking
+
+TEST(Lock, LockedObjectsAreSkippedByEdits)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	const std::array<wb::ObjectId, 2> l_Both{ l_A, l_B };
+	const std::array<wb::ObjectId, 1> l_OnlyA{ l_A };
+
+	wb::lockObjects(l_Doc, l_History, l_OnlyA, true);
+	EXPECT_TRUE(l_Doc.find(l_A)->locked);
+	EXPECT_FALSE(l_Doc.find(l_B)->locked);
+
+	wb::transformObjects(l_Doc, l_History, l_Both, wb::Affine2::translate({ 5.0, 0.0 }), "Move", false);
+	expectNear(l_Doc.find(l_A)->transform.translation, { 0.0, 0.0 });
+	expectNear(l_Doc.find(l_B)->transform.translation, { 105.0, 0.0 });
+
+	wb::recolorObjects(l_Doc, l_History, l_Both, wb::Color{ 1.f, 0.f, 0.f, 1.f });
+	EXPECT_NE(l_Doc.find(l_A)->stroke()->style.color.r, 1.f);
+	EXPECT_EQ(l_Doc.find(l_B)->stroke()->style.color.r, 1.f);
+
+	wb::deleteObjects(l_Doc, l_History, l_Both);
+	EXPECT_NE(l_Doc.find(l_A), nullptr);
+	EXPECT_EQ(l_Doc.find(l_B), nullptr);
+
+	// Locking is an undo step of its own
+	l_History.undo(l_Doc);
+	l_History.undo(l_Doc);
+	l_History.undo(l_Doc);
+	l_History.undo(l_Doc);
+	EXPECT_FALSE(l_Doc.find(l_A)->locked);
+	l_History.redo(l_Doc);
+	EXPECT_TRUE(l_Doc.find(l_A)->locked);
+
+	wb::lockObjects(l_Doc, l_History, l_OnlyA, false);
+	wb::transformObjects(l_Doc, l_History, l_OnlyA, wb::Affine2::translate({ 1.0, 0.0 }), "Move", false);
+	expectNear(l_Doc.find(l_A)->transform.translation, { 1.0, 0.0 });
+}
+
+TEST(Lock, CopiesAreNotLocked)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const std::array<wb::ObjectId, 1> l_Ids{ l_A };
+	wb::lockObjects(l_Doc, l_History, l_Ids, true);
+	const std::vector<wb::ObjectId> l_Copies = wb::duplicateObjects(l_Doc, l_History, l_Ids, { 10.0, 10.0 });
+	ASSERT_EQ(l_Copies.size(), 1u);
+	EXPECT_FALSE(l_Doc.find(l_Copies[0])->locked);
+	EXPECT_TRUE(l_Doc.find(l_A)->locked);
+}
+
+// ---------------------------------------------------------------------------------------------- alignment
+
+TEST(Align, EdgesCentresAndSpacing)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 }, 10.f, 1.f);   // x from -1 to 11
+	const wb::ObjectId l_B = addStroke(l_Doc, { 50.0, 30.0 }, 10.f, 1.f);  // x from 49 to 61
+	const wb::ObjectId l_C = addStroke(l_Doc, { 200.0, -20.0 }, 10.f, 1.f); // x from 199 to 211
+	const std::array<wb::ObjectId, 3> l_Ids{ l_A, l_B, l_C };
+
+	wb::alignObjects(l_Doc, l_History, l_Ids, wb::AlignMode::Left);
+	for (const wb::ObjectId l_Id : l_Ids)
+		EXPECT_NEAR(wb::tightWorldBounds(*l_Doc.find(l_Id)).min.x, -1.0, 1e-9);
+	EXPECT_NEAR(l_Doc.find(l_B)->transform.translation.y, 30.0, 1e-9); // only x moved
+
+	l_History.undo(l_Doc);
+	EXPECT_NEAR(l_Doc.find(l_C)->transform.translation.x, 200.0, 1e-9);
+
+	wb::alignObjects(l_Doc, l_History, l_Ids, wb::AlignMode::Bottom);
+	for (const wb::ObjectId l_Id : l_Ids)
+		EXPECT_NEAR(wb::tightWorldBounds(*l_Doc.find(l_Id)).max.y, 31.0, 1e-9);
+	l_History.undo(l_Doc);
+
+	// The outer two stay, the middle one lands halfway between them: gaps of 94 on both sides
+	wb::alignObjects(l_Doc, l_History, l_Ids, wb::AlignMode::DistributeX);
+	const wb::Rect l_BoundsA = wb::tightWorldBounds(*l_Doc.find(l_A));
+	const wb::Rect l_BoundsB = wb::tightWorldBounds(*l_Doc.find(l_B));
+	const wb::Rect l_BoundsC = wb::tightWorldBounds(*l_Doc.find(l_C));
+	EXPECT_NEAR(l_BoundsA.min.x, -1.0, 1e-9);
+	EXPECT_NEAR(l_BoundsC.max.x, 211.0, 1e-9);
+	EXPECT_NEAR(l_BoundsB.min.x - l_BoundsA.max.x, l_BoundsC.min.x - l_BoundsB.max.x, 1e-9);
+}
+
+TEST(Align, LockedObjectsStayPut)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 40.0 });
+	const std::array<wb::ObjectId, 2> l_Ids{ l_A, l_B };
+	const std::array<wb::ObjectId, 1> l_OnlyA{ l_A };
+	wb::lockObjects(l_Doc, l_History, l_OnlyA, true);
+
+	wb::alignObjects(l_Doc, l_History, l_Ids, wb::AlignMode::CenterY);
+	EXPECT_NEAR(l_Doc.find(l_A)->transform.translation.y, 0.0, 1e-9);
+	EXPECT_NEAR(l_Doc.find(l_B)->transform.translation.y, 20.0, 1e-9);
+}

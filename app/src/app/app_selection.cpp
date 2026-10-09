@@ -41,7 +41,7 @@ void App::buildSelectionBar()
 {
 	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen() || m_Editor.textEditing())
 	{
-		if (m_Popup == Popup::SelectionColor)
+		if (m_Popup == Popup::SelectionColor || m_Popup == Popup::Align)
 			closePopup("selection bar hidden");
 		m_SelectionBarRect = ui::Rect2{};
 		return;
@@ -84,8 +84,11 @@ void App::buildSelectionBar()
 	const std::string l_Count = std::to_string(m_Editor.selection().size());
 	const float l_CountWidth = m_Ui.font().measure(l_Count, l_CountPx) + m_Ui.px(22.f);
 
-	// duplicate, delete, front, back, flip horizontally, flip vertically, then the extras
-	size_t l_Buttons = 6;
+	// duplicate, delete, front, back, flip horizontally, flip vertically, lock, then the extras
+	size_t l_Buttons = 7;
+	const bool l_CanAlign = m_Editor.selection().size() >= 2;
+	l_Buttons += l_CanAlign ? 1 : 0;
+	l_Buttons += l_HasStrokes ? 1 : 0; // smoothing
 	l_Buttons += l_Animated > 0 ? 1 : 0;
 	l_Buttons += l_Pictures > 0 ? 1 : 0;
 	l_Buttons += l_HasText ? 1 : 0;
@@ -125,23 +128,41 @@ void App::buildSelectionBar()
 	};
 	if (m_Ui.iconButton("selbar.duplicate", l_Next(), ui::Icon::Duplicate, false, true, "Duplicate (Ctrl+D)"))
 		m_Editor.duplicateSelection();
-	if (m_Ui.iconButton("selbar.delete", l_Next(), ui::Icon::Trash, false, true, "Delete (Del)"))
+	const Editor::LockState l_Lock = m_Editor.selectionLockState();
+	const bool l_Editable = l_Lock != Editor::LockState::All; // a locked selection can only be unlocked (or copied)
+	if (m_Ui.iconButton("selbar.delete", l_Next(), ui::Icon::Trash, false, l_Editable, "Delete (Del)"))
 		m_Editor.deleteSelection();
 	if (!m_Editor.hasSelection())
 		return; // deleted: the rest of the bar is gone
-	if (m_Ui.iconButton("selbar.front", l_Next(), ui::Icon::BringToFront, false, true, "Bring to front (Ctrl+Shift+])"))
+	if (m_Ui.iconButton("selbar.front", l_Next(), ui::Icon::BringToFront, false, l_Editable, "Bring to front (Ctrl+Shift+])"))
 		m_Editor.reorderSelection(ZOrderMove::ToFront);
-	if (m_Ui.iconButton("selbar.back", l_Next(), ui::Icon::SendToBack, false, true, "Send to back (Ctrl+Shift+[)"))
+	if (m_Ui.iconButton("selbar.back", l_Next(), ui::Icon::SendToBack, false, l_Editable, "Send to back (Ctrl+Shift+[)"))
 		m_Editor.reorderSelection(ZOrderMove::ToBack);
-	if (m_Ui.iconButton("selbar.fliph", l_Next(), ui::Icon::FlipH, false, true, "Flip horizontally"))
+	if (m_Ui.iconButton("selbar.fliph", l_Next(), ui::Icon::FlipH, false, l_Editable, "Flip horizontally"))
 		m_Editor.flipSelection(true);
-	if (m_Ui.iconButton("selbar.flipv", l_Next(), ui::Icon::FlipV, false, true, "Flip vertically"))
+	if (m_Ui.iconButton("selbar.flipv", l_Next(), ui::Icon::FlipV, false, l_Editable, "Flip vertically"))
 		m_Editor.flipSelection(false);
+	if (m_Ui.iconButton("selbar.lock", l_Next(), l_Lock == Editor::LockState::None ? ui::Icon::Lock : ui::Icon::Unlock, l_Lock != Editor::LockState::None, true, l_Lock == Editor::LockState::None ? "Lock: nothing can move or erase it (Ctrl+L)" : "Unlock (Ctrl+L)"))
+		m_Editor.toggleSelectionLock();
 	if (l_Animated > 0)
 	{
 		const bool l_Playing = l_AnimatedPlaying == l_Animated;
 		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Playing ? "Pause the animation" : "Play the animation"))
 			toggleSelectedPlayback();
+	}
+	if (l_HasStrokes)
+	{
+		if (m_Ui.iconButton("selbar.smooth", l_Next(), ui::Icon::Spline, false, l_Editable, "Smooth the strokes. Click again for more"))
+			m_Editor.smoothSelection();
+	}
+	if (l_CanAlign)
+	{
+		if (m_Ui.iconButton("selbar.align", l_Next(), ui::Icon::AlignObjects, m_Popup == Popup::Align, l_Editable, "Align and space out the selection"))
+			togglePopup(Popup::Align);
+	}
+	else if (m_Popup == Popup::Align)
+	{
+		closePopup("fewer than two objects selected");
 	}
 	if (l_SpaceToggle)
 	{

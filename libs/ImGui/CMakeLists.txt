@@ -6,7 +6,6 @@ target_link_libraries(ImGui PUBLIC VulkanDeps)
 
 target_sources(ImGui PRIVATE
     "${PROJECT_SOURCE_DIR}/vendor/imgui/imgui.cpp"
-    "${PROJECT_SOURCE_DIR}/vendor/imgui/imgui_demo.cpp"
     "${PROJECT_SOURCE_DIR}/vendor/imgui/imgui_draw.cpp"
     "${PROJECT_SOURCE_DIR}/vendor/imgui/imgui_tables.cpp"
     "${PROJECT_SOURCE_DIR}/vendor/imgui/imgui_widgets.cpp"

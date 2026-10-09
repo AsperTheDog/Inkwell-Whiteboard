@@ -160,7 +160,22 @@ void StrokeBuilder::pushSample(const StrokeInput& p_Input, const bool p_Filter)
 		l_Dt = static_cast<double>(p_Input.timestampNs - m_LastTimestampNs) * 1e-9;
 	m_LastTimestampNs = std::max(m_LastTimestampNs, p_Input.timestampNs);
 
-	const Vec2 l_Position = p_Filter ? m_PositionFilter.filter(p_Input.screen, l_Dt) : p_Input.screen;
+	Vec2 l_Position = p_Filter ? m_PositionFilter.filter(p_Input.screen, l_Dt) : p_Input.screen;
+	if (m_Settings.ropePx > 0.f)
+	{
+		if (m_Samples.empty())
+		{
+			m_Rope = l_Position;
+		}
+		else
+		{
+			const Vec2 l_Pull = l_Position - m_Rope;
+			const float l_Length = glm::length(l_Pull);
+			if (l_Length > m_Settings.ropePx)
+				m_Rope += l_Pull / l_Length * (l_Length - m_Settings.ropePx);
+		}
+		l_Position = m_Rope;
+	}
 
 	float l_Pressure = 1.f;
 	if (m_HasPressure)

@@ -4,10 +4,12 @@ module;
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <future>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 #include <SDL3/SDL.h>
@@ -16,15 +18,18 @@ module;
 export module wb.app;
 
 import wb.debug.imgui_layer;
+import wb.doc.object;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.context;
 import wb.gfx.frames;
+import wb.gfx.image;
 import wb.gfx.swapchain;
 import wb.io.settings;
 import wb.math;
 import wb.platform.clipboard;
 import wb.platform.input;
+import wb.platform.pdf;
 import wb.platform.window;
 import wb.render.canvas_renderer;
 import wb.render.image_store;
@@ -58,6 +63,8 @@ struct AppOptions
 	// Smoke scenario: dark theme, and a panel to leave open in the final frame (pen, eraser, select, picker, menu, shortcuts, dialog)
 	bool smokeDark = false;
 	std::string smokeUi;
+	// > 0: performance run: this many random strokes, a camera that pans and zooms for a few hundred frames, then a timing report
+	uint32_t perfStrokes = 0;
 };
 
 class App
@@ -86,6 +93,7 @@ private:
 		Save,
 		Pictures,
 		Fonts,
+		ExportPng,
 	};
 	// The floating panel that is open, if any
 	enum class Popup : uint8_t
@@ -97,6 +105,10 @@ private:
 		Menu,
 		SelectionColor,
 		Text,
+		Align,
+		Highlighter,
+		Shape,
+		Laser,
 	};
 
 	void init();
@@ -118,12 +130,15 @@ private:
 
 	// The user interface (app_ui.cpp, app_popovers.cpp, app_menu.cpp, app_selection.cpp)
 	void buildCanvasOverlays();
+	void buildRulerOverlay();
+	void buildLaserOverlay();
 	void buildTopBar();
 	void buildToolbar();
 	void buildZoomPill();
 	void buildPopover();
 	void buildPenPopover(ui::Rect2 p_Anchor);
 	void buildEraserPopover(ui::Rect2 p_Anchor);
+	void buildLaserPopover(ui::Rect2 p_Anchor);
 	void buildSelectPopover(ui::Rect2 p_Anchor);
 	void buildSelectionBar();
 	// Videos (app_video.cpp)
@@ -153,7 +168,7 @@ private:
 	void closePopup(const char* p_Why = "");
 	void togglePopup(Popup p_Popup);
 	void pushRecentColor(Color p_Color);
-	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen; }
+	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen || m_ShowExport; }
 	// Keyboard input that belongs to dialogs and popups; returns true when it was used
 	bool handleUiKey(const SDL_KeyboardEvent& p_Event);
 	// Colour grid shared by the pen popover and the selection bar. Returns true when a swatch was clicked.
@@ -180,8 +195,49 @@ private:
 	bool handleFileShortcut(const SDL_KeyboardEvent& p_Event);
 	static void SDLCALL dialogCallback(void* p_User, const char* const* p_Files, int p_Filter);
 
+	// Export as PNG (app_export.cpp)
+	struct ExportOptions
+	{
+		bool selectionOnly = false;
+		int scale = 1; // index into 1x..4x
+		bool transparent = false;
+	};
+	struct ExportPlan
+	{
+		bool valid = false;
+		Rect region{};
+		double scale = 1.0;
+		VkExtent2D extent{};
+		bool reduced = false; // the size was lowered to stay within the limits
+	};
+	struct ExportJob
+	{
+		std::filesystem::path path;
+		ExportPlan plan;
+		bool transparent = false;
+		Color background{};
+		bool onlySelected = false;
+		std::unordered_set<ObjectId> only;
+		uint32_t waited = 0;
+		bool recorded = false;
+	};
+	void openExportDialog();
+	void buildExportDialog();
+	void showExportSaveDialog();
+	void startExport(const std::filesystem::path& p_Path);
+	[[nodiscard]] ExportPlan exportPlan() const;
+	[[nodiscard]] bool exportReady();
+	void recordExport(VkCommandBuffer p_Cmd);
+	void finishExport();
+	void pollExport();
+
+	// PDF import (app_pdf.cpp)
+	void startPdfImport(const std::filesystem::path& p_Path);
+	void pollPdfImport();
+
 	// Scripted input for --smoke-test (smoke_test.cpp)
 	void driveSmokeTest();
+	void drivePerfTest();
 	void queueStroke(platform::PointerDevice p_Device, const tools::BrushState& p_Brush, const std::vector<Vec2>& p_Points, const std::vector<float>& p_Pressures);
 	void captureScreenshot(VkCommandBuffer p_Cmd, VkImage p_Image, VkExtent2D p_Extent);
 	void writeScreenshot(VkExtent2D p_Extent);
@@ -233,9 +289,21 @@ private:
 	FrameStats m_Stats{};
 
 	gfx::Buffer m_ScreenshotBuffer;
+	std::future<platform::PdfImport> m_PdfJob;
+	std::string m_PdfName;
+	bool m_ShowExport = false;
+	ExportOptions m_ExportOptions;
+	std::optional<ExportJob> m_ExportJob;
+	std::future<std::string> m_ExportWrite; // encoding and writing the file; yields an error text, empty when it worked
+	std::string m_ExportWriteName;
+	gfx::Image m_ExportImage;
+	gfx::Buffer m_ExportBuffer;
 	std::deque<std::variant<platform::PointerEvent, tools::BrushState>> m_SmokeQueue;
 	uint64_t m_SmokeTimeNs = 0;
 	uint32_t m_SmokeStep = 0;
+	std::vector<double> m_PerfCpuMs;
+	std::vector<double> m_PerfGpuMs;
+	uint32_t m_PerfFrame = 0;
 
 	// User interface
 	ui::FontAtlas m_FontAtlas;

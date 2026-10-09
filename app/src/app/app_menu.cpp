@@ -126,7 +126,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 4> ROW_COUNTS{ 5, 13, 11, 1 };
+	static constexpr std::array<int, 4> ROW_COUNTS{ 6, 13, 12, 1 };
 	static constexpr std::array<const char*, 4> TITLES{ "Board", "Edit", "View", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -194,6 +194,11 @@ void App::buildMenu()
 				requestSave(true, Action::None);
 				l_Close = true;
 			}
+			if (l_Row(ui::Icon::Export, "Export as PNG...", "Ctrl+Shift+E", l_Idle))
+			{
+				openExportDialog();
+				l_Close = true;
+			}
 			if (l_Row(ui::Icon::Close, "Exit", "Alt+F4"))
 			{
 				requestAction(Action::Quit);
@@ -205,7 +210,7 @@ void App::buildMenu()
 				m_Editor.undo();
 			if (l_Row(ui::Icon::Redo, "Redo", "Ctrl+Y", m_Editor.history().canRedo() && l_Idle))
 				m_Editor.redo();
-			if (l_Row(ui::Icon::Image, "Insert picture...", "Ctrl+I", l_Idle))
+			if (l_Row(ui::Icon::Image, "Insert picture or PDF...", "Ctrl+I", l_Idle))
 			{
 				showInsertPictureDialog();
 				l_Close = true;
@@ -269,6 +274,8 @@ void App::buildMenu()
 			}
 			if (l_Row(ui::Icon::Grid, "Grid", "", true, m_ShowGrid))
 				m_ShowGrid = !m_ShowGrid;
+			if (l_Row(ui::Icon::Ruler, "Ruler", "R", true, m_Editor.rulerVisible()))
+				m_Editor.toggleRuler();
 			if (l_Row(ui::Icon::Moon, "Dark theme", "", true, m_DarkTheme))
 				m_DarkTheme = !m_DarkTheme;
 			if (l_Row(ui::Icon::Play, "Play animations", "", true, m_PlayAnimations))
@@ -328,8 +335,11 @@ const std::vector<ShortcutSection>& leftSections()
 {
 	static const std::vector<ShortcutSection> s_Sections{
 		{ "Tools", {
-			{ "P  E  V  T  H", "Pen, eraser, select, text, hand" },
-			{ "Alt + P/E/V/T/H", "Borrow a tool while held" },
+			{ "P  M  S  E", "Pen, highlighter, shapes, eraser" },
+			{ "V  T  H  L", "Select, text, hand, laser pointer" },
+			{ "Alt + a tool key", "Borrow that tool while held" },
+			{ "R", "Show or hide the ruler" },
+			{ "Shape tool: Shift / Alt", "Equal sides / from the centre" },
 			{ "Pen eraser end", "Erases, whatever the tool" },
 		} },
 		{ "Navigation", {
@@ -365,6 +375,8 @@ const std::vector<ShortcutSection>& rightSections()
 			{ "Ctrl + A", "Select all" },
 			{ "Ctrl + C / X / V", "Copy / cut / paste" },
 			{ "Ctrl + D", "Duplicate" },
+			{ "Ctrl + L", "Lock or unlock the selection" },
+			{ "Ctrl + Shift + E", "Export as PNG" },
 			{ "Ctrl + I", "Insert a picture" },
 			{ "Delete", "Delete the selection" },
 			{ "Arrows (+ Shift)", "Nudge by 1 (10) points" },
@@ -568,8 +580,14 @@ void App::buildDialogs()
 	if (m_MessageOpen)
 	{
 		static constexpr std::array<DialogButton, 1> BUTTONS{ DialogButton{ "OK", ui::ButtonStyle::Primary } };
-		if (dialogCard(m_Ui, "dialog.message", "Whiteboard", m_Message, BUTTONS) == 0)
+		if (dialogCard(m_Ui, "dialog.message", "Inkwell", m_Message, BUTTONS) == 0)
 			m_MessageOpen = false;
+		return;
+	}
+
+	if (m_ShowExport)
+	{
+		buildExportDialog();
 		return;
 	}
 
@@ -605,7 +623,7 @@ void App::buildDialogs()
 	{
 		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "Discard", ui::ButtonStyle::Secondary }, DialogButton{ "Recover", ui::ButtonStyle::Primary } };
 		const std::string l_Name = m_Recovery->sourcePath.empty() ? std::string("an untitled board") : "\"" + pathToUtf8(pathFromUtf8(m_Recovery->sourcePath).filename()) + "\"";
-		const std::string l_Body = "Whiteboard closed before " + l_Name + " was saved.\n" + std::to_string(m_Recovery->objectCount) + " objects, last autosaved " + describeAge(m_Recovery->ageSeconds) + ".";
+		const std::string l_Body = "Inkwell closed before " + l_Name + " was saved.\n" + std::to_string(m_Recovery->objectCount) + " objects, last autosaved " + describeAge(m_Recovery->ageSeconds) + ".";
 		switch (dialogCard(m_Ui, "dialog.recovery", "Recover unsaved work", l_Body, BUTTONS))
 		{
 		case 0:

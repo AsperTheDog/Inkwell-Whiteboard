@@ -200,9 +200,9 @@ void GraphicsContext::createInstance()
 
 	const VkApplicationInfo l_AppInfo{
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "Whiteboard",
+		.pApplicationName = "Inkwell",
 		.applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
-		.pEngineName = "Whiteboard",
+		.pEngineName = "Inkwell",
 		.engineVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
 		.apiVersion = REQUIRED_API_VERSION,
 	};
@@ -347,7 +347,7 @@ void GraphicsContext::pickPhysicalDevice()
 
 	if (!l_Best)
 	{
-		std::string l_Message = "No compatible GPU was found. Whiteboard needs a GPU with Vulkan 1.3 support.";
+		std::string l_Message = "No compatible GPU was found. Inkwell needs a GPU with Vulkan 1.3 support.";
 		if (l_Forced != nullptr && l_Forced[0] != '\0')
 			l_Message += "\n(WB_GPU is set to '" + std::string(l_Forced) + "'.)";
 		if (!l_Rejections.empty())

@@ -52,6 +52,11 @@ struct BrushSettings
 	float pressureSensitivity = 1.f; // 0 = constant width, 1 = full pressure response
 	bool simulatePressureForMouse = false; // velocity-based thinning for devices without pressure
 
+	// Stabilizer rope: the line is pulled along behind the pointer by a rope this long (screen pixels), which irons out
+	// almost any wobble at the price of the line trailing the pointer. 0 = off. The stroke still ends where the
+	// pointer was lifted.
+	float ropePx = 0.f;
+
 	// Geometry
 	float resampleSpacingPx = 1.5f;  // spacing of interpolated points
 	float minSampleDistancePx = 0.6f; // closer samples are merged
@@ -115,6 +120,7 @@ private:
 	float m_SmoothedPressure = 1.f;
 	uint64_t m_LastTimestampNs = 0;
 	Vec2 m_LastRawScreen{ 0.f };
+	Vec2 m_Rope{ 0.f }; // where the end of the stabilizer rope is
 
 	std::vector<Sample> m_Samples;  // filtered samples
 	size_t m_CommittedSegments = 0; // segments samples[i]->samples[i+1] already in m_Committed

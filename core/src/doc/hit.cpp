@@ -211,10 +211,15 @@ bool touchesPolygon(const Object& p_Object, const std::span<const DVec2> p_Polyg
 std::vector<ObjectId> objectsInPolygon(const Document& p_Document, const std::span<const DVec2> p_Polygon)
 {
 	std::vector<ObjectId> l_Result;
-	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	if (p_Polygon.size() < 3)
+		return l_Result;
+	const Rect l_Area = polygonBounds(p_Polygon);
+	const std::span<const Rect> l_Bounds = p_Document.boundsList();
+	const std::span<const std::unique_ptr<Object>> l_Objects = p_Document.objects();
+	for (size_t i = 0; i < l_Objects.size(); ++i)
 	{
-		if (touchesPolygon(*l_Object, p_Polygon))
-			l_Result.push_back(l_Object->id);
+		if (l_Bounds[i].intersects(l_Area) && touchesPolygon(*l_Objects[i], p_Polygon))
+			l_Result.push_back(l_Objects[i]->id);
 	}
 	return l_Result;
 }

@@ -136,3 +136,18 @@ TEST(Video, BigFilesAreWrittenFromTheDocumentWithoutCopying)
 	wb::Document l_Damaged;
 	EXPECT_FALSE(wb::deserializeBoard(l_Bytes, l_Damaged, l_Meta).ok);
 }
+
+TEST(Video, DeferredChecksumsMatchTheImmediateOnes)
+{
+	wb::Document l_Doc;
+	addVideo(l_Doc, addFile(l_Doc, 5), { 0.0, 0.0 });
+	addVideo(l_Doc, addFile(l_Doc, 9), { 300.0, 0.0 });
+
+	const wb::SplitBoard l_Now = wb::serializeBoardSplit(l_Doc, {}, 100000);
+	wb::SplitBoard l_Later = wb::serializeBoardSplit(l_Doc, {}, 100000, true);
+	EXPECT_FALSE(l_Later.pendingChecksums.empty());
+	EXPECT_NE(l_Later.head, l_Now.head); // the checksums are still zero
+	wb::finishChecksums(l_Later);
+	EXPECT_TRUE(l_Later.pendingChecksums.empty());
+	EXPECT_EQ(l_Later.head, l_Now.head);
+}

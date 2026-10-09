@@ -13,6 +13,7 @@ module;
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -45,6 +46,7 @@ constexpr uint32_t TAG_VIEW = tag("VIEW");
 constexpr uint32_t TAG_OBJS = tag("OBJS");
 constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_FONT = tag("FONT");
+constexpr uint32_t TAG_LOCK = tag("LOCK"); // ids of the locked objects
 constexpr uint32_t TAG_ABIG = tag("ABIG"); // one big asset, written by a background save
 constexpr uint32_t TAG_END = tag("END ");
 
@@ -150,10 +152,18 @@ public:
 	{
 		const size_t l_PayloadStart = m_ChunkStart + CHUNK_HEADER_BYTES;
 		const uint64_t l_Length = m_Bytes.size() - l_PayloadStart;
-		const uint32_t l_Crc = crc32(std::span<const uint8_t>(m_Bytes).subspan(l_PayloadStart));
 		std::memcpy(m_Bytes.data() + m_ChunkStart + 4, &l_Length, sizeof(l_Length));
+		if (m_DeferredCrcs != nullptr)
+		{
+			m_DeferredCrcs->push_back(m_ChunkStart);
+			return;
+		}
+		const uint32_t l_Crc = crc32(std::span<const uint8_t>(m_Bytes).subspan(l_PayloadStart));
 		std::memcpy(m_Bytes.data() + m_ChunkStart + 12, &l_Crc, sizeof(l_Crc));
 	}
+	// Chunk checksums are not computed by endChunk: the start of every finished chunk is added to p_Chunks instead
+	// (see finishChecksums)
+	void deferChecksums(std::vector<size_t>* p_Chunks) { m_DeferredCrcs = p_Chunks; }
 
 	void reserve(const size_t p_Bytes) { m_Bytes.reserve(p_Bytes); }
 	std::vector<uint8_t> take() { return std::move(m_Bytes); }
@@ -161,6 +171,7 @@ public:
 private:
 	std::vector<uint8_t> m_Bytes;
 	size_t m_ChunkStart = 0;
+	std::vector<size_t>* m_DeferredCrcs = nullptr;
 };
 
 // Bounds-checked cursor. Once a read runs past the end, ok() stays false and every later read returns zero.
@@ -273,12 +284,9 @@ void writeStroke(Writer& p_Writer, const Object& p_Object, const StrokeData& p_S
 	p_Writer.f32(p_Stroke.style.size);
 	p_Writer.u8(static_cast<uint8_t>(p_Stroke.style.brush));
 	p_Writer.u32(static_cast<uint32_t>(p_Stroke.points.size()));
-	for (const StrokePoint& l_Point : p_Stroke.points)
-	{
-		p_Writer.f32(l_Point.position.x);
-		p_Writer.f32(l_Point.position.y);
-		p_Writer.f32(l_Point.radius);
-	}
+	// x, y, radius as three floats each, which is exactly how a point sits in memory
+	static_assert(sizeof(StrokePoint) == STROKE_POINT_BYTES && std::is_trivially_copyable_v<StrokePoint>);
+	p_Writer.raw(p_Stroke.points.data(), p_Stroke.points.size() * STROKE_POINT_BYTES);
 }
 
 // Returns false for corrupt data; p_Skipped is set for well-formed objects of a kind this version does not know
@@ -298,7 +306,7 @@ bool readStroke(Reader& p_Reader, Object& p_Object, bool& p_Skipped)
 		return false;
 	if (!finite(l_Stroke.style.color.r) || !finite(l_Stroke.style.color.g) || !finite(l_Stroke.style.color.b) || !finite(l_Stroke.style.color.a) || !finite(l_Stroke.style.size))
 		return false;
-	if (l_Brush > static_cast<uint8_t>(BrushKind::Pen))
+	if (l_Brush > static_cast<uint8_t>(BrushKind::Highlighter))
 	{
 		p_Skipped = true; // a brush from a newer version
 		return true;
@@ -630,7 +638,7 @@ uint32_t crc32(const std::span<const uint8_t> p_Bytes)
 namespace
 {
 // Everything but the closing chunk; big assets (when p_Big is set) are left out and listed there
-std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big)
+std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big, std::vector<size_t>* p_DeferredCrcs = nullptr)
 {
 	size_t l_Estimate = 256 + p_Meta.sourcePath.size();
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
@@ -648,6 +656,7 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 		l_Estimate += (p_Big != nullptr && l_Asset.bytes.size() >= p_BigAssetBytes ? 0 : l_Asset.bytes.size()) + 64;
 
 	Writer l_Writer;
+	l_Writer.deferChecksums(p_DeferredCrcs);
 	l_Writer.reserve(l_Estimate);
 	l_Writer.raw(MAGIC.data(), MAGIC.size());
 	l_Writer.u32(BOARD_FORMAT_VERSION);
@@ -681,6 +690,21 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 			writeText(l_Writer, *l_Object, *l_Text);
 	}
 	l_Writer.endChunk();
+
+	uint32_t l_LockedCount = 0;
+	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+		l_LockedCount += l_Object->locked ? 1u : 0u;
+	if (l_LockedCount > 0)
+	{
+		l_Writer.beginChunk(TAG_LOCK);
+		l_Writer.u32(l_LockedCount);
+		for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+		{
+			if (l_Object->locked)
+				l_Writer.u64(l_Object->id);
+		}
+		l_Writer.endChunk();
+	}
 	return l_Writer.take();
 }
 
@@ -701,12 +725,25 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 	return l_Bytes;
 }
 
-SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes)
+SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, const bool p_DeferChecksums)
 {
 	SplitBoard l_Board;
-	l_Board.head = serializeBody(p_Document, p_Meta, p_BigAssetBytes, &l_Board.big);
+	l_Board.head = serializeBody(p_Document, p_Meta, p_BigAssetBytes, &l_Board.big, p_DeferChecksums ? &l_Board.pendingChecksums : nullptr);
 	l_Board.tail = closingChunk();
 	return l_Board;
+}
+
+void finishChecksums(SplitBoard& p_Board)
+{
+	for (const size_t l_Start : p_Board.pendingChecksums)
+	{
+		const std::span<const uint8_t> l_Payload = std::span<const uint8_t>(p_Board.head).subspan(l_Start + CHUNK_HEADER_BYTES);
+		uint64_t l_Length = 0;
+		std::memcpy(&l_Length, p_Board.head.data() + l_Start + 4, sizeof(l_Length));
+		const uint32_t l_Crc = crc32(l_Payload.first(static_cast<size_t>(l_Length)));
+		std::memcpy(p_Board.head.data() + l_Start + 12, &l_Crc, sizeof(l_Crc));
+	}
+	p_Board.pendingChecksums.clear();
 }
 
 IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitBoard& p_Board)
@@ -766,18 +803,19 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	Reader l_File(p_Bytes);
 	const std::span<const uint8_t> l_Magic = l_File.take(MAGIC.size());
 	if (!l_File.ok() || std::memcmp(l_Magic.data(), MAGIC.data(), MAGIC.size()) != 0)
-		return failure("This is not a Whiteboard file.");
+		return failure("This is not a Inkwell file.");
 	const uint32_t l_Version = l_File.u32();
 	if (!l_File.ok() || l_Version == 0)
 		return failure("The file header is damaged.");
 	if (l_Version > BOARD_FORMAT_VERSION)
-		return failure("This file was made by a newer version of Whiteboard.");
+		return failure("This file was made by a newer version of Inkwell.");
 
 	std::optional<ParsedMeta> l_ParsedMeta;
 	std::optional<std::array<double, 3>> l_View;
 	std::vector<std::unique_ptr<Object>> l_Objects;
 	std::vector<ImageAsset> l_Assets;
 	std::vector<FontAsset> l_Fonts;
+	std::unordered_set<ObjectId> l_Locked;
 	std::unordered_set<AssetId> l_SeenAssets;
 	bool l_HaveAssets = false;
 	bool l_HaveObjects = false;
@@ -835,6 +873,15 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 			if (!l_Fonts.empty() || !parseFonts(l_Payload, l_Fonts))
 				return failure("The file is damaged (bad font data).");
 			break;
+		case TAG_LOCK:
+		{
+			const uint32_t l_Count = l_Reader.u32();
+			if (!l_Reader.ok() || static_cast<uint64_t>(l_Count) * sizeof(uint64_t) > l_Reader.remaining())
+				return failure("The file is damaged (bad lock data).");
+			for (uint32_t i = 0; i < l_Count; ++i)
+				l_Locked.insert(l_Reader.u64());
+			break;
+		}
 		case TAG_END:
 			l_HaveEnd = true;
 			break;
@@ -871,7 +918,10 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	for (FontAsset& l_Font : l_Fonts)
 		p_Document.setFontAsset(std::move(l_Font));
 	for (std::unique_ptr<Object>& l_Object : l_Objects)
+	{
+		l_Object->locked = l_Locked.contains(l_Object->id);
 		p_Document.insert(std::move(l_Object));
+	}
 
 	p_Meta = BoardMeta{};
 	p_Meta.sourcePath = std::move(l_ParsedMeta->sourcePath);

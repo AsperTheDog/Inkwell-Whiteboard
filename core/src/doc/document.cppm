@@ -26,7 +26,8 @@ namespace ObjectChange
 inline constexpr uint32_t Transform = 1u << 0;
 inline constexpr uint32_t Geometry = 1u << 1; // payload shape (stroke points, image size, text...)
 inline constexpr uint32_t Style = 1u << 2;    // color, size and other appearance
-inline constexpr uint32_t All = Transform | Geometry | Style;
+inline constexpr uint32_t Lock = 1u << 3;     // locked / unlocked
+inline constexpr uint32_t All = Transform | Geometry | Style | Lock;
 } // namespace ObjectChange
 
 // An image file as it was imported (PNG, JPEG, GIF, BMP...), kept byte for byte so saving never re-encodes it
@@ -97,6 +98,9 @@ public:
 	[[nodiscard]] size_t size() const { return m_Objects.size(); }
 	[[nodiscard]] bool empty() const { return m_Objects.empty(); }
 	[[nodiscard]] Rect contentBounds() const;
+	// Every object's world bounds in one array, in the order of objects(). Scanning it is much cheaper than walking the
+	// objects, so culling and hit tests use it to skip what is far away.
+	[[nodiscard]] std::span<const Rect> boundsList() const;
 
 	// ---- image assets (immutable once added; an edit makes a new asset)
 	// Stores the asset and returns its id. Identical bytes share one asset.
@@ -119,6 +123,10 @@ public:
 
 private:
 	std::vector<std::unique_ptr<Object>> m_Objects; // back to front
+	// boundsList() cache: kept in step by insert/take, patched lazily after modify (a few ids) or rebuilt (many, reorders)
+	mutable std::vector<Rect> m_Bounds;
+	mutable std::vector<ObjectId> m_StaleBounds;
+	mutable bool m_BoundsDirty = true;
 	std::unordered_map<ObjectId, Object*> m_ById;
 	std::vector<DocumentListener*> m_Listeners;
 	std::unordered_map<AssetId, ImageAsset> m_Assets;

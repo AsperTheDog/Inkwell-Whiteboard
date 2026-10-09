@@ -62,10 +62,13 @@ struct SplitBoard
 	std::vector<uint8_t> head; // everything but the big assets and the closing chunk
 	std::vector<uint8_t> tail; // the closing chunk
 	std::vector<BigAssetRef> big;
+	std::vector<size_t> pendingChecksums; // chunks of `head` whose checksum is still to be computed (finishChecksums)
 };
 
-// Assets of at least p_BigAssetBytes go to `big`
-[[nodiscard]] SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, size_t p_BigAssetBytes);
+// Assets of at least p_BigAssetBytes go to `big`. With p_DeferChecksums the (costly) chunk checksums are left for
+// finishChecksums, which the worker thread calls before writing; the board must not be written before that.
+[[nodiscard]] SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, size_t p_BigAssetBytes, bool p_DeferChecksums = false);
+void finishChecksums(SplitBoard& p_Board);
 // Writes the parts as one file, through a temporary file and a rename like writeFileAtomic. Safe to call off-thread.
 [[nodiscard]] IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitBoard& p_Board);
 

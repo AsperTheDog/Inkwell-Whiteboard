@@ -8,6 +8,7 @@ module;
 #include <cstdio>
 #include <deque>
 #include <filesystem>
+#include <span>
 #include <memory>
 #include <mutex>
 #include <optional>

@@ -53,7 +53,7 @@ private:
 		VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
 	};
 
-	std::array<FrameResources, gfx::FRAMES_IN_FLIGHT> m_Frames{};
+	std::array<FrameResources, gfx::RENDER_SLOTS> m_Frames{};
 	uint32_t m_Slot = 0;
 	std::vector<Draw> m_Draws;
 

@@ -22,10 +22,14 @@ module;
 
 module wb.app;
 
+import wb.brush.shapes;
 import wb.brush.stroke_builder;
+import wb.doc.edit;
+import wb.doc.object;
 import wb.editor;
 import wb.math;
 import wb.session;
+import wb.tools.laser;
 import wb.tools.tool;
 import wb.ui.context;
 import wb.ui.draw;
@@ -139,15 +143,24 @@ void App::buildPopover()
 	// A tool popup closes when the device that opened it switches to another tool (keyboard shortcuts included).
 	// Other devices speaking up in the meantime (a stray mouse or touch event next to a tablet) must not close it.
 	const tools::ToolKind l_Tool = m_Editor.deviceTool(m_PopupDevice);
-	if ((m_Popup == Popup::Text && m_TextPopupFromToolbar && l_Tool != tools::ToolKind::Text) || (m_Popup == Popup::Text && !m_TextPopupFromToolbar && !m_Editor.currentText()) || (m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
+	if ((m_Popup == Popup::Text && m_TextPopupFromToolbar && l_Tool != tools::ToolKind::Text) || (m_Popup == Popup::Text && !m_TextPopupFromToolbar && !m_Editor.currentText()) || (m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Highlighter && l_Tool != tools::ToolKind::Highlighter) || (m_Popup == Popup::Shape && l_Tool != tools::ToolKind::Shape) || (m_Popup == Popup::Laser && l_Tool != tools::ToolKind::Laser) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
 		closePopup("its device switched tools");
-	if (m_Popup == Popup::SelectionColor && !m_Editor.hasSelection())
+	if ((m_Popup == Popup::SelectionColor || m_Popup == Popup::Align) && !m_Editor.hasSelection())
 		closePopup("selection gone");
 
 	switch (m_Popup)
 	{
 	case Popup::Pen:
 		buildPenPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Pen)]);
+		break;
+	case Popup::Highlighter:
+		buildPenPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Highlighter)]);
+		break;
+	case Popup::Shape:
+		buildPenPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Shape)]);
+		break;
+	case Popup::Laser:
+		buildLaserPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Laser)]);
 		break;
 	case Popup::Eraser:
 		buildEraserPopover(m_ToolRects[static_cast<size_t>(tools::ToolKind::Eraser)]);
@@ -192,6 +205,50 @@ void App::buildPopover()
 		endPopover(m_Ui);
 		break;
 	}
+	case Popup::Align:
+	{
+		struct Entry
+		{
+			ui::Icon icon;
+			AlignMode mode;
+			const char* tip;
+		};
+		static constexpr std::array<Entry, 6> ALIGN{ {
+			{ ui::Icon::AlignLeftEdges, AlignMode::Left, "Align left edges" },
+			{ ui::Icon::AlignCenterX, AlignMode::CenterX, "Centre horizontally" },
+			{ ui::Icon::AlignRightEdges, AlignMode::Right, "Align right edges" },
+			{ ui::Icon::AlignTopEdges, AlignMode::Top, "Align top edges" },
+			{ ui::Icon::AlignCenterY, AlignMode::CenterY, "Centre vertically" },
+			{ ui::Icon::AlignBottomEdges, AlignMode::Bottom, "Align bottom edges" },
+		} };
+		const float l_Pad = m_Ui.px(8.f);
+		const float l_Button = m_Ui.px(38.f);
+		const float l_Gap = m_Ui.px(2.f);
+		const float l_Separator = m_Ui.px(13.f);
+		const float l_Width = l_Pad * 2.f + 8.f * l_Button + 7.f * l_Gap + l_Separator;
+		const float l_Height = l_Button + l_Pad * 2.f;
+		const bool l_Below = m_SelectionBarRect.min.y < m_Ui.viewport().y * 0.45f;
+		const Rect2 l_Rect = beginPopover(m_Ui, m_SelectionBarRect, l_Width, l_Height, l_Below);
+		m_Ui.panel(l_Rect, m_Ui.px(18.f));
+		float l_X = l_Rect.min.x + l_Pad;
+		const float l_Top = l_Rect.min.y + l_Pad;
+		const auto l_Place = [&] { const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_X, l_Top }, Vec2{ l_Button }); l_X += l_Button + l_Gap; return l_Slot; };
+		for (const Entry& l_Entry : ALIGN)
+		{
+			if (m_Ui.iconButton(std::string("align.") + l_Entry.tip, l_Place(), l_Entry.icon, false, true, l_Entry.tip))
+				m_Editor.alignSelection(l_Entry.mode);
+		}
+		l_X += -l_Gap + l_Separator * 0.5f;
+		m_Ui.draw().line(Vec2{ l_X, l_Rect.min.y + m_Ui.px(12.f) }, Vec2{ l_X, l_Rect.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
+		l_X += l_Separator * 0.5f + l_Gap;
+		const bool l_Enough = m_Editor.selection().size() >= 3;
+		if (m_Ui.iconButton("align.spacex", l_Place(), ui::Icon::DistributeX, false, l_Enough, "Space evenly across"))
+			m_Editor.alignSelection(AlignMode::DistributeX);
+		if (m_Ui.iconButton("align.spacey", l_Place(), ui::Icon::DistributeY, false, l_Enough, "Space evenly down"))
+			m_Editor.alignSelection(AlignMode::DistributeY);
+		endPopover(m_Ui);
+		break;
+	}
 	case Popup::None:
 	case Popup::Menu:
 		break;
@@ -209,14 +266,24 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	const float l_LabelHeight = m_Ui.px(22.f);
 	const float l_SliderHeight = m_Ui.px(34.f);
 	const float l_PreviewHeight = m_Ui.px(62.f);
-	tools::BrushState& l_Brush = m_Editor.brush();
+	// One panel for the three tools that leave ink: the pen, the highlighter and the shapes (which draw with the pen)
+	const bool l_Marker = m_Popup == Popup::Highlighter;
+	const bool l_Shapes = m_Popup == Popup::Shape;
+	const float l_ShapeRow = m_Ui.px(44.f);
+	tools::BrushState& l_Brush = l_Marker ? m_Editor.highlighterBrush() : m_Editor.brush();
 	BrushSettings& l_Settings = m_Editor.brushSettings();
 	const ui::Theme& l_Theme = m_Ui.theme();
 	ui::DrawList& l_Draw = m_Ui.draw();
 
 	float l_Height;
 	if (!m_PickerOpen)
-		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight + l_PreviewHeight + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight;
+	{
+		l_Height = l_Pad * 2.f + (2.f * l_Diameter + l_RowGap) + m_Ui.px(14.f) + l_Diameter + m_Ui.px(16.f) + 1.f + m_Ui.px(14.f) + l_LabelHeight + l_SliderHeight;
+		if (l_Shapes)
+			l_Height += l_ShapeRow + m_Ui.px(14.f);
+		else
+			l_Height += l_PreviewHeight + (l_Marker ? 0.f : m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight) + m_Ui.px(10.f) + l_LabelHeight + l_SliderHeight;
+	}
 	else
 		l_Height = l_Pad * 2.f + m_Ui.px(34.f) + m_Ui.px(12.f) + m_Ui.px(190.f) + m_Ui.px(14.f) + m_Ui.px(38.f) + m_Ui.px(16.f) + l_Diameter;
 
@@ -281,6 +348,22 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 		return;
 	}
 
+	// Which shape (the shape tool only)
+	if (l_Shapes)
+	{
+		static constexpr std::array<ui::Icon, SHAPE_KIND_COUNT> SHAPE_ICONS{ ui::Icon::Line, ui::Icon::Arrow, ui::Icon::Square, ui::Icon::Circle, ui::Icon::Triangle, ui::Icon::Diamond };
+		static constexpr std::array<const char*, SHAPE_KIND_COUNT> SHAPE_TIPS{ "Line", "Arrow", "Rectangle", "Ellipse", "Triangle", "Diamond" };
+		const float l_ShapeGap = m_Ui.px(2.f);
+		const float l_ShapeButton = (l_Inner - l_ShapeGap * static_cast<float>(SHAPE_KIND_COUNT - 1)) / static_cast<float>(SHAPE_KIND_COUNT);
+		for (int i = 0; i < SHAPE_KIND_COUNT; ++i)
+		{
+			const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_Left + static_cast<float>(i) * (l_ShapeButton + l_ShapeGap), l_Y }, Vec2{ l_ShapeButton, l_ShapeRow });
+			if (m_Ui.iconButton("shape.kind." + std::to_string(i), l_Slot, SHAPE_ICONS[static_cast<size_t>(i)], static_cast<int>(m_Editor.shapeState().kind) == i, true, SHAPE_TIPS[static_cast<size_t>(i)]))
+				m_Editor.shapeState().kind = static_cast<ShapeKind>(i);
+		}
+		l_Y += l_ShapeRow + m_Ui.px(14.f);
+	}
+
 	// Palette
 	Color l_Picked;
 	if (paletteGrid(Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, 2.f * l_Diameter + l_RowGap }), l_Diameter, 6, l_Brush.color, l_Picked))
@@ -316,13 +399,41 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 		const float l_Inset = m_Ui.px(10.f);
 		return m_Ui.slider(p_Key, Rect2{ Vec2{ p_Row.min.x - l_Inset, p_Row.min.y }, Vec2{ p_Row.max.x + l_Inset, p_Row.max.y } }, p_Value, p_Min, p_Max, p_Log);
 	};
+	// How much the line is steadied while drawing: the pointer's jitter is averaged out, at the price of some lag
+	const auto l_SmoothRow = [&](const float p_Y)
+	{
+		float l_Value = std::clamp(std::log(12.f / l_Settings.smoothingMinCutoff) / std::log(48.f), 0.f, 1.f);
+		m_Ui.label(Vec2{ l_Left, p_Y + l_LabelHeight * 0.5f }, "Smoothing", 13.f, l_Theme.textMuted);
+		m_Ui.label(Vec2{ l_Left + l_Inner, p_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f%%", static_cast<double>(l_Value) * 100.0), 13.f, l_Theme.text, ui::TextAlign::Right);
+		const float l_Inset = m_Ui.px(10.f);
+		if (m_Ui.slider("pen.smoothing", Rect2{ Vec2{ l_Left - l_Inset, p_Y + l_LabelHeight }, Vec2{ l_Left + l_Inner + l_Inset, p_Y + l_LabelHeight + l_SliderHeight } }, l_Value, 0.f, 1.f, false))
+		{
+			// First the pointer's jitter is averaged away; past the default, a rope pulls the line along behind the pointer
+			l_Settings.smoothingMinCutoff = 12.f * std::pow(0.25f / 12.f, l_Value);
+			l_Settings.ropePx = 44.f * std::pow(std::clamp((l_Value - 0.4f) / 0.6f, 0.f, 1.f), 1.3f);
+		}
+	};
 	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size", 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.1f pt", l_Brush.sizePoints), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
-	l_Slider("pen.size", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Brush.sizePoints, 0.5f, 40.f, true);
+	l_Slider("pen.size", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Brush.sizePoints, l_Marker ? 6.f : 0.5f, l_Marker ? 80.f : 40.f, true);
 	l_Y += l_SliderHeight;
+	if (l_Shapes)
+	{
+		endPopover(m_Ui);
+		return;
+	}
 	const Rect2 l_Preview = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_PreviewHeight });
 	l_Draw.rect(l_Preview, m_Ui.px(12.f), l_Theme.hover);
+	if (l_Marker)
+	{
+		// One see-through bar, the way the marker lays down ink
+		const float l_Thickness = std::min(l_Brush.sizePoints * m_Ui.scale(), l_Preview.height() - m_Ui.px(10.f));
+		l_Draw.line(Vec2{ l_Preview.min.x + m_Ui.px(24.f), l_Preview.center().y }, Vec2{ l_Preview.max.x - m_Ui.px(24.f), l_Preview.center().y }, l_Thickness, Color{ l_Brush.color.r, l_Brush.color.g, l_Brush.color.b, HIGHLIGHTER_ALPHA });
+		l_SmoothRow(l_Y + l_PreviewHeight + m_Ui.px(10.f));
+		endPopover(m_Ui);
+		return;
+	}
 	drawStrokePreview(m_Ui, l_Preview, l_Brush.color, l_Brush.sizePoints * l_Brush.sizeScale, l_Settings.pressureSensitivity);
 	l_Y += l_PreviewHeight + m_Ui.px(10.f);
 
@@ -331,6 +442,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f%%", l_Settings.pressureSensitivity * 100.0), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	l_Slider("pen.pressure", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Settings.pressureSensitivity, 0.f, 1.f, false);
+	l_SmoothRow(l_Y + l_SliderHeight + m_Ui.px(10.f));
 	endPopover(m_Ui);
 }
 
@@ -378,6 +490,56 @@ void App::buildEraserPopover(const Rect2 p_Anchor)
 	m_Ui.draw().rect(l_Preview, m_Ui.px(12.f), l_Theme.hover);
 	const float l_Diameter = std::min(l_Eraser.sizePoints * m_Ui.scale(), l_PreviewHeight - m_Ui.px(12.f));
 	m_Ui.draw().ring(l_Preview.center(), l_Diameter * 0.5f, l_Theme.text, 1.5f * m_Ui.scale());
+	endPopover(m_Ui);
+}
+
+// ------------------------------------------------------------------------------------------------ laser
+
+void App::buildLaserPopover(const Rect2 p_Anchor)
+{
+	const float l_Width = m_Ui.px(284.f);
+	const float l_Pad = m_Ui.px(18.f);
+	const float l_Inner = l_Width - l_Pad * 2.f;
+	const float l_LabelHeight = m_Ui.px(22.f);
+	const float l_SliderHeight = m_Ui.px(34.f);
+	const float l_PreviewHeight = m_Ui.px(64.f);
+	const ui::Theme& l_Theme = m_Ui.theme();
+	tools::LaserTool& l_Laser = m_Editor.laser();
+
+	const float l_Height = l_Pad * 2.f + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_PreviewHeight;
+	const Rect2 l_Rect = beginPopover(m_Ui, p_Anchor, l_Width, l_Height, false);
+	m_Ui.panel(l_Rect, m_Ui.px(20.f));
+	const float l_Left = l_Rect.min.x + l_Pad;
+	float l_Y = l_Rect.min.y + l_Pad;
+
+	float l_Seconds = l_Laser.trailSeconds();
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Trail length", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.1f s", l_Seconds), 13.f, l_Theme.text, ui::TextAlign::Right);
+	l_Y += l_LabelHeight;
+	const float l_Inset = m_Ui.px(10.f);
+	if (m_Ui.slider("laser.trail", Rect2{ Vec2{ l_Left - l_Inset, l_Y }, Vec2{ l_Left + l_Inner + l_Inset, l_Y + l_SliderHeight } }, l_Seconds, tools::LaserTool::MIN_TRAIL_SECONDS, tools::LaserTool::MAX_TRAIL_SECONDS, true))
+		l_Laser.setTrailSeconds(l_Seconds);
+	l_Y += l_SliderHeight + m_Ui.px(8.f);
+
+	// A sample trail: strongest at the head, fading to nothing at the end of its length
+	const Rect2 l_Preview = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_PreviewHeight });
+	m_Ui.draw().rect(l_Preview, m_Ui.px(12.f), l_Theme.hover);
+	constexpr Color LASER{ 1.f, 0.16f, 0.14f, 1.f };
+	const float l_TrailFraction = std::clamp(l_Seconds / tools::LaserTool::MAX_TRAIL_SECONDS, 0.05f, 1.f);
+	const float l_Start = l_Preview.min.x + m_Ui.px(16.f);
+	const float l_Head = l_Preview.max.x - m_Ui.px(22.f);
+	const float l_Length = (l_Head - l_Start) * l_TrailFraction;
+	constexpr int SEGMENTS = 40;
+	for (int i = 0; i < SEGMENTS; ++i)
+	{
+		const float l_A = static_cast<float>(i) / static_cast<float>(SEGMENTS);
+		const float l_B = static_cast<float>(i + 1) / static_cast<float>(SEGMENTS);
+		const float l_Fade = l_B * l_B * (3.f - 2.f * l_B);
+		const auto l_Point = [&](const float p_T) { return Vec2{ l_Head - l_Length * (1.f - p_T), l_Preview.center().y + std::sin(p_T * 9.f) * m_Ui.px(9.f) }; };
+		m_Ui.draw().line(l_Point(l_A), l_Point(l_B), (6.f + 12.f * l_Fade) * m_Ui.scale() * 0.6f, ui::withAlpha(LASER, 0.16f * l_Fade));
+		m_Ui.draw().line(l_Point(l_A), l_Point(l_B), (2.f + 3.f * l_Fade) * m_Ui.scale() * 0.8f, ui::withAlpha(LASER, 0.95f * l_Fade));
+	}
+	m_Ui.draw().circle(Vec2{ l_Head, l_Preview.center().y + std::sin(9.f) * m_Ui.px(9.f) }, m_Ui.px(5.f), LASER);
 	endPopover(m_Ui);
 }
 

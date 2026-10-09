@@ -314,6 +314,38 @@ void SetStrokeColorCommand::revert(Document& p_Document)
 	}
 }
 
+SetStrokePointsCommand::SetStrokePointsCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
+{
+}
+
+void SetStrokePointsCommand::apply(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (StrokeData* l_Stroke = p_Object.stroke()) l_Stroke->points = l_Entry.after; }, ObjectChange::Geometry);
+}
+
+void SetStrokePointsCommand::revert(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (StrokeData* l_Stroke = p_Object.stroke()) l_Stroke->points = l_Entry.before; }, ObjectChange::Geometry);
+}
+
+SetLockedCommand::SetLockedCommand(std::vector<ObjectId> p_Ids, const bool p_Locked, std::string p_Name) : m_Ids(std::move(p_Ids)), m_Locked(p_Locked), m_Name(std::move(p_Name))
+{
+}
+
+void SetLockedCommand::apply(Document& p_Document)
+{
+	for (const ObjectId l_Id : m_Ids)
+		p_Document.modify(l_Id, [&](Object& p_Object) { p_Object.locked = m_Locked; }, ObjectChange::Lock);
+}
+
+void SetLockedCommand::revert(Document& p_Document)
+{
+	for (const ObjectId l_Id : m_Ids)
+		p_Document.modify(l_Id, [&](Object& p_Object) { p_Object.locked = !m_Locked; }, ObjectChange::Lock);
+}
+
 SetTextCommand::SetTextCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
 {
 }

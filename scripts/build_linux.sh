@@ -58,8 +58,8 @@ if [[ $RUN_TESTS -eq 1 ]]; then
     "$CTEST" --test-dir "$BUILD_DIR" --output-on-failure
 fi
 if [[ $SMOKE -eq 1 ]]; then
-    "$BUILD_DIR/app/whiteboard" --smoke-test=120
+    "$BUILD_DIR/app/inkwell" --smoke-test=120
 fi
 if [[ $RUN_APP -eq 1 ]]; then
-    "$BUILD_DIR/app/whiteboard"
+    "$BUILD_DIR/app/inkwell"
 fi

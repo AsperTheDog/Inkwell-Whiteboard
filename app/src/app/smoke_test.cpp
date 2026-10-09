@@ -7,6 +7,7 @@ module;
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -37,6 +38,8 @@ import wb.platform.input;
 import wb.tools.select;
 import wb.tools.tool;
 import wb.view.camera;
+import wb.view.ruler;
+import wb.brush.shapes;
 
 namespace wb
 {
@@ -46,6 +49,9 @@ constexpr uint64_t EVENT_INTERVAL_NS = 4'000'000; // 250 Hz, like a typical pen
 constexpr size_t EVENTS_PER_FRAME = 6;
 
 Rect s_SmokeBounds{}; // selection bounds remembered between scenario steps
+std::filesystem::path s_SmokeExportPath;
+uint32_t s_SmokeExportWidth = 0;
+uint32_t s_SmokeExportHeight = 0;
 std::vector<ObjectId> s_SmokePictures;
 size_t s_SmokeObjectsBefore = 0;
 size_t s_SmokeUndoBefore = 0;
@@ -151,6 +157,38 @@ std::vector<uint8_t> makeTestGif(const int p_Size, const int p_Frames)
 		l_Out.push_back(0);
 	}
 	l_Out.push_back(0x3B);
+	return l_Out;
+}
+
+// A PDF with two pages (Letter size, a heading and a blue box on each), built by hand
+std::string makeTestPdf()
+{
+	std::vector<std::string> l_Objects;
+	l_Objects.push_back("<< /Type /Catalog /Pages 2 0 R >>");
+	l_Objects.push_back("<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>");
+	const auto l_Stream = [](const std::string& p_Content) { return "<< /Length " + std::to_string(p_Content.size()) + " >>\nstream\n" + p_Content + "\nendstream"; };
+	l_Objects.push_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 7 0 R >> >> >>");
+	l_Objects.push_back(l_Stream("BT /F1 40 Tf 72 700 Td (Smoke test page 1) Tj ET 0.1 0.4 0.9 rg 72 500 300 120 re f"));
+	l_Objects.push_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>");
+	l_Objects.push_back(l_Stream("BT /F1 40 Tf 72 700 Td (Smoke test page 2) Tj ET 0.9 0.2 0.2 rg 200 300 250 250 re f"));
+	l_Objects.push_back("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+	std::string l_Out = "%PDF-1.4\n";
+	std::vector<size_t> l_Offsets;
+	for (size_t i = 0; i < l_Objects.size(); ++i)
+	{
+		l_Offsets.push_back(l_Out.size());
+		l_Out += std::to_string(i + 1) + " 0 obj\n" + l_Objects[i] + "\nendobj\n";
+	}
+	const size_t l_XrefAt = l_Out.size();
+	l_Out += "xref\n0 " + std::to_string(l_Objects.size() + 1) + "\n0000000000 65535 f \n";
+	for (const size_t l_Offset : l_Offsets)
+	{
+		char l_Line[32];
+		std::snprintf(l_Line, sizeof(l_Line), "%010zu 00000 n \n", l_Offset);
+		l_Out += l_Line;
+	}
+	l_Out += "trailer\n<< /Size " + std::to_string(l_Objects.size() + 1) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(l_XrefAt) + "\n%%EOF\n";
 	return l_Out;
 }
 
@@ -631,7 +669,7 @@ void App::driveSmokeTest()
 
 		l_State = { .family = "Inter", .style = 0, .sizePoints = 28.f, .align = TextAlign::Left };
 		l_Click(l_C + Vec2{ -560.f * l_S, -300.f * l_S });
-		m_Editor.handleTextInput("Whiteboard text: Inter");
+		m_Editor.handleTextInput("Inkwell text: Inter");
 		m_Editor.handleTextInput("\nsecond line, kerning: AVA To Wa");
 		l_Key(SDLK_ESCAPE);
 
@@ -1038,6 +1076,12 @@ void App::driveSmokeTest()
 			m_Editor.setTool(tools::ToolKind::Eraser);
 			openPopup(Popup::Eraser);
 		}
+		else if (l_Ui == "laser")
+		{
+			m_Editor.setTool(tools::ToolKind::Laser);
+			m_Editor.laser().setTrailSeconds(3.f);
+			openPopup(Popup::Laser);
+		}
 		else if (l_Ui == "select")
 		{
 			m_Editor.setTool(tools::ToolKind::Select);
@@ -1084,9 +1128,299 @@ void App::driveSmokeTest()
 		}
 		return;
 	}
+	// ---- --smoke-ui=tools: the highlighter, shapes, ruler, lock, export and laser pointer on a fresh board
+	case 29:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		m_Editor.newBoard();
+		m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+		m_Editor.setTool(tools::ToolKind::Pen);
+		queueStroke(platform::PointerDevice::Mouse, { .color = Color::fromRgba8(0x1F1F1FFFu), .sizePoints = 3.f },
+			sampleCurve(60, [&](const float p_T) { return l_C + Vec2{ (-420.f + p_T * 380.f) * l_S, (-250.f + 14.f * std::sin(p_T * 14.f)) * l_S }; }), {});
+		return;
+	}
+	case 30:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		// The marker goes over the pen's line and stays see-through
+		m_Editor.setTool(tools::ToolKind::Highlighter);
+		m_Editor.highlighterBrush() = { .color = Color::fromRgba8(0xFDD835FFu), .sizePoints = 26.f };
+		queueStroke(platform::PointerDevice::Mouse, {},
+			sampleCurve(40, [&](const float p_T) { return l_C + Vec2{ (-380.f + p_T * 250.f) * l_S, (-252.f + 6.f * std::sin(p_T * 9.f)) * l_S }; }), {});
+		return;
+	}
+	case 31:
+	case 32:
+	case 33:
+	case 34:
+	case 35:
+	case 36:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		static constexpr std::array<ShapeKind, 6> KINDS{ ShapeKind::Rectangle, ShapeKind::Ellipse, ShapeKind::Triangle, ShapeKind::Diamond, ShapeKind::Arrow, ShapeKind::Line };
+		const size_t l_Index = m_SmokeStep - 1 - 31;
+		m_Editor.setTool(tools::ToolKind::Shape);
+		m_Editor.shapeState().kind = KINDS[l_Index];
+		m_Editor.brush() = { .color = Color::fromRgba8(l_Index % 2 == 0 ? 0x1E88E5FFu : 0xE53935FFu), .sizePoints = 4.f };
+		const float l_X = (-60.f + static_cast<float>(l_Index) * 120.f) * l_S;
+		queueStroke(platform::PointerDevice::Mouse, m_Editor.brush(), { l_C + Vec2{ l_X, -180.f * l_S }, l_C + Vec2{ l_X + 100.f * l_S, -80.f * l_S } }, {});
+		return;
+	}
+	case 37:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		// The ruler: a wobbly pen line drawn along its lower edge comes out straight
+		m_Editor.toggleRuler();
+		m_Editor.setTool(tools::ToolKind::Pen);
+		m_Editor.brush() = { .color = Color::fromRgba8(0x43A047FFu), .sizePoints = 4.f };
+		const Ruler& l_Ruler = m_Editor.ruler();
+		const RulerLine l_Edge = l_Ruler.edge(1);
+		const Camera& l_Camera = m_Editor.camera();
+		std::vector<Vec2> l_Points;
+		for (int i = 0; i <= 50; ++i)
+		{
+			const double l_Along = -l_Ruler.length * 0.4 + l_Ruler.length * 0.8 * static_cast<double>(i) / 50.0;
+			const DVec2 l_World = l_Edge.origin + l_Edge.direction * (l_Along + l_Ruler.length * 0.5) + l_Ruler.normal() * (4.0 * std::sin(i * 0.9) + 3.0);
+			l_Points.push_back(Vec2{ l_Camera.worldToScreen(l_World) });
+		}
+		queueStroke(platform::PointerDevice::Mouse, m_Editor.brush(), l_Points, {});
+		return;
+	}
+	case 38:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		const Object& l_Line = *m_Editor.document().objects().back();
+		const Ruler& l_Ruler = m_Editor.ruler();
+		const RulerLine l_Edge = l_Ruler.edge(1);
+		double l_Worst = 0.0;
+		const StrokeData* l_Stroke = l_Line.stroke();
+		if (l_Stroke == nullptr || l_Stroke->points.size() < 2)
+		{
+			spdlog::error("Smoke test (ruler): the last object is not a stroke");
+			m_Failed = true;
+			return;
+		}
+		for (const StrokePoint& l_Point : l_Stroke->points)
+		{
+			const DVec2 l_World = l_Line.transform.apply(DVec2{ l_Point.position });
+			l_Worst = std::max(l_Worst, std::abs(glm::dot(l_World - l_Edge.origin, l_Ruler.normal())));
+		}
+		if (l_Worst > 0.05)
+		{
+			spdlog::error("Smoke test (ruler): the stroke strays {:.3f} units from the ruler's edge", l_Worst);
+			m_Failed = true;
+		}
+		else
+		{
+			spdlog::info("Smoke test: the ruler kept the stroke straight (worst {:.4f} units off)", l_Worst);
+		}
+		return;
+	}
+	case 39:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		// Lock the shapes, then try to move and delete them
+		m_Editor.setTool(tools::ToolKind::Select);
+		std::vector<ObjectId> l_Shapes;
+		const auto l_Objects = m_Editor.document().objects();
+		for (size_t i = 2; i + 1 < l_Objects.size(); ++i)
+			l_Shapes.push_back(l_Objects[i]->id);
+		m_Editor.selection().set(l_Shapes);
+		const Affine2 l_Before = m_Editor.document().find(l_Shapes.front())->transform;
+		const size_t l_Count = m_Editor.document().size();
+		m_Editor.toggleSelectionLock();
+		m_Editor.nudgeSelection(Vec2{ 40.f, 40.f });
+		m_Editor.deleteSelection();
+		const bool l_Locked = m_Editor.selectionLockState() == Editor::LockState::All;
+		const bool l_Stayed = m_Editor.document().find(l_Shapes.front()) != nullptr && m_Editor.document().find(l_Shapes.front())->transform.translation == l_Before.translation && m_Editor.document().size() == l_Count;
+		if (!l_Locked || !l_Stayed)
+		{
+			spdlog::error("Smoke test (lock): locked objects were moved or deleted");
+			m_Failed = true;
+		}
+		else
+		{
+			spdlog::info("Smoke test: locked objects ignore nudging and deleting");
+		}
+		return;
+	}
+	case 40:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		m_Editor.clearSelection();
+		m_ExportOptions = ExportOptions{ .selectionOnly = false, .scale = 1, .transparent = true };
+		const ExportPlan l_ExportPlan = exportPlan();
+		s_SmokeExportWidth = l_ExportPlan.extent.width;
+		s_SmokeExportHeight = l_ExportPlan.extent.height;
+		s_SmokeExportPath = std::filesystem::temp_directory_path() / "wb_smoke_export.png";
+		removeFileQuiet(s_SmokeExportPath);
+		startExport(s_SmokeExportPath);
+		return;
+	}
+	case 41:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		if (m_ExportJob || m_ExportWrite.valid())
+		{
+			--m_SmokeStep; // wait for the picture to be drawn and written
+			return;
+		}
+		std::vector<uint8_t> l_Png;
+		const bool l_Read = readFile(s_SmokeExportPath, l_Png).ok;
+		uint32_t l_Width = 0;
+		uint32_t l_Height = 0;
+		static constexpr std::array<uint8_t, 8> SIGNATURE{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+		if (l_Read && l_Png.size() > 33 && std::equal(SIGNATURE.begin(), SIGNATURE.end(), l_Png.begin()))
+		{
+			const auto l_BigEndian = [&](const size_t p_At) { return (static_cast<uint32_t>(l_Png[p_At]) << 24) | (static_cast<uint32_t>(l_Png[p_At + 1]) << 16) | (static_cast<uint32_t>(l_Png[p_At + 2]) << 8) | l_Png[p_At + 3]; };
+			l_Width = l_BigEndian(16);
+			l_Height = l_BigEndian(20);
+		}
+		if (!l_Read || l_Width != s_SmokeExportWidth || l_Height != s_SmokeExportHeight)
+		{
+			spdlog::error("Smoke test (export): expected a {}x{} PNG, got {}x{} ({} bytes)", s_SmokeExportWidth, s_SmokeExportHeight, l_Width, l_Height, l_Png.size());
+			m_Failed = true;
+		}
+		else
+		{
+			spdlog::info("Smoke test: exported a {}x{} PNG ({} bytes)", l_Width, l_Height, l_Png.size());
+			if (!m_Options.screenshotPath.empty())
+				std::filesystem::copy_file(s_SmokeExportPath, std::filesystem::path(m_Options.screenshotPath).replace_extension(".export.png"), std::filesystem::copy_options::overwrite_existing);
+		}
+		removeFileQuiet(s_SmokeExportPath);
+		m_Editor.setTool(tools::ToolKind::Laser);
+		return;
+	}
+	case 42:
+	{
+		if (m_Options.smokeUi != "tools")
+			return;
+		// The laser pointer keeps drawing a circle until the last frame, so its trail is there for the screenshot
+		const uint64_t l_Frame = m_Stats.frameCount;
+		if (l_Frame + 2 < m_Options.smokeTestFrames)
+		{
+			--m_SmokeStep;
+			for (int i = 0; i < 3; ++i)
+			{
+				const float l_Angle = (static_cast<float>(l_Frame) * 3.f + static_cast<float>(i)) * 0.045f;
+				platform::PointerEvent l_Event{
+					.phase = l_Frame == 0 && i == 0 ? platform::PointerPhase::Down : platform::PointerPhase::Move,
+					.device = platform::PointerDevice::Mouse,
+					.button = platform::PointerButton::Primary,
+					.buttons = platform::ButtonMask::Primary,
+					.position = l_C + Vec2{ std::cos(l_Angle) * 90.f * l_S + 330.f * l_S, std::sin(l_Angle) * 90.f * l_S + 120.f * l_S },
+					.timestampNs = SDL_GetTicksNS(),
+				};
+				if (!m_Editor.laser().pressed())
+					l_Event.phase = platform::PointerPhase::Down;
+				m_Editor.handlePointer(l_Event);
+			}
+		}
+		return;
+	}
+	// ---- --smoke-ui=pdf: a two page PDF lands on the board as locked pictures
+	case 43:
+	{
+		if (m_Options.smokeUi != "pdf")
+			return;
+		m_Editor.newBoard();
+		m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+		const std::filesystem::path l_Path = std::filesystem::temp_directory_path() / "wb_smoke.pdf";
+		const std::string l_Pdf = makeTestPdf();
+		if (const IoResult l_Written = writeFileAtomic(l_Path, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(l_Pdf.data()), l_Pdf.size())); !l_Written.ok)
+		{
+			spdlog::error("Smoke test (pdf): {}", l_Written.error);
+			m_Failed = true;
+			return;
+		}
+		startPdfImport(l_Path);
+		return;
+	}
+	case 44:
+	{
+		if (m_Options.smokeUi != "pdf")
+			return;
+		if (m_PdfJob.valid() || m_Canvas.images().busy())
+		{
+			--m_SmokeStep; // wait for the pages
+			return;
+		}
+		size_t l_Locked = 0;
+		for (const auto& l_Object : m_Editor.document().objects())
+			l_Locked += l_Object->image() != nullptr && l_Object->locked ? 1 : 0;
+		if (m_Editor.document().size() != 2 || l_Locked != 2)
+		{
+			spdlog::error("Smoke test (pdf): expected 2 locked pages, found {} objects ({} locked pictures)", m_Editor.document().size(), l_Locked);
+			m_Failed = true;
+		}
+		else
+		{
+			const Vec2 l_Size = m_Editor.document().objects().front()->image()->size;
+			spdlog::info("Smoke test: a PDF became 2 locked pages ({:.0f}x{:.0f} units each)", l_Size.x, l_Size.y);
+		}
+		removeFileQuiet(std::filesystem::temp_directory_path() / "wb_smoke.pdf");
+		return;
+	}
 	default:
 		return;
 	}
+}
+
+// --perf-test=N: N strokes spread over a big board, a camera that pans and zooms, then a frame time report
+void App::drivePerfTest()
+{
+	constexpr uint32_t WARMUP = 30;
+	constexpr uint32_t FRAMES = 600;
+	requestRedraw(1);
+	if (m_PerfFrame == 0)
+	{
+		m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+		const double l_Side = std::sqrt(static_cast<double>(m_Options.perfStrokes)) * 90.0;
+		addStressStrokes(m_Options.perfStrokes, Rect::fromPoints(DVec2{ -l_Side * 0.5 }, DVec2{ l_Side * 0.5 }));
+	}
+	else
+	{
+		if (m_PerfFrame > WARMUP)
+		{
+			m_PerfCpuMs.push_back(m_Stats.cpuFrameMs);
+			m_PerfGpuMs.push_back(m_Frames.gpuFrameMs());
+		}
+		const double l_T = static_cast<double>(m_PerfFrame) / 60.0;
+		const double l_Radius = std::sqrt(static_cast<double>(m_Options.perfStrokes)) * 25.0;
+		// First half: pan at 100%. Second half: zoom out and in over the whole board
+		const double l_Zoom = m_PerfFrame < FRAMES / 2 ? 1.0 : std::exp(std::sin(l_T * 1.5) * 2.0 - 1.5);
+		m_Editor.lookAt(DVec2{ std::cos(l_T) * l_Radius, std::sin(l_T * 0.7) * l_Radius }, l_Zoom);
+	}
+	++m_PerfFrame;
+	if (m_PerfFrame < FRAMES)
+		return;
+
+	const auto l_Report = [](const char* p_Name, std::vector<double> p_Values)
+	{
+		std::sort(p_Values.begin(), p_Values.end());
+		double l_Sum = 0.0;
+		for (const double l_Value : p_Values)
+			l_Sum += l_Value;
+		const auto l_At = [&](const double p_Fraction) { return p_Values[std::min(p_Values.size() - 1, static_cast<size_t>(static_cast<double>(p_Values.size()) * p_Fraction))]; };
+		spdlog::info("Perf {}: avg {:.3f} ms, median {:.3f}, p99 {:.3f}, max {:.3f}", p_Name, l_Sum / static_cast<double>(p_Values.size()), l_At(0.5), l_At(0.99), p_Values.back());
+	};
+	spdlog::info("Perf test: {} strokes, {} objects, {} frames", m_Options.perfStrokes, m_Editor.document().size(), m_PerfCpuMs.size());
+	l_Report("CPU", m_PerfCpuMs);
+	l_Report("GPU", m_PerfGpuMs);
+	{
+		const uint64_t l_Start = SDL_GetTicksNS();
+		const std::vector<uint8_t> l_Bytes = m_Editor.saveBoard({});
+		spdlog::info("Perf save: {:.1f} ms, {:.1f} MiB", static_cast<double>(SDL_GetTicksNS() - l_Start) * 1e-6, static_cast<double>(l_Bytes.size()) / (1024.0 * 1024.0));
+	}
+	m_Running = false;
 }
 
 void App::captureScreenshot(const VkCommandBuffer p_Cmd, const VkImage p_Image, const VkExtent2D p_Extent)

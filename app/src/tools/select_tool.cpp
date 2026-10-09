@@ -67,6 +67,29 @@ const char* gestureName(const Handle p_Handle)
 {
 	return p_Handle == Handle::Rotate ? "Rotate" : "Scale";
 }
+
+// Every selected object is locked: the box shows, but nothing can be grabbed
+bool selectionLocked(const ToolContext& p_Context)
+{
+	if (p_Context.selection.empty())
+		return false;
+	for (const ObjectId l_Id : p_Context.selection.ids())
+	{
+		if (const Object* l_Object = p_Context.document.find(l_Id); l_Object != nullptr && !l_Object->locked)
+			return false;
+	}
+	return true;
+}
+
+std::vector<ObjectId> withoutLocked(const Document& p_Document, std::vector<ObjectId> p_Ids)
+{
+	std::erase_if(p_Ids, [&](const ObjectId p_Id)
+	{
+		const Object* l_Object = p_Document.find(p_Id);
+		return l_Object == nullptr || l_Object->locked;
+	});
+	return p_Ids;
+}
 } // namespace
 
 // ------------------------------------------------------------------------------------------------ geometry helpers
@@ -112,7 +135,7 @@ bool SelectTool::insideFrame(const DVec2 p_World, const ToolContext& p_Context) 
 
 Handle SelectTool::hitHandle(const DVec2 p_Screen, const platform::PointerDevice p_Device, const ToolContext& p_Context) const
 {
-	if (!m_HasFrame)
+	if (!m_HasFrame || selectionLocked(p_Context))
 		return Handle::None;
 	const Camera& l_Camera = p_Context.camera;
 	const double l_Padding = paddingWorld(p_Context);
@@ -222,7 +245,8 @@ void SelectTool::noteTransformed(const Affine2& p_World, const uint64_t p_Revisi
 SelectionOverlay SelectTool::overlay(ToolContext& p_Context, const bool p_Interactive)
 {
 	SelectionOverlay l_Overlay;
-	l_Overlay.interactive = p_Interactive;
+	l_Overlay.locked = selectionLocked(p_Context);
+	l_Overlay.interactive = p_Interactive && !l_Overlay.locked;
 	ensureFrame(p_Context);
 	const Camera& l_Camera = p_Context.camera;
 
@@ -335,7 +359,7 @@ void SelectTool::updateHover(const platform::PointerEvent& p_Event, ToolContext&
 	m_Hover = hitHandle(DVec2{ p_Event.position }, p_Event.device, p_Context);
 	if (m_Hover != Handle::None)
 		m_Cursor = cursorForHandle(m_Hover);
-	else if (insideFrame(p_Context.camera.screenToWorld(DVec2{ p_Event.position }), p_Context))
+	else if (!selectionLocked(p_Context) && insideFrame(p_Context.camera.screenToWorld(DVec2{ p_Event.position }), p_Context))
 		m_Cursor = CursorKind::Move;
 	else
 		m_Cursor = CursorKind::Default;
@@ -354,8 +378,13 @@ void SelectTool::startTransform(const Gesture p_Gesture, ToolContext& p_Context)
 	m_Bases.clear();
 	for (const ObjectId l_Id : p_Context.selection.ids())
 	{
-		if (const Object* l_Object = p_Context.document.find(l_Id))
+		if (const Object* l_Object = p_Context.document.find(l_Id); l_Object != nullptr && !l_Object->locked)
 			m_Bases.push_back(Base{ .id = l_Id, .transform = l_Object->transform });
+	}
+	if (m_Bases.empty())
+	{
+		m_Gesture = Gesture::None; // everything selected is locked: it can be clicked, not moved
+		return;
 	}
 	if (p_Gesture == Gesture::Rotate)
 	{
@@ -431,7 +460,7 @@ void SelectTool::begin(const platform::PointerEvent& p_Event, ToolContext& p_Con
 	}
 
 	// Inside the box of the current selection: grab it all (Shift starts a box selection instead)
-	if (!m_Additive && !l_Selection.empty() && insideFrame(m_DownWorld, p_Context))
+	if (!m_Additive && !l_Selection.empty() && !selectionLocked(p_Context) && insideFrame(m_DownWorld, p_Context))
 	{
 		startTransform(Gesture::Move, p_Context);
 		m_Cursor = CursorKind::Move;
@@ -614,7 +643,7 @@ void SelectTool::finish(ToolContext& p_Context)
 
 	case Gesture::Marquee:
 		if (m_Dragged)
-			l_Combine(objectsInRect(p_Context.document, Rect::fromPoints(m_DownWorld, m_CurrentWorld)));
+			l_Combine(withoutLocked(p_Context.document, objectsInRect(p_Context.document, Rect::fromPoints(m_DownWorld, m_CurrentWorld))));
 		else if (m_Additive)
 			l_Selection.set(m_KeptSelection);
 		break;
@@ -631,7 +660,7 @@ void SelectTool::finish(ToolContext& p_Context)
 					l_Thinned.push_back(m_Lasso[static_cast<size_t>(static_cast<double>(i) * l_Step)]);
 				m_Lasso = std::move(l_Thinned);
 			}
-			l_Combine(objectsInPolygon(p_Context.document, m_Lasso));
+			l_Combine(withoutLocked(p_Context.document, objectsInPolygon(p_Context.document, m_Lasso)));
 		}
 		else if (m_Additive)
 		{

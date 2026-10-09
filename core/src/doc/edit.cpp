@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <span>
@@ -17,6 +18,7 @@ import wb.doc.document;
 import wb.doc.history;
 import wb.doc.commands;
 import wb.doc.hit;
+import wb.brush.smoothing;
 
 namespace wb
 {
@@ -32,6 +34,14 @@ std::vector<const Object*> liveObjects(const Document& p_Document, const std::sp
 		if (l_Wanted.contains(l_Object->id))
 			l_Objects.push_back(l_Object.get());
 	}
+	return l_Objects;
+}
+
+// The same, without the locked ones: what edits may touch
+std::vector<const Object*> editableObjects(const Document& p_Document, const std::span<const ObjectId> p_Ids)
+{
+	std::vector<const Object*> l_Objects = liveObjects(p_Document, p_Ids);
+	std::erase_if(l_Objects, [](const Object* p_Object) { return p_Object->locked; });
 	return l_Objects;
 }
 
@@ -110,7 +120,7 @@ std::vector<ObjectId> duplicateObjects(Document& p_Document, History& p_History,
 void deleteObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
 {
 	std::vector<ObjectId> l_Ids;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 		l_Ids.push_back(l_Object->id);
 	if (!l_Ids.empty())
 		p_History.execute(p_Document, std::make_unique<RemoveObjectsCommand>(std::move(l_Ids), "Delete"));
@@ -119,7 +129,7 @@ void deleteObjects(Document& p_Document, History& p_History, const std::span<con
 void reorderObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const ZOrderMove p_Move)
 {
 	std::vector<ObjectId> l_Ids;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 		l_Ids.push_back(l_Object->id);
 	if (l_Ids.empty() || l_Ids.size() == p_Document.size())
 		return;
@@ -132,7 +142,7 @@ void reorderObjects(Document& p_Document, History& p_History, const std::span<co
 void flipObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const bool p_Horizontal)
 {
 	Rect l_Bounds{};
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 		l_Bounds.expand(tightWorldBounds(*l_Object));
 	if (l_Bounds.isEmpty())
 		return;
@@ -143,7 +153,7 @@ void flipObjects(Document& p_Document, History& p_History, const std::span<const
 void editImages(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
 {
 	std::vector<SetImageDataCommand::Entry> l_Entries;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 	{
 		const ImageData* l_Image = l_Object->image();
 		if (l_Image == nullptr)
@@ -159,7 +169,7 @@ void editImages(Document& p_Document, History& p_History, const std::span<const 
 void editVideos(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
 {
 	std::vector<SetVideoDataCommand::Entry> l_Entries;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 	{
 		const VideoData* l_Video = l_Object->video();
 		if (l_Video == nullptr)
@@ -186,7 +196,7 @@ void editText(Document& p_Document, History& p_History, const ObjectId p_Id, con
 {
 	const Object* l_Object = p_Document.find(p_Id);
 	const TextData* l_Before = l_Object != nullptr ? l_Object->text() : nullptr;
-	if (l_Before == nullptr || *l_Before == p_After)
+	if (l_Before == nullptr || l_Object->locked || *l_Before == p_After)
 		return;
 	std::vector<SetTextCommand::Entry> l_Entries;
 	l_Entries.push_back(SetTextCommand::Entry{
@@ -197,6 +207,120 @@ void editText(Document& p_Document, History& p_History, const ObjectId p_Id, con
 		.transformAfter = anchoredTextTransform(l_Object->transform, l_Before->size, p_After.size, p_After.align),
 	});
 	p_History.execute(p_Document, std::make_unique<SetTextCommand>(std::move(l_Entries), p_Name));
+}
+
+size_t smoothStrokes(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
+{
+	std::vector<SetStrokePointsCommand::Entry> l_Entries;
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
+	{
+		const StrokeData* l_Stroke = l_Object->stroke();
+		if (l_Stroke == nullptr)
+			continue;
+		std::vector<StrokePoint> l_After = smoothedPoints(l_Stroke->points, smoothingReach(*l_Stroke));
+		if (!l_After.empty() && l_After != l_Stroke->points)
+			l_Entries.push_back(SetStrokePointsCommand::Entry{ .id = l_Object->id, .before = l_Stroke->points, .after = std::move(l_After) });
+	}
+	const size_t l_Changed = l_Entries.size();
+	if (l_Changed > 0)
+		p_History.execute(p_Document, std::make_unique<SetStrokePointsCommand>(std::move(l_Entries), "Smooth strokes"));
+	return l_Changed;
+}
+
+void lockObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const bool p_Locked)
+{
+	std::vector<ObjectId> l_Ids;
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	{
+		if (l_Object->locked != p_Locked)
+			l_Ids.push_back(l_Object->id);
+	}
+	if (!l_Ids.empty())
+		p_History.execute(p_Document, std::make_unique<SetLockedCommand>(std::move(l_Ids), p_Locked, p_Locked ? "Lock" : "Unlock"));
+}
+
+void alignObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const AlignMode p_Mode)
+{
+	const std::vector<const Object*> l_All = liveObjects(p_Document, p_Ids);
+	if (l_All.size() < 2)
+		return;
+	struct Item
+	{
+		const Object* object = nullptr;
+		Rect bounds{};
+	};
+	std::vector<Item> l_Items;
+	Rect l_Total{};
+	for (const Object* l_Object : l_All)
+	{
+		const Rect l_Bounds = tightWorldBounds(*l_Object);
+		l_Total.expand(l_Bounds);
+		if (!l_Object->locked)
+			l_Items.push_back(Item{ .object = l_Object, .bounds = l_Bounds });
+	}
+
+	std::vector<DVec2> l_Shift(l_Items.size(), DVec2{ 0.0 });
+	switch (p_Mode)
+	{
+	case AlignMode::Left:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].x = l_Total.min.x - l_Items[i].bounds.min.x;
+		break;
+	case AlignMode::Right:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].x = l_Total.max.x - l_Items[i].bounds.max.x;
+		break;
+	case AlignMode::CenterX:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].x = l_Total.center().x - l_Items[i].bounds.center().x;
+		break;
+	case AlignMode::Top:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].y = l_Total.min.y - l_Items[i].bounds.min.y;
+		break;
+	case AlignMode::Bottom:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].y = l_Total.max.y - l_Items[i].bounds.max.y;
+		break;
+	case AlignMode::CenterY:
+		for (size_t i = 0; i < l_Items.size(); ++i)
+			l_Shift[i].y = l_Total.center().y - l_Items[i].bounds.center().y;
+		break;
+	case AlignMode::DistributeX:
+	case AlignMode::DistributeY:
+	{
+		if (l_Items.size() < 3)
+			return;
+		const int l_Axis = p_Mode == AlignMode::DistributeX ? 0 : 1;
+		std::vector<size_t> l_Order(l_Items.size());
+		for (size_t i = 0; i < l_Order.size(); ++i)
+			l_Order[i] = i;
+		std::ranges::stable_sort(l_Order, [&](const size_t p_A, const size_t p_B) { return l_Items[p_A].bounds.center()[l_Axis] < l_Items[p_B].bounds.center()[l_Axis]; });
+		const double l_First = l_Items[l_Order.front()].bounds.min[l_Axis];
+		const double l_Last = l_Items[l_Order.back()].bounds.max[l_Axis];
+		double l_Sizes = 0.0;
+		for (const Item& l_Item : l_Items)
+			l_Sizes += l_Item.bounds.max[l_Axis] - l_Item.bounds.min[l_Axis];
+		const double l_Gap = (l_Last - l_First - l_Sizes) / static_cast<double>(l_Items.size() - 1);
+		double l_Cursor = l_First;
+		for (const size_t l_Index : l_Order)
+		{
+			l_Shift[l_Index][l_Axis] = l_Cursor - l_Items[l_Index].bounds.min[l_Axis];
+			l_Cursor += l_Items[l_Index].bounds.max[l_Axis] - l_Items[l_Index].bounds.min[l_Axis] + l_Gap;
+		}
+		break;
+	}
+	}
+
+	std::vector<TransformObjectsCommand::Entry> l_Entries;
+	for (size_t i = 0; i < l_Items.size(); ++i)
+	{
+		const Object& l_Object = *l_Items[i].object;
+		l_Entries.push_back(TransformObjectsCommand::Entry{ .id = l_Object.id, .before = l_Object.transform, .after = Affine2::translate(l_Shift[i]) * l_Object.transform });
+	}
+	auto l_Command = std::make_unique<TransformObjectsCommand>(std::move(l_Entries), "Align");
+	if (l_Command->changesAnything())
+		p_History.execute(p_Document, std::move(l_Command));
 }
 
 bool isTilted(const Object& p_Object)
@@ -210,7 +334,7 @@ bool isTilted(const Object& p_Object)
 void resetTransforms(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
 {
 	std::vector<TransformObjectsCommand::Entry> l_Entries;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 	{
 		if (!isTilted(*l_Object))
 			continue;
@@ -232,7 +356,7 @@ void resetTransforms(Document& p_Document, History& p_History, const std::span<c
 void recolorObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const Color p_Color)
 {
 	std::vector<ObjectId> l_Ids;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 	{
 		const Color* l_Current = nullptr;
 		if (const StrokeData* l_Stroke = l_Object->stroke())
@@ -249,7 +373,7 @@ void recolorObjects(Document& p_Document, History& p_History, const std::span<co
 void transformObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const Affine2& p_World, const char* p_Name, const bool p_Mergeable)
 {
 	std::vector<TransformObjectsCommand::Entry> l_Entries;
-	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 		l_Entries.push_back(TransformObjectsCommand::Entry{ .id = l_Object->id, .before = l_Object->transform, .after = p_World * l_Object->transform });
 	if (l_Entries.empty())
 		return;

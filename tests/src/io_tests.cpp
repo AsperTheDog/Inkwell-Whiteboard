@@ -280,3 +280,21 @@ TEST(Settings, RoundTripKeepsUnknownKeysAndIgnoresGarbage)
 	EXPECT_FLOAT_EQ(l_Loaded.getFloat("future.key", 1.5f), 1.5f); // not a number: default
 	wb::removeFileQuiet(l_File);
 }
+
+TEST(Serializer, LockedObjectsStayLocked)
+{
+	wb::Document l_Doc;
+	fill(l_Doc, 4);
+	const wb::ObjectId l_Second = l_Doc.objects()[1]->id;
+	const wb::ObjectId l_Fourth = l_Doc.objects()[3]->id;
+	l_Doc.modify(l_Second, [](wb::Object& p_Object) { p_Object.locked = true; }, wb::ObjectChange::Lock);
+	l_Doc.modify(l_Fourth, [](wb::Object& p_Object) { p_Object.locked = true; }, wb::ObjectChange::Lock);
+
+	const std::vector<uint8_t> l_Bytes = wb::serializeBoard(l_Doc, {});
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	ASSERT_TRUE(wb::deserializeBoard(l_Bytes, l_Loaded, l_Meta).ok);
+	ASSERT_EQ(l_Loaded.size(), 4u);
+	for (const auto& l_Object : l_Loaded.objects())
+		EXPECT_EQ(l_Object->locked, l_Object->id == l_Second || l_Object->id == l_Fourth);
+}

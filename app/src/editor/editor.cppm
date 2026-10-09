@@ -40,6 +40,9 @@ import wb.tools.tool;
 import wb.tools.pen;
 import wb.tools.eraser;
 import wb.tools.select;
+import wb.tools.shape;
+import wb.tools.laser;
+import wb.view.ruler;
 
 export namespace wb
 {
@@ -104,6 +107,21 @@ public:
 	void cutSelection();
 	void paste();
 	void reorderSelection(ZOrderMove p_Move);
+	// Locking: how much of the selection is locked, and the switch (one undo step). Locking an unlocked selection
+	// locks all of it; unlocking a partly or fully locked one unlocks all of it.
+	enum class LockState : uint8_t
+	{
+		None,
+		Some,
+		All,
+	};
+	// Lines the selected objects up, or spaces them evenly (one undo step)
+	void alignSelection(AlignMode p_Mode);
+	// Evens out the selected strokes a little more each time (one undo step)
+	void smoothSelection();
+	[[nodiscard]] LockState selectionLockState() const;
+	void setSelectionLocked(bool p_Locked);
+	void toggleSelectionLock();
 	// Makes the selected objects upright again (one undo step)
 	void resetSelectionTransform();
 	[[nodiscard]] bool selectionIsTilted() const;
@@ -113,6 +131,15 @@ public:
 	ObjectId insertPicture(ImageAsset p_Asset, DVec2 p_WorldCenter);
 	// Same for a video (the asset holds the encoded file; its width and height are the picture size)
 	ObjectId insertVideo(ImageAsset p_Asset, DVec2 p_WorldCenter);
+	// The pages of a PDF, each drawn to a picture. p_Size is how big the page is on the board.
+	struct PageImage
+	{
+		ImageAsset asset;
+		Vec2 size{ 0.f };
+	};
+	// Lays the pages out one under another at the top of the view, locked so they stay put while drawing over them
+	// (one undo step), and flies to the first one. Returns the ids.
+	std::vector<ObjectId> insertPages(std::vector<PageImage> p_Pages);
 	// Edits one video (one undo step); p_Edit returns false to leave it alone
 	void editVideo(ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
@@ -173,6 +200,17 @@ public:
 	[[nodiscard]] tools::BrushState& brush() { return m_Brush; }
 	[[nodiscard]] tools::EraserState& eraser() { return m_EraserState; }
 	[[nodiscard]] BrushSettings& brushSettings() { return m_BrushSettings; }
+	[[nodiscard]] tools::BrushState& highlighterBrush() { return m_HighlighterBrush; }
+	[[nodiscard]] tools::ShapeState& shapeState() { return m_ShapeState; }
+	[[nodiscard]] const tools::LaserTool& laser() const { return *m_Laser; }
+	[[nodiscard]] tools::LaserTool& laser() { return *m_Laser; }
+
+	// ---- ruler. Not part of the board: pens that start next to its edge follow the edge.
+	[[nodiscard]] const Ruler& ruler() const { return m_Ruler; }
+	[[nodiscard]] bool rulerVisible() const { return m_Ruler.visible; }
+	void toggleRuler();
+	// True while the ruler is being turned, for the angle readout
+	[[nodiscard]] bool rulerTurning() const { return m_RulerDrag == RulerDrag::Turn; }
 
 private:
 	enum class CameraAnimation : uint8_t
@@ -196,6 +234,9 @@ private:
 	void cancelGestures();
 	void startZoom(double p_TargetZoom, DVec2 p_AnchorScreen);
 	void startFlyTo(DVec2 p_Center, double p_Zoom);
+	bool updateCamera(double p_DeltaSeconds);
+	// Moves / turns the ruler; returns true when the event belongs to it
+	bool handleRulerPointer(const platform::PointerEvent& p_Event, DVec2 p_World);
 	[[nodiscard]] TextData newTextData() const;
 	void embedFonts();
 	ObjectId insertMedia(ImageAsset p_Asset, DVec2 p_WorldCenter, bool p_Video);
@@ -206,6 +247,17 @@ private:
 	Selection m_Selection{ m_Document };
 	Camera m_Camera;
 	tools::BrushState m_Brush;
+	tools::BrushState m_HighlighterBrush{ .color = Color::fromRgba8(0xFDD835FFu), .sizePoints = 18.f };
+	tools::ShapeState m_ShapeState;
+	Ruler m_Ruler;
+	enum class RulerDrag : uint8_t
+	{
+		None,
+		Move,
+		Turn,
+	};
+	RulerDrag m_RulerDrag = RulerDrag::None;
+	DVec2 m_RulerGrab{ 0.0 };
 	tools::EraserState m_EraserState;
 	tools::SelectState m_SelectState;
 	BrushSettings m_BrushSettings;
@@ -213,6 +265,9 @@ private:
 	text::TextSystem m_TextSystem;
 	TextSession m_TextSession{ m_Document, m_History, m_Selection, m_Camera, m_TextSystem };
 	std::unique_ptr<tools::PenTool> m_Pen;
+	std::unique_ptr<tools::PenTool> m_Highlighter;
+	std::unique_ptr<tools::ShapeTool> m_ShapeTool;
+	std::unique_ptr<tools::LaserTool> m_Laser;
 	std::unique_ptr<tools::EraserTool> m_Eraser;
 	std::unique_ptr<tools::SelectTool> m_Select;
 	std::unique_ptr<tools::HandTool> m_Hand;

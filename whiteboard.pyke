@@ -1,6 +1,6 @@
-# Whiteboard: infinite-canvas vector whiteboard (Vulkan 1.3 + SDL3, C++23 modules)
+# Inkwell: infinite-canvas vector whiteboard (Vulkan 1.3 + SDL3, C++23 modules)
 #
-# Windows: `pyke build` (Visual Studio generator) or open build/Whiteboard.slnx
+# Windows: `pyke build` (Visual Studio generator) or open build/Inkwell.slnx
 # Linux:   `scripts/build_linux.sh` (clang + Ninja)
 
 from github import "libsdl-org/SDL" as sdl3_src, tag="release-3.4.16", options={"SDL_TEST_LIBRARY": False, "SDL_TESTS": False, "SDL_EXAMPLES": False, "SDL_SHARED": True, "SDL_STATIC": False}
@@ -11,7 +11,7 @@ from github import "g-truc/glm" as glm_src, tag="1.0.3", options={"GLM_BUILD_TES
 from github import "gabime/spdlog" as spdlog, tag="v1.17.0", options={"SPDLOG_BUILD_EXAMPLE": False, "SPDLOG_INSTALL": False}
 from github import "google/googletest" as GTest, tag="v1.18.0", options={"INSTALL_GTEST": False, "BUILD_GMOCK": False, "gtest_force_shared_crt": True}
 
-project("Whiteboard", version="0.1.0", lang="c++23", presets=True)
+project("Inkwell", version="0.1.0", lang="c++23", presets=True)
 
 # Shared compile settings for our own targets
 msvc_flags = ["/utf-8", "/permissive-", "/Zc:preprocessor", "/Zc:__cplusplus", "/MP"]
@@ -49,7 +49,6 @@ target ImGui(PUBLIC SDL3, PUBLIC VulkanDeps):
     def configure(self):
         self.sources = [
             "//vendor/imgui/imgui.cpp",
-            "//vendor/imgui/imgui_demo.cpp",
             "//vendor/imgui/imgui_draw.cpp",
             "//vendor/imgui/imgui_tables.cpp",
             "//vendor/imgui/imgui_widgets.cpp",
@@ -92,7 +91,10 @@ target whiteboard(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImG
             "wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)",
             "include(${PROJECT_SOURCE_DIR}/cmake/FFmpeg.cmake)",
             "wb_link_ffmpeg(whiteboard)",
-            "set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:whiteboard>\")"
+            "include(${PROJECT_SOURCE_DIR}/cmake/PDFium.cmake)",
+            "wb_link_pdfium(whiteboard)",
+            "set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:whiteboard>\")",
+            "set_target_properties(whiteboard PROPERTIES OUTPUT_NAME inkwell)"
         ]
         if compiler == "msvc":
             self.flags += msvc_flags

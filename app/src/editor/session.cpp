@@ -79,7 +79,7 @@ IoResult Session::open(const std::filesystem::path& p_Path)
 	if (!l_Loaded.ok)
 		return IoResult::failure(pathToUtf8(p_Path.filename()) + ": " + l_Loaded.error);
 	if (l_Loaded.skippedObjects > 0)
-		m_Warning = std::to_string(l_Loaded.skippedObjects) + " object(s) from a newer version of Whiteboard were left out. Saving will drop them.";
+		m_Warning = std::to_string(l_Loaded.skippedObjects) + " object(s) from a newer version of Inkwell were left out. Saving will drop them.";
 
 	m_Path = p_Path;
 	m_SavedState = m_Editor.history().stateId();
@@ -115,7 +115,11 @@ void Session::tick(const uint64_t p_NowNs)
 	SplitBoard l_Board = m_Editor.saveBoardSplit(m_Path ? pathToUtf8(*m_Path) : std::string{}, BIG_ASSET_BYTES);
 	m_AutosavedState = l_State;
 	m_LastAutosaveNs = p_NowNs;
-	m_AutosaveJob = std::async(std::launch::async, [l_Path = recoveryPath(), l_Data = std::move(l_Board)] { return writeSplitBoardAtomic(l_Path, l_Data); });
+	m_AutosaveJob = std::async(std::launch::async, [l_Path = recoveryPath(), l_Data = std::move(l_Board)]() mutable
+	{
+		finishChecksums(l_Data);
+		return writeSplitBoardAtomic(l_Path, l_Data);
+	});
 }
 
 void Session::reapAutosave()

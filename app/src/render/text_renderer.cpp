@@ -49,16 +49,16 @@ void TextRenderer::init(const gfx::GraphicsContext& p_Context, const VkFormat p_
 	WB_VK_CHECK(vkCreateDescriptorSetLayout(l_Device, &l_LayoutInfo, nullptr, &m_SetLayout));
 
 	const VkDescriptorPoolSize l_PoolSizes[]{
-		{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = gfx::FRAMES_IN_FLIGHT },
-		{ .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = gfx::FRAMES_IN_FLIGHT },
+		{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = gfx::RENDER_SLOTS },
+		{ .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = gfx::RENDER_SLOTS },
 	};
-	const VkDescriptorPoolCreateInfo l_PoolInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = gfx::FRAMES_IN_FLIGHT, .poolSizeCount = 2, .pPoolSizes = l_PoolSizes };
+	const VkDescriptorPoolCreateInfo l_PoolInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = gfx::RENDER_SLOTS, .poolSizeCount = 2, .pPoolSizes = l_PoolSizes };
 	WB_VK_CHECK(vkCreateDescriptorPool(l_Device, &l_PoolInfo, nullptr, &m_DescriptorPool));
 
-	std::array<VkDescriptorSetLayout, gfx::FRAMES_IN_FLIGHT> l_Layouts{};
+	std::array<VkDescriptorSetLayout, gfx::RENDER_SLOTS> l_Layouts{};
 	l_Layouts.fill(m_SetLayout);
-	std::array<VkDescriptorSet, gfx::FRAMES_IN_FLIGHT> l_Sets{};
-	const VkDescriptorSetAllocateInfo l_AllocInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = m_DescriptorPool, .descriptorSetCount = gfx::FRAMES_IN_FLIGHT, .pSetLayouts = l_Layouts.data() };
+	std::array<VkDescriptorSet, gfx::RENDER_SLOTS> l_Sets{};
+	const VkDescriptorSetAllocateInfo l_AllocInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = m_DescriptorPool, .descriptorSetCount = gfx::RENDER_SLOTS, .pSetLayouts = l_Layouts.data() };
 	WB_VK_CHECK(vkAllocateDescriptorSets(l_Device, &l_AllocInfo, l_Sets.data()));
 
 	m_Atlas = gfx::createImage2D(p_Context, VkExtent2D{ text::GlyphAtlas::SIZE, text::GlyphAtlas::SIZE }, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "text glyph atlas");
@@ -74,7 +74,7 @@ void TextRenderer::init(const gfx::GraphicsContext& p_Context, const VkFormat p_
 	};
 	WB_VK_CHECK(vkCreateSampler(l_Device, &l_SamplerInfo, nullptr, &m_Sampler));
 
-	for (uint32_t i = 0; i < gfx::FRAMES_IN_FLIGHT; ++i)
+	for (uint32_t i = 0; i < gfx::RENDER_SLOTS; ++i)
 	{
 		m_Frames[i].descriptorSet = l_Sets[i];
 		m_Frames[i].glyphs = gfx::createBuffer(p_Context, MIN_GLYPH_BUFFER_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gfx::MemoryKind::Upload, "text glyphs");

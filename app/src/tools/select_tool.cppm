@@ -23,6 +23,7 @@ struct SelectionOverlay
 {
 	bool visible = false;     // a selection box exists
 	bool interactive = false; // handles can be grabbed (the Select tool is in effect)
+	bool locked = false;      // everything selected is locked: no handles, a padlock instead
 
 	std::array<Vec2, 4> corners{};                          // NW, NE, SE, SW
 	std::array<Vec2, SCALE_HANDLE_COUNT> handles{};         // N, NE, E, SE, S, SW, W, NW

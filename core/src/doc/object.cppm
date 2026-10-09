@@ -28,7 +28,10 @@ inline constexpr AssetId INVALID_ASSET_ID = 0;
 enum class BrushKind : uint8_t
 {
 	Pen,
+	Highlighter, // see-through ink, a fixed colour alpha of HIGHLIGHTER_ALPHA
 };
+
+inline constexpr float HIGHLIGHTER_ALPHA = 0.4f;
 
 struct StrokeStyle
 {
@@ -143,7 +146,11 @@ struct Object
 	ObjectId id = INVALID_OBJECT_ID;
 	Affine2 transform{};
 	ObjectPayload payload{};
+	bool locked = false;  // cannot be moved, edited, erased or deleted until unlocked
 	uint32_t version = 0; // bumped on every change; lets caches (GPU buffers...) detect stale data
+	// The renderer's private index for this object's GPU data. Copies carry it along, so the renderer checks that the
+	// slot it points to really belongs to this id before trusting it.
+	mutable uint32_t renderSlot = 0;
 
 	// Recomputes the cached bounds. Document calls this on insert and after every modify().
 	void refreshBounds()
@@ -176,6 +183,8 @@ private:
 	auto l_Copy = std::make_unique<Object>(p_Source);
 	l_Copy->id = p_NewId;
 	l_Copy->version = 0;
+	l_Copy->locked = false;
+	l_Copy->renderSlot = 0;
 	return l_Copy;
 }
 } // namespace wb

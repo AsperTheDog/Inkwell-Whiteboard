@@ -35,6 +35,8 @@ void Document::insert(std::unique_ptr<Object> p_Object, const size_t p_ZIndex)
 	Object* l_Raw = p_Object.get();
 	const size_t l_Index = std::min(p_ZIndex, m_Objects.size());
 	m_Objects.insert(m_Objects.begin() + static_cast<std::ptrdiff_t>(l_Index), std::move(p_Object));
+	if (!m_BoundsDirty)
+		m_Bounds.insert(m_Bounds.begin() + static_cast<std::ptrdiff_t>(l_Index), l_Raw->worldBounds());
 	m_ById.emplace(l_Raw->id, l_Raw);
 	++m_Revision;
 
@@ -50,6 +52,8 @@ Document::Removed Document::take(const ObjectId p_Id)
 
 	std::unique_ptr<Object> l_Object = std::move(m_Objects[l_Index]);
 	m_Objects.erase(m_Objects.begin() + static_cast<std::ptrdiff_t>(l_Index));
+	if (!m_BoundsDirty)
+		m_Bounds.erase(m_Bounds.begin() + static_cast<std::ptrdiff_t>(l_Index));
 	m_ById.erase(p_Id);
 	++m_Revision;
 
@@ -70,6 +74,12 @@ void Document::modify(const ObjectId p_Id, const std::function<void(Object&)>& p
 	l_Object.refreshBounds();
 	++l_Object.version;
 	++m_Revision;
+	if (!m_BoundsDirty)
+	{
+		m_StaleBounds.push_back(p_Id);
+		if (m_StaleBounds.size() > 48)
+			m_BoundsDirty = true;
+	}
 
 	for (DocumentListener* l_Listener : m_Listeners)
 		l_Listener->onObjectChanged(l_Object, p_Changes);
@@ -87,6 +97,7 @@ void Document::moveTo(const ObjectId p_Id, const size_t p_ZIndex)
 	std::unique_ptr<Object> l_Object = std::move(m_Objects[l_From]);
 	m_Objects.erase(m_Objects.begin() + static_cast<std::ptrdiff_t>(l_From));
 	m_Objects.insert(m_Objects.begin() + static_cast<std::ptrdiff_t>(l_To), std::move(l_Object));
+	m_BoundsDirty = true;
 	++m_Revision;
 
 	for (DocumentListener* l_Listener : m_Listeners)
@@ -122,6 +133,7 @@ void Document::setOrder(const std::span<const ObjectId> p_Order)
 	for (const size_t l_Source : l_Sources)
 		l_Reordered.push_back(std::move(m_Objects[l_Source]));
 	m_Objects = std::move(l_Reordered);
+	m_BoundsDirty = true;
 	++m_Revision;
 	for (DocumentListener* l_Listener : m_Listeners)
 		l_Listener->onObjectsReordered();
@@ -197,6 +209,9 @@ void Document::clear()
 	m_NextAsset = 1;
 	m_Objects.clear();
 	m_ById.clear();
+	m_Bounds.clear();
+	m_StaleBounds.clear();
+	m_BoundsDirty = false;
 	++m_Revision;
 	for (DocumentListener* l_Listener : m_Listeners)
 		l_Listener->onDocumentCleared();
@@ -223,6 +238,27 @@ Rect Document::contentBounds() const
 	for (const std::unique_ptr<Object>& l_Object : m_Objects)
 		l_Bounds.expand(l_Object->worldBounds());
 	return l_Bounds;
+}
+
+std::span<const Rect> Document::boundsList() const
+{
+	if (m_BoundsDirty)
+	{
+		m_Bounds.resize(m_Objects.size());
+		for (size_t i = 0; i < m_Objects.size(); ++i)
+			m_Bounds[i] = m_Objects[i]->worldBounds();
+		m_BoundsDirty = false;
+	}
+	else
+	{
+		for (const ObjectId l_Id : m_StaleBounds)
+		{
+			if (const size_t l_Index = indexOf(l_Id); l_Index != SIZE_MAX)
+				m_Bounds[l_Index] = m_Objects[l_Index]->worldBounds();
+		}
+	}
+	m_StaleBounds.clear();
+	return m_Bounds;
 }
 
 void Document::addListener(DocumentListener* p_Listener)

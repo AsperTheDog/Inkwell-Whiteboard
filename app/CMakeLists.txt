@@ -34,7 +34,10 @@ include(${PROJECT_SOURCE_DIR}/cmake/Shaders.cmake)
 wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 include(${PROJECT_SOURCE_DIR}/cmake/FFmpeg.cmake)
 wb_link_ffmpeg(whiteboard)
+include(${PROJECT_SOURCE_DIR}/cmake/PDFium.cmake)
+wb_link_pdfium(whiteboard)
 set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:whiteboard>")
+set_target_properties(whiteboard PROPERTIES OUTPUT_NAME inkwell)
 if(MSVC)
     target_compile_options(whiteboard PRIVATE
         "/utf-8"
