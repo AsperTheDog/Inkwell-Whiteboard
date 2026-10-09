@@ -11,7 +11,7 @@ from github import "g-truc/glm" as glm_src, tag="1.0.3", options={"GLM_BUILD_TES
 from github import "gabime/spdlog" as spdlog, tag="v1.17.0", options={"SPDLOG_BUILD_EXAMPLE": False, "SPDLOG_INSTALL": False}
 from github import "google/googletest" as GTest, tag="v1.18.0", options={"INSTALL_GTEST": False, "BUILD_GMOCK": False, "gtest_force_shared_crt": True}
 
-project("Inkwell", version="1.0.0", lang="c++23", presets=True)
+project("Inkwell", version="1.0.1", lang="c++23", presets=True)
 
 # Shared compile settings for our own targets
 msvc_flags = ["/utf-8", "/permissive-", "/Zc:preprocessor", "/Zc:__cplusplus", "/MP"]

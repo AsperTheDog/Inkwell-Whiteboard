@@ -18,7 +18,7 @@ import zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DIST = os.path.join(ROOT, "dist")
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 README = """Inkwell {version}
 ==================
