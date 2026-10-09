@@ -77,3 +77,5 @@ scripts/   Linux build, FFmpeg/PDFium fetch, release packaging
 
 Inkwell is MIT licensed ([LICENSE](LICENSE)). Third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) and shipped
 in the `licenses/` folder of each release. FFmpeg is used as the unmodified LGPL build and loaded dynamically.
+
+<img width="1270" height="669" alt="inkwell" src="https://github.com/user-attachments/assets/5a2361f6-0e4a-498a-952c-3cf1cb878571" />
