@@ -4,8 +4,10 @@ module;
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <filesystem>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <stb_image.h>
 #include <volk.h>
 
 module wb.platform.window;
@@ -25,6 +27,24 @@ void Window::create(const std::string_view p_Title)
 	if (m_Window == nullptr)
 		throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
 	SDL_SetWindowMinimumSize(m_Window, 480, 320);
+
+	// Window and taskbar icon (the Windows executable also embeds it as a resource)
+	if (const char* l_Base = SDL_GetBasePath())
+	{
+		const std::string l_Path = std::string(l_Base) + "assets/icon/inkwell.png";
+		int l_Width = 0;
+		int l_Height = 0;
+		int l_Channels = 0;
+		if (stbi_uc* l_Pixels = stbi_load(l_Path.c_str(), &l_Width, &l_Height, &l_Channels, 4))
+		{
+			if (SDL_Surface* l_Icon = SDL_CreateSurfaceFrom(l_Width, l_Height, SDL_PIXELFORMAT_RGBA32, l_Pixels, l_Width * 4))
+			{
+				SDL_SetWindowIcon(m_Window, l_Icon);
+				SDL_DestroySurface(l_Icon);
+			}
+			stbi_image_free(l_Pixels);
+		}
+	}
 }
 
 void Window::destroy()

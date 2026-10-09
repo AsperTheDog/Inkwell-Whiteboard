@@ -93,6 +93,10 @@ target inkwell(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui,
             "wb_link_ffmpeg(inkwell)",
             "include(${PROJECT_SOURCE_DIR}/cmake/PDFium.cmake)",
             "wb_link_pdfium(inkwell)",
+            "if(WIN32)
+    enable_language(RC)
+    target_sources(inkwell PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inkwell.rc)
+endif()",
             "set_target_properties(inkwell PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:inkwell>\")"
         ]
         if compiler == "msvc":
