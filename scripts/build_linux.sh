@@ -43,8 +43,8 @@ CMAKE="${CMAKE_DIR:+$CMAKE_DIR/bin/}cmake"
 CTEST="${CMAKE_DIR:+$CMAKE_DIR/bin/}ctest"
 
 PYKE_BIN="${PYKE:-}"
-if [[ -n "$PYKE_BIN" && "$ROOT/whiteboard.pyke" -nt "$ROOT/CMakeLists.txt" ]]; then
-    (cd "$ROOT" && "$PYKE_BIN" whiteboard.pyke .)
+if [[ -n "$PYKE_BIN" && "$ROOT/inkwell.pyke" -nt "$ROOT/CMakeLists.txt" ]]; then
+    (cd "$ROOT" && "$PYKE_BIN" inkwell.pyke .)
 fi
 
 echo "== $CONFIG build with $("$CXX" --version | head -1) / $("$CMAKE" --version | head -1)"

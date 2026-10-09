@@ -46,7 +46,7 @@ Windows:
 
 ```powershell
 cmake -S . -B build
-cmake --build build --config Release --target whiteboard
+cmake --build build --config Release --target inkwell
 build\app\Release\inkwell.exe
 ```
 
@@ -59,7 +59,7 @@ scripts/build_linux.sh release [--test] [--run]    # into build-linux-release/
 Tests: `cmake --build build --config Release --target wb_tests`, then `ctest` in `build/`.
 Release archives: `python scripts/package_release.py windows|linux` (output in `dist/`).
 
-The build is described in `whiteboard.pyke` ([Pyke](https://github.com/AsperTheDog/Pyke)); the generated CMake files
+The build is described in `inkwell.pyke` ([Pyke](https://github.com/AsperTheDog/Pyke)); the generated CMake files
 are committed, so Pyke is not required.
 
 Switches: `WB_VALIDATION=0/1`, `WB_GPU=<name substring>`, `--smoke-test[=N] [--smoke-ui=<mode>]`.

@@ -45,7 +45,7 @@ std::string describeError(const unsigned long p_Code)
 	case FPDF_ERR_PASSWORD:
 		return "This PDF is protected with a password.";
 	case FPDF_ERR_FORMAT:
-		return "This file is not a PDF Whiteboard can read.";
+		return "This file is not a PDF Inkwell can read.";
 	case FPDF_ERR_FILE:
 		return "The PDF could not be opened.";
 	default:

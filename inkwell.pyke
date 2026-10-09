@@ -75,11 +75,11 @@ target wb_core(PUBLIC GLM):
             self.flags += clang_flags
 
 # ---------------------------------------------------------------------------
-# whiteboard: the application
+# inkwell: the application
 # ---------------------------------------------------------------------------
 
 @Executable("app", copy_dlls=True)
-target whiteboard(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui, PRIVATE STB, PRIVATE spdlog):
+target inkwell(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui, PRIVATE STB, PRIVATE spdlog):
     def configure(self):
         self.sources = ["src/**/*.cpp", "src/**/*.hpp"]
         self.modules = ["src/**/*.cppm"]
@@ -88,13 +88,12 @@ target whiteboard(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImG
         self.warnings = "strict"
         self.cmake += [
             "include(${PROJECT_SOURCE_DIR}/cmake/Shaders.cmake)",
-            "wb_compile_shaders(whiteboard ${CMAKE_CURRENT_SOURCE_DIR}/shaders)",
+            "wb_compile_shaders(inkwell ${CMAKE_CURRENT_SOURCE_DIR}/shaders)",
             "include(${PROJECT_SOURCE_DIR}/cmake/FFmpeg.cmake)",
-            "wb_link_ffmpeg(whiteboard)",
+            "wb_link_ffmpeg(inkwell)",
             "include(${PROJECT_SOURCE_DIR}/cmake/PDFium.cmake)",
-            "wb_link_pdfium(whiteboard)",
-            "set_target_properties(whiteboard PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:whiteboard>\")",
-            "set_target_properties(whiteboard PROPERTIES OUTPUT_NAME inkwell)"
+            "wb_link_pdfium(inkwell)",
+            "set_target_properties(inkwell PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY \"$<TARGET_FILE_DIR:inkwell>\")"
         ]
         if compiler == "msvc":
             self.flags += msvc_flags
