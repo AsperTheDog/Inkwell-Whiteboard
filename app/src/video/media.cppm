@@ -75,6 +75,9 @@ public:
 	[[nodiscard]] bool ended() const; // stopped at the end of the video
 	[[nodiscard]] bool looping() const;
 	[[nodiscard]] bool audioWorks() const; // the sound plays (the video has sound and a device took it)
+	// Waiting for the picture of a seek, or for pictures that are slow to come (a huge file, a slow disk, a download):
+	// what is on screen is not what the clock says. Only true after a moment, so ordinary seeks do not flicker.
+	[[nodiscard]] bool buffering() const;
 	[[nodiscard]] double position() const;
 	[[nodiscard]] double duration() const;
 

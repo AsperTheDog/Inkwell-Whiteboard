@@ -37,6 +37,7 @@ struct VideoStatus
 	bool ended = false;
 	bool hasAudio = false;
 	bool audioWorks = false;
+	bool buffering = false; // the picture shown is behind: a seek or a slow file is being waited for
 	double position = 0.0;
 	double duration = 0.0;
 	std::string error;

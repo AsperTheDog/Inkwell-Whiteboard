@@ -383,6 +383,8 @@ struct Player::Impl
 	bool videoEof = false;
 	std::shared_ptr<Frame> current;
 	uint64_t frameSerial = 0;
+	Clock::time_point seekAt = Clock::now();      // when the latest seek (or the opening) asked for a picture
+	Clock::time_point lastPushAt = Clock::now();  // when the decoder last produced a picture
 
 	// The clock (clockMutex)
 	mutable std::mutex clockMutex;
@@ -504,6 +506,7 @@ void Player::Impl::pushFrame(std::shared_ptr<Frame> p_Frame, const uint64_t p_Ep
 		return; // made before a seek: stale
 	p_Frame->epoch = p_Epoch;
 	p_Frame->serial = ++frameSerial;
+	lastPushAt = Clock::now();
 	queue.push_back(std::move(p_Frame));
 }
 
@@ -1000,6 +1003,7 @@ void Player::seek(const double p_Seconds)
 		std::lock_guard l_Lock(l_Impl.m);
 		l_Impl.seekTarget = l_Target;
 		++l_Impl.seekSerial;
+		l_Impl.seekAt = Clock::now();
 		l_Impl.queue.clear();
 		l_Impl.videoEof = false;
 	}
@@ -1037,6 +1041,23 @@ bool Player::looping() const
 bool Player::audioWorks() const
 {
 	return m_Impl->audioStream != nullptr;
+}
+
+bool Player::buffering() const
+{
+	Impl& l_Impl = *m_Impl;
+	bool l_Playing;
+	{
+		std::lock_guard l_Lock(l_Impl.clockMutex);
+		l_Playing = l_Impl.isPlaying && !l_Impl.stoppedAtEnd;
+	}
+	std::lock_guard l_Lock(l_Impl.m);
+	if (!l_Impl.queue.empty() || l_Impl.videoEof)
+		return false;
+	const auto l_Now = Clock::now();
+	if (!l_Impl.current || l_Impl.current->epoch != l_Impl.seekSerial)
+		return l_Now - l_Impl.seekAt > std::chrono::milliseconds(150); // the picture of the seek has not come
+	return l_Playing && l_Now - l_Impl.lastPushAt > std::chrono::milliseconds(400);
 }
 
 double Player::position() const

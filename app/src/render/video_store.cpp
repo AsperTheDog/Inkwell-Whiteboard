@@ -415,6 +415,7 @@ VideoStatus VideoStore::status(const ObjectId p_Id) const
 		l_Status.duration = l_Entry.player->duration();
 		l_Status.hasAudio = l_Entry.info.hasAudio;
 		l_Status.audioWorks = l_Entry.player->audioWorks();
+		l_Status.buffering = l_Entry.player->buffering();
 	}
 	return l_Status;
 }

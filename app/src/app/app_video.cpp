@@ -190,6 +190,35 @@ void App::buildVideoViewer()
 	if (m_VideoScrub != INVALID_OBJECT_ID && l_Hot != m_VideoScrub)
 		m_VideoScrub = INVALID_OBJECT_ID;
 
+	// ---- a video that is waiting for its picture (after a jump in a huge file, say) shows a turning arc
+	bool l_AnyBuffering = false;
+	for (const ObjectId l_Id : l_Visible)
+	{
+		const Object* l_Object = m_Editor.document().find(l_Id);
+		const VideoData* l_Video = l_Object != nullptr ? l_Object->video() : nullptr;
+		if (l_Video == nullptr || !l_Videos.status(l_Id).buffering)
+			continue;
+		const std::optional<VideoOnScreen> l_Screen = videoOnScreen(*l_Object, *l_Video, l_Camera);
+		if (!l_Screen || std::min(l_Screen->box.width(), l_Screen->box.height()) < m_Ui.px(40.f))
+			continue;
+		l_AnyBuffering = true;
+		const float l_Radius = std::clamp(std::min(l_Screen->box.width(), l_Screen->box.height()) * 0.1f, m_Ui.px(10.f), m_Ui.px(20.f));
+		const Vec2 l_Center = l_Screen->box.center();
+		const double l_Time = static_cast<double>(SDL_GetTicksNS()) * 1e-9;
+		l_Draw.circle(l_Center, l_Radius + m_Ui.px(6.f), ui::withAlpha(l_Theme.shadow, 0.6f));
+		l_Draw.ring(l_Center, l_Radius, Color{ 1.f, 1.f, 1.f, 0.22f }, m_Ui.px(2.5f));
+		constexpr int SEGMENTS = 14;
+		std::array<Vec2, SEGMENTS + 1> l_Arc{};
+		for (int s = 0; s <= SEGMENTS; ++s)
+		{
+			const double l_Angle = l_Time * 5.0 + (static_cast<double>(s) / SEGMENTS) * 1.9;
+			l_Arc[static_cast<size_t>(s)] = l_Center + Vec2{ static_cast<float>(std::cos(l_Angle)), static_cast<float>(std::sin(l_Angle)) } * l_Radius;
+		}
+		l_Draw.polyline(l_Arc, m_Ui.px(2.5f), Color{ 1.f, 1.f, 1.f, 0.95f }, false);
+	}
+	if (l_AnyBuffering)
+		requestRedraw(2); // the arc turns
+
 	// ---- paused videos wear a badge; videos that cannot play say so
 	for (const ObjectId l_Id : l_Visible)
 	{
@@ -215,7 +244,7 @@ void App::buildVideoViewer()
 				l_Draw.text(l_Chip.center(), l_Text, l_Size, Color{ 1.f, 1.f, 1.f, 1.f }, ui::TextAlign::Center);
 			}
 		}
-		else if (l_Status.ready && !l_Status.playing)
+		else if (l_Status.ready && !l_Status.playing && !l_Status.buffering)
 		{
 			const float l_Radius = std::clamp(std::min(l_Screen->box.width(), l_Screen->box.height()) * 0.12f, m_Ui.px(14.f), m_Ui.px(26.f));
 			const Vec2 l_Center = l_Screen->box.center();
