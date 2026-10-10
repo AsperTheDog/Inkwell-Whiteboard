@@ -56,6 +56,7 @@ void App::buildSelectionBar()
 	size_t l_Pictures = 0;
 	size_t l_Animated = 0;
 	size_t l_AnimatedPlaying = 0;
+	AssetId l_MediaAsset = INVALID_ASSET_ID;
 	for (const ObjectId l_Id : m_Editor.selection().ids())
 	{
 		const Object* l_Object = m_Editor.document().find(l_Id);
@@ -65,8 +66,11 @@ void App::buildSelectionBar()
 			l_HasStrokes = true;
 		if (l_Object->text() != nullptr)
 			l_HasText = true;
+		if (const VideoData* l_Video = l_Object->video())
+			l_MediaAsset = l_Video->asset;
 		if (const ImageData* l_Image = l_Object->image())
 		{
+			l_MediaAsset = l_Image->asset;
 			++l_Pictures;
 			if (m_Canvas.images().animated(l_Image->asset))
 			{
@@ -91,6 +95,9 @@ void App::buildSelectionBar()
 	l_Buttons += l_HasStrokes ? 1 : 0; // smoothing
 	l_Buttons += l_Animated > 0 ? 1 : 0;
 	l_Buttons += l_Pictures > 0 ? 1 : 0;
+	// One picture or video selected: its file can be saved on its own
+	const bool l_CanSaveFile = m_Editor.selection().size() == 1 && l_MediaAsset != INVALID_ASSET_ID;
+	l_Buttons += l_CanSaveFile ? 1 : 0;
 	l_Buttons += l_HasText ? 1 : 0;
 	const bool l_Tilted = m_Editor.selectionIsTilted();
 	l_Buttons += l_Tilted ? 1 : 0;
@@ -187,6 +194,13 @@ void App::buildSelectionBar()
 	{
 		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
 			compressSelectedPictures();
+	}
+
+	if (l_CanSaveFile)
+	{
+		const bool l_Here = m_Editor.document().findAsset(l_MediaAsset) != nullptr;
+		if (m_Ui.iconButton("selbar.savefile", l_Next(), ui::Icon::SaveAs, false, l_Here, l_Here ? "Save this file to your computer" : "Still arriving: it can be saved when it has finished"))
+			showSaveMediaDialog(l_MediaAsset);
 	}
 
 	if (l_ShowColour)

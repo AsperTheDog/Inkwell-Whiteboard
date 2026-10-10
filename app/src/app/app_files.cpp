@@ -299,6 +299,26 @@ void App::showSaveDialog(const Action p_After)
 	SDL_ShowSaveFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 1, l_Start.empty() ? nullptr : l_Start.c_str());
 }
 
+// Saves the original file of a picture or video of the board (also one that arrived from somebody else) to the disk
+void App::showSaveMediaDialog(const AssetId p_Asset)
+{
+	if (m_DialogKind != DialogKind::None)
+		return;
+	const ImageAsset* l_Asset = m_Editor.document().findAsset(p_Asset);
+	if (l_Asset == nullptr)
+		return;
+	m_DialogKind = DialogKind::SaveMedia;
+	m_SaveMediaAsset = p_Asset;
+	// Only the file name of whatever the sender called it
+	std::string l_Name = pathToUtf8(pathFromUtf8(l_Asset->name).filename());
+	if (l_Name.empty())
+		l_Name = "file";
+	std::string l_Start = l_Name;
+	if (!m_LastDirectory.empty())
+		l_Start = pathToUtf8(pathFromUtf8(m_LastDirectory) / pathFromUtf8(l_Name));
+	SDL_ShowSaveFileDialog(&App::dialogCallback, this, m_Window.handle(), nullptr, 0, l_Start.c_str());
+}
+
 // May run on any thread: hand the result to the main loop and wake it
 void SDLCALL App::dialogCallback(void* p_User, const char* const* p_Files, int)
 {
@@ -338,6 +358,23 @@ void App::handleDialogResult()
 		if (!l_Folder.empty())
 			m_LastDirectory = pathToUtf8(l_Folder);
 		startExport(pathFromUtf8(l_Paths.front()));
+		return;
+	}
+	if (l_Kind == DialogKind::SaveMedia)
+	{
+		const std::filesystem::path l_Target = pathFromUtf8(l_Paths.front());
+		if (!l_Target.parent_path().empty())
+			m_LastDirectory = pathToUtf8(l_Target.parent_path());
+		const ImageAsset* l_Asset = m_Editor.document().findAsset(m_SaveMediaAsset);
+		if (l_Asset == nullptr)
+		{
+			showMessage("The file is no longer on the board, so it could not be saved.");
+			return;
+		}
+		if (const IoResult l_Written = writeFileAtomic(l_Target, l_Asset->bytes); !l_Written.ok)
+			showMessage("The file could not be saved.\n\n" + l_Written.error);
+		else
+			showToast("Saved " + pathToUtf8(l_Target.filename()));
 		return;
 	}
 	if (l_Kind == DialogKind::Fonts)

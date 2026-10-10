@@ -104,6 +104,7 @@ private:
 		Pictures,
 		Fonts,
 		ExportPng,
+		SaveMedia, // a picture or video file of the board, saved on its own
 	};
 	// The floating panel that is open, if any
 	enum class Popup : uint8_t
@@ -201,6 +202,7 @@ private:
 	void requestSave(bool p_SaveAs, Action p_After);
 	void showOpenDialog();
 	void showSaveDialog(Action p_After);
+	void showSaveMediaDialog(AssetId p_Asset);
 	void handleDialogResult();
 	void saveToPath(const std::filesystem::path& p_Path, Action p_After);
 	void openPath(const std::filesystem::path& p_Path);
@@ -423,6 +425,7 @@ private:
 	uint32_t m_DialogEvent = 0;
 	DialogKind m_DialogKind = DialogKind::None;
 	Action m_DialogAfter = Action::None;
+	AssetId m_SaveMediaAsset = INVALID_ASSET_ID;
 	std::mutex m_DialogMutex;
 	bool m_DialogReady = false;
 	std::vector<std::string> m_DialogPaths;
