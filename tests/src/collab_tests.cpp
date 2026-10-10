@@ -497,6 +497,38 @@ TEST(Protocol, VideoStateMessagesRoundTripAndRejectNonsense)
 	EXPECT_FALSE(wb::net::decode(wb::net::encode(wb::net::VideoStateMessage{ .id = 1, .playing = true, .position = 1e12 }), l_Back));
 }
 
+// The host does not trust a client's editor to respect locks
+TEST(Collab, TheHostRefusesEditsToLockedObjectsAndCorrectsTheSender)
+{
+	Node l_Host;
+	Node l_Ana;
+	const wb::ObjectId l_Id = addPicture(l_Host.doc, noise(2u << 10, 6), "pic.png");
+	l_Host.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.locked = true; }, wb::ObjectChange::Lock);
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return joinedAndOnline(l_Ana); }));
+	ASSERT_TRUE(l_Ana.doc.find(l_Id)->locked);
+
+	// Ana's copy is tampered with: moved, then deleted
+	const wb::Affine2 l_Before = l_Host.doc.find(l_Id)->transform;
+	l_Ana.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate(wb::DVec2{ 500.0, 0.0 }); }, wb::ObjectChange::Transform);
+	pumpUntil({ &l_Host, &l_Ana }, [&] { return l_Ana.doc.find(l_Id)->transform.translation.x == l_Before.translation.x; }, 3000);
+	EXPECT_EQ(l_Host.doc.find(l_Id)->transform.translation.x, l_Before.translation.x);
+	EXPECT_EQ(l_Ana.doc.find(l_Id)->transform.translation.x, l_Before.translation.x); // put back
+
+	l_Ana.doc.take(l_Id);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return l_Ana.doc.find(l_Id) != nullptr; }, 3000));
+	EXPECT_NE(l_Host.doc.find(l_Id), nullptr);
+	EXPECT_TRUE(l_Ana.doc.find(l_Id)->locked);
+
+	// Unlocking is allowed, and then the object can be moved
+	l_Ana.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.locked = false; }, wb::ObjectChange::Lock);
+	l_Ana.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate(wb::DVec2{ 70.0, 0.0 }); }, wb::ObjectChange::Transform);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return l_Host.doc.find(l_Id)->transform.translation.x == 70.0; }));
+	EXPECT_FALSE(l_Host.doc.find(l_Id)->locked);
+}
+
 TEST(Collab, PointersAreSharedAndAttributedToTheirOwner)
 {
 	Node l_Host;

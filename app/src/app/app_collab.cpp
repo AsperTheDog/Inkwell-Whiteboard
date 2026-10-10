@@ -272,6 +272,7 @@ void App::pollCollab()
 	}
 	if (m_Editor.document().revision() != l_Revision)
 	{
+		m_Editor.abortTextEditingIfGone();
 		// What arrived is not in the undo history, but it is unsaved work
 		m_Editor.history().markExternalChange();
 		requestRedraw();

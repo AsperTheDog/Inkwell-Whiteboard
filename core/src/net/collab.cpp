@@ -26,6 +26,7 @@ module wb.net.collab;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.serializer;
 import wb.net.connection;
 import wb.net.ops;
 import wb.net.protocol;
@@ -811,6 +812,45 @@ void CollabSession::hostOps(Peer& p_Peer, const Frame& p_Frame)
 			return idSlotOf(opTarget(p_Op)) != p_Peer.info.slot;
 		return false;
 	});
+	// Locked objects cannot be moved, edited or deleted until unlocked (the editor enforces it on each machine; the host
+	// does not take the client's word for it). The sender is sent the real object back so its copy does not drift.
+	std::unordered_map<ObjectId, bool> l_Locks;
+	std::vector<Op> l_Corrections;
+	const auto l_Locked = [&](const ObjectId p_Id)
+	{
+		if (const auto l_It = l_Locks.find(p_Id); l_It != l_Locks.end())
+			return l_It->second;
+		const Object* l_Object = m_Document.find(p_Id);
+		return l_Object != nullptr && l_Object->locked;
+	};
+	std::erase_if(l_Message.ops, [&](const Op& p_Op)
+	{
+		if (const auto* l_Lock = std::get_if<LockOp>(&p_Op))
+		{
+			l_Locks[l_Lock->id] = l_Lock->locked;
+			return false;
+		}
+		const bool l_Edits = std::holds_alternative<RemoveOp>(p_Op) || std::holds_alternative<TransformOp>(p_Op) || std::holds_alternative<UpdateOp>(p_Op);
+		const ObjectId l_Target = l_Edits ? opTarget(p_Op) : INVALID_OBJECT_ID;
+		if (l_Target == INVALID_OBJECT_ID || !l_Locked(l_Target))
+			return false;
+		const Object* l_Object = m_Document.find(l_Target);
+		if (l_Object != nullptr && !l_Locks.contains(l_Target))
+		{
+			if (std::holds_alternative<RemoveOp>(p_Op))
+			{
+				const size_t l_Index = m_Document.indexOf(l_Target);
+				l_Corrections.push_back(AddOp{ .below = l_Index != SIZE_MAX && l_Index > 0 ? m_Document.objects()[l_Index - 1]->id : INVALID_OBJECT_ID, .locked = true, .object = encodeObject(*l_Object) });
+			}
+			else
+			{
+				l_Corrections.push_back(UpdateOp{ .object = encodeObject(*l_Object) });
+			}
+		}
+		return true;
+	});
+	if (!l_Corrections.empty())
+		p_Peer.connection->send(type(MsgType::Ops), encodeOps(l_Corrections));
 	applyRemoteOps(l_Message.ops, p_Peer.id);
 }
 

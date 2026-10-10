@@ -52,6 +52,7 @@ public:
 	TextSession(Document& p_Document, History& p_History, Selection& p_Selection, const Camera& p_Camera, text::TextSystem& p_Text);
 
 	[[nodiscard]] bool active() const { return m_Active; }
+	[[nodiscard]] ObjectId id() const { return m_Id; }
 	[[nodiscard]] ObjectId object() const { return m_Id; }
 	// True while a selection drag with the pointer is in progress
 	[[nodiscard]] bool dragging() const { return m_Dragging; }

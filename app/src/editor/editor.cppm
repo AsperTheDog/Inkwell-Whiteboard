@@ -165,6 +165,12 @@ public:
 	// Starts typing in the selected text object (when exactly one is selected)
 	bool beginEditingSelectedText();
 	void endTextEditing() { m_TextSession.end(); }
+	// Somebody else deleted the text being edited (collaboration): the session just stops, there is nothing left to keep
+	void abortTextEditingIfGone()
+	{
+		if (m_TextSession.active() && m_Document.find(m_TextSession.id()) == nullptr)
+			m_TextSession.abort();
+	}
 	// Puts pasted text on the board as a text box with the current text style, centred on p_WorldCenter
 	ObjectId insertText(std::string p_Text, DVec2 p_WorldCenter);
 	// Measures every text object again (fonts that were not available when the board was made may have arrived)

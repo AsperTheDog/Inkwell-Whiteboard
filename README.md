@@ -13,6 +13,23 @@ Windows and Linux.
 - Laser pointer with a fading trail
 - Undo/redo, autosave with recovery, save file export/import, PNG export
 - Light and dark themes
+- Live collaboration over the network: shared editing, remote pointers, people list, live pen strokes, shared video playback
+
+## Collaborating
+
+One person hosts, the others join. Open **Collaborate** in the top bar.
+
+- **Host a session...** picks a port (default 5000), a password and your display name. Others reach you at `your-address:port`.
+- **Join a session...** takes the host's `address:port`, the password and your name.
+- Everybody edits the same board: strokes, shapes, text, pictures, GIFs, videos and PDF pages. You see the others' pointers (in their colour, with their name), the people list at the top, and the lines they are drawing as they draw them. Undo only undoes your own edits.
+- Pictures and videos stream after the board arrives; until a file is there you see a thumbnail with a spinner. Saving skips files that have not finished arriving and saves the rest.
+- Video play/pause and the playhead are shared; loop, mute and volume are your own.
+
+**Reaching the host.** The host needs an address the others can reach: the same local network, a VPN such as Tailscale or ZeroTier (easiest, nothing to open), or a router port forward to the chosen port. The host's firewall must allow the app.
+
+**Security, plainly.** Traffic is plain TCP and is **not encrypted**. The password is never sent as text (it is used in a challenge-response), but anyone who can watch the connection can read the board. Use a local network or a VPN, and treat the password as a door lock, not a vault. The host checks everything clients send (sizes, ids, locks, rates) and treats them as untrusted, but anybody with the password can edit and delete anything on the board that is not locked. Anything you load or receive passes through the same validation as opening a file.
+
+**Limits worth knowing.** Up to 64 people; files up to 2 GiB each; interrupted file transfers restart from the beginning; the host's machine is the hub, so the session ends for everybody when the host stops.
 
 ## Running a release
 
