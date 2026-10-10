@@ -181,7 +181,10 @@ public:
 	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath);
 	// For a background write: big files are referenced, not copied (see serializeBoardSplit)
 	[[nodiscard]] SplitBoard saveBoardSplit(const std::string& p_SourcePath, size_t p_BigAssetBytes);
-	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta);
+	// A collaboration snapshot: the board without its big pictures and videos (they are streamed afterwards)
+	[[nodiscard]] std::vector<uint8_t> saveBoardShell(size_t p_InlineAssetBytes);
+	// p_AllowMissingAssets keeps pictures and videos whose file is not in the data (collaboration)
+	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta, bool p_AllowMissingAssets = false);
 	void newBoard();
 
 	void undo();

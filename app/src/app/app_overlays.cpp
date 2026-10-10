@@ -24,6 +24,8 @@ module wb.app;
 
 import wb.editor;
 import wb.math;
+import wb.net.collab;
+import wb.net.protocol;
 import wb.tools.laser;
 import wb.ui.context;
 import wb.ui.draw;
@@ -177,5 +179,183 @@ void App::buildLaserOverlay()
 		l_Draw.circle(l_Head, 8.f * l_Scale, ui::withAlpha(LASER, 0.9f));
 		l_Draw.circle(l_Head, 3.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f });
 	}
+}
+
+// ------------------------------------------------------------------------------------------------ files on their way
+
+// A turning arc and a percentage over every picture or video that is still being received
+void App::buildAssetSpinners()
+{
+	if (!m_Collab || !m_Collab->online() || (m_Collab->assetProgress().files == 0 && !m_Collab->hasAssetNotices()))
+		return;
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const Camera& l_Camera = m_Editor.camera();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	const float l_Scale = m_Ui.scale();
+	const Vec2 l_Viewport = m_Ui.viewport();
+	const double l_Time = static_cast<double>(SDL_GetTicksNS()) * 1e-9;
+	const std::span<const std::unique_ptr<Object>> l_Objects = m_Editor.document().objects();
+	const std::span<const Rect> l_Bounds = m_Editor.document().boundsList();
+	bool l_Any = false;
+	for (size_t i = 0; i < l_Objects.size() && i < l_Bounds.size(); ++i)
+	{
+		const Object& l_Object = *l_Objects[i];
+		const ImageData* l_Image = l_Object.image();
+		const VideoData* l_Video = l_Object.video();
+		const AssetId l_Asset = l_Image != nullptr ? l_Image->asset : (l_Video != nullptr ? l_Video->asset : INVALID_ASSET_ID);
+		if (l_Asset == INVALID_ASSET_ID)
+			continue;
+		const double l_Fraction = m_Collab->assetFraction(l_Asset);
+		const bool l_Stalled = l_Fraction < 0.0 && m_Collab->assetStalled(l_Asset);
+		const bool l_Resend = l_Fraction < 0.0 && m_Collab->assetReuploadable(l_Asset);
+		if (l_Fraction < 0.0 && !l_Stalled && !l_Resend)
+			continue;
+		const Vec2 l_Min{ l_Camera.worldToScreen(l_Bounds[i].min) };
+		const Vec2 l_Max{ l_Camera.worldToScreen(l_Bounds[i].max) };
+		const Vec2 l_Lo = glm::min(l_Min, l_Max);
+		const Vec2 l_Hi = glm::max(l_Min, l_Max);
+		if (l_Hi.x < 0.f || l_Hi.y < 0.f || l_Lo.x > l_Viewport.x || l_Lo.y > l_Viewport.y)
+			continue;
+		const float l_Short = std::min(l_Hi.x - l_Lo.x, l_Hi.y - l_Lo.y);
+		if (l_Short < 22.f * l_Scale)
+			continue; // too small to hold it
+		const Vec2 l_Center = (l_Lo + l_Hi) * 0.5f;
+		const float l_Radius = std::clamp(l_Short * 0.2f, 9.f * l_Scale, 20.f * l_Scale);
+
+		if (l_Resend)
+		{
+			// The others cannot get this file: a button to send it again
+			const bool l_Wide = l_Short > 150.f * l_Scale;
+			const ui::Rect2 l_Button = ui::Rect2::fromCenter(l_Center, Vec2{ (l_Wide ? 168.f : 84.f) * l_Scale, 32.f * l_Scale });
+			if (m_Ui.button("asset.resend." + std::to_string(l_Object.id), l_Button, l_Wide ? "Re-send for the others" : "Re-send", ui::ButtonStyle::Primary))
+				m_Collab->reupload(l_Asset);
+			continue;
+		}
+		if (l_Stalled)
+		{
+			// Nobody is sending it: a paused badge, and who can fix it
+			l_Draw.circle(l_Center, l_Radius + 5.f * l_Scale, ui::withAlpha(l_Theme.shadow, 0.55f));
+			l_Draw.ring(l_Center, l_Radius, Color{ 1.f, 1.f, 1.f, 0.35f }, 2.5f * l_Scale);
+			for (const float l_Side : { -1.f, 1.f })
+				l_Draw.line(l_Center + Vec2{ l_Side * 4.f * l_Scale, -6.f * l_Scale }, l_Center + Vec2{ l_Side * 4.f * l_Scale, 6.f * l_Scale }, 3.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f });
+			const std::string l_Owner = m_Collab->assetOwnerName(l_Asset);
+			if (l_Short > 90.f * l_Scale)
+				l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, l_Owner.empty() ? "Not available" : "Waiting for " + l_Owner + " to send it again", m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
+			continue;
+		}
+		l_Any = true;
+
+		l_Draw.circle(l_Center, l_Radius + 5.f * l_Scale, ui::withAlpha(l_Theme.shadow, 0.55f));
+		l_Draw.ring(l_Center, l_Radius, Color{ 1.f, 1.f, 1.f, 0.22f }, 2.5f * l_Scale);
+		constexpr int SEGMENTS = 14;
+		std::array<Vec2, SEGMENTS + 1> l_Arc{};
+		const double l_Start = l_Time * 5.0;
+		for (int s = 0; s <= SEGMENTS; ++s)
+		{
+			const double l_Angle = l_Start + (static_cast<double>(s) / SEGMENTS) * 1.9;
+			l_Arc[static_cast<size_t>(s)] = l_Center + Vec2{ static_cast<float>(std::cos(l_Angle)), static_cast<float>(std::sin(l_Angle)) } * l_Radius;
+		}
+		l_Draw.polyline(l_Arc, 2.5f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f }, false);
+		if (l_Fraction > 0.0 && l_Short > 60.f * l_Scale)
+			l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, std::to_string(static_cast<int>(l_Fraction * 100.0)) + "%", m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
+	}
+	if (l_Any)
+		requestRedraw(2);
+}
+
+// ------------------------------------------------------------------------------------------------ remote pointers
+
+void App::buildRemoteCursors()
+{
+	if (!m_Collab || !m_Collab->online())
+	{
+		m_ShownCursors.clear();
+		return;
+	}
+	const std::vector<net::CollabSession::CursorView> l_Views = m_Collab->cursors();
+	const uint64_t l_Now = SDL_GetTicksNS();
+	const float l_Dt = m_CursorFrameNs == 0 ? 0.016f : std::clamp(static_cast<float>(l_Now - m_CursorFrameNs) * 1e-9f, 0.f, 0.1f);
+	m_CursorFrameNs = l_Now;
+	std::erase_if(m_ShownCursors, [&](const auto& p_Entry)
+	{
+		return std::ranges::none_of(l_Views, [&](const net::CollabSession::CursorView& p_View) { return p_View.slot == p_Entry.first; });
+	});
+
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const Camera& l_Camera = m_Editor.camera();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	const float l_Scale = m_Ui.scale();
+	const Vec2 l_Viewport = m_Ui.viewport();
+	const float l_Follow = 1.f - std::exp(-l_Dt * 22.f);
+	const float l_Fade = 1.f - std::exp(-l_Dt * 12.f);
+	constexpr double IDLE_SECONDS = 8.0; // a pointer that has not moved for this long is dimmed
+	bool l_Animating = false;
+
+	for (const net::CollabSession::CursorView& l_View : l_Views)
+	{
+		const net::UserInfo* l_User = m_Collab->user(l_View.slot);
+		if (l_User == nullptr)
+			continue;
+		ShownCursor& l_Shown = m_ShownCursors[l_View.slot];
+		const float l_TargetAlpha = !l_View.visible ? 0.f : (l_View.ageSeconds < IDLE_SECONDS ? 1.f : 0.35f);
+		if (!l_Shown.placed)
+		{
+			l_Shown.position = l_View.position;
+			l_Shown.placed = true;
+		}
+		else
+		{
+			l_Shown.position += (l_View.position - l_Shown.position) * static_cast<double>(l_Follow);
+		}
+		l_Shown.alpha += (l_TargetAlpha - l_Shown.alpha) * l_Fade;
+
+		const Vec2 l_Target{ l_Camera.worldToScreen(l_View.position) };
+		Vec2 l_At{ l_Camera.worldToScreen(l_Shown.position) };
+		l_Animating = l_Animating || glm::length(l_Target - l_At) > 0.3f || std::abs(l_TargetAlpha - l_Shown.alpha) > 0.01f || (l_View.visible && l_View.ageSeconds < IDLE_SECONDS + 1.0);
+		if (l_Shown.alpha < 0.02f)
+			continue;
+
+		const Color l_Color = Color::fromRgba8(l_User->color);
+		const Color l_Ink{ 1.f, 1.f, 1.f, 1.f };
+		l_Draw.setOpacity(l_Shown.alpha);
+
+		// Off screen: a dot at the edge in the direction of the pointer, so you can tell where they are
+		const float l_Edge = 18.f * l_Scale;
+		const bool l_Outside = l_At.x < 0.f || l_At.y < 0.f || l_At.x > l_Viewport.x || l_At.y > l_Viewport.y;
+		if (l_Outside)
+			l_At = Vec2{ std::clamp(l_At.x, l_Edge, l_Viewport.x - l_Edge), std::clamp(l_At.y, l_Edge, l_Viewport.y - l_Edge) };
+		if (l_Outside)
+		{
+			l_Draw.circle(l_At, 8.f * l_Scale, ui::withAlpha(l_Theme.shadow, 0.35f));
+			l_Draw.circle(l_At, 6.5f * l_Scale, l_Color);
+			l_Draw.ring(l_At, 6.5f * l_Scale, l_Ink, 1.5f * l_Scale);
+		}
+		else
+		{
+			// The arrow: a white halo, then the user's colour on top (thick outline strokes fill the small shape)
+			const std::array<Vec2, 7> l_Shape{ Vec2{ 0.f, 0.f }, Vec2{ 0.f, 15.f }, Vec2{ 4.f, 11.6f }, Vec2{ 7.f, 18.f }, Vec2{ 9.4f, 16.9f }, Vec2{ 6.5f, 10.6f }, Vec2{ 11.4f, 10.2f } };
+			std::array<Vec2, 7> l_Points{};
+			for (size_t i = 0; i < l_Shape.size(); ++i)
+				l_Points[i] = l_At + (l_Shape[i] + Vec2{ 1.6f, 2.2f }) * l_Scale;
+			l_Draw.polyline(l_Points, 6.6f * l_Scale, l_Ink, true);
+			l_Draw.polyline(l_Points, 3.8f * l_Scale, l_Color, true);
+		}
+
+		// The name, in the user's colour
+		const int l_FontPx = m_Ui.fontPx(12.f);
+		const std::string l_Name = m_Ui.font().fit(l_User->name, l_FontPx, 160.f * l_Scale);
+		const float l_Width = m_Ui.font().measure(l_Name, l_FontPx) + 14.f * l_Scale;
+		const float l_Height = 20.f * l_Scale;
+		const Vec2 l_LabelMin = l_Outside ? l_At + Vec2{ 12.f * l_Scale, -l_Height * 0.5f } : l_At + Vec2{ 14.f, 20.f } * l_Scale;
+		Vec2 l_Clamped = l_LabelMin;
+		l_Clamped.x = std::min(l_Clamped.x, l_Viewport.x - l_Width - 4.f * l_Scale);
+		l_Clamped.y = std::min(l_Clamped.y, l_Viewport.y - l_Height - 4.f * l_Scale);
+		const ui::Rect2 l_Label = ui::Rect2::fromPosSize(l_Clamped, Vec2{ l_Width, l_Height });
+		l_Draw.rect(l_Label, l_Height * 0.5f, l_Color);
+		l_Draw.text(Vec2{ l_Label.min.x + 7.f * l_Scale, l_Label.center().y }, l_Name, l_FontPx, l_Ink);
+	}
+	l_Draw.setOpacity(1.f);
+	if (l_Animating)
+		requestRedraw(2);
 }
 } // namespace wb

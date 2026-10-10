@@ -20,7 +20,23 @@ namespace wb
 {
 void Document::reserveId(const ObjectId p_Id)
 {
-	m_NextId = std::max(m_NextId, p_Id + 1);
+	if (idSlotOf(p_Id) == m_Slot)
+		m_NextId = std::max(m_NextId, p_Id + 1);
+}
+
+void Document::setIdSlot(const uint16_t p_Slot)
+{
+	m_Slot = p_Slot;
+	const uint64_t l_Base = static_cast<uint64_t>(p_Slot) << ID_SLOT_SHIFT;
+	m_NextId = l_Base | 1;
+	m_NextAsset = l_Base | 1;
+	for (const std::unique_ptr<Object>& l_Object : m_Objects)
+		reserveId(l_Object->id);
+	for (const auto& [l_Id, l_Asset] : m_Assets)
+	{
+		if (idSlotOf(l_Id) == m_Slot)
+			m_NextAsset = std::max(m_NextAsset, l_Id + 1);
+	}
 }
 
 void Document::insert(std::unique_ptr<Object> p_Object, const size_t p_ZIndex)
@@ -166,7 +182,8 @@ bool Document::insertAsset(ImageAsset p_Asset)
 	for (const uint8_t l_Byte : p_Asset.bytes)
 		l_Hash = (l_Hash ^ l_Byte) * 1099511628211ull;
 	l_Hash ^= p_Asset.bytes.size();
-	m_NextAsset = std::max(m_NextAsset, p_Asset.id + 1);
+	if (idSlotOf(p_Asset.id) == m_Slot)
+		m_NextAsset = std::max(m_NextAsset, p_Asset.id + 1);
 	m_AssetsByHash[l_Hash].push_back(p_Asset.id);
 	m_Assets.emplace(p_Asset.id, std::move(p_Asset));
 	return true;
@@ -205,8 +222,9 @@ void Document::clear()
 {
 	m_Fonts.clear();
 	m_Assets.clear();
+	m_Previews.clear();
 	m_AssetsByHash.clear();
-	m_NextAsset = 1;
+	m_NextAsset = (static_cast<uint64_t>(m_Slot) << ID_SLOT_SHIFT) | 1;
 	m_Objects.clear();
 	m_ById.clear();
 	m_Bounds.clear();

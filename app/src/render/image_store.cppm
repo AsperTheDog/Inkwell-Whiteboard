@@ -79,10 +79,16 @@ public:
 	[[nodiscard]] uint32_t frameAt(AssetId p_Asset, const ImageClock& p_Clock) const;
 	[[nodiscard]] bool animated(AssetId p_Asset) const { return info(p_Asset).frames > 1; }
 
+	// A tiny stand-in picture (the document's preview of a file that has not arrived) as a texture; the placeholder when
+	// there is none yet. Used for videos too.
+	[[nodiscard]] ImageLookup previewLookup(const Document& p_Document, AssetId p_Asset);
+	// The real file is here: the stand-in is not needed
+	void dropPreview(AssetId p_Asset);
+
 	// Forgets every texture (the board was replaced)
 	void clear();
 	// Decodes or uploads are still in flight: keep drawing frames
-	[[nodiscard]] bool busy() const { return !m_Queue.empty() || m_Running > 0; }
+	[[nodiscard]] bool busy() const { return !m_Queue.empty() || !m_PreviewQueue.empty() || m_Running > 0; }
 
 	void bind(VkCommandBuffer p_Cmd) const;
 	void draw(VkCommandBuffer p_Cmd, VkExtent2D p_Extent, const ImageDraw& p_Draw) const;
@@ -128,6 +134,8 @@ private:
 
 	std::unordered_map<AssetId, Entry> m_Entries;
 	std::deque<std::pair<AssetId, std::vector<uint8_t>>> m_Queue;
+	std::unordered_map<AssetId, Entry> m_PreviewEntries;
+	std::deque<std::pair<AssetId, image::Decoded>> m_PreviewQueue;
 	std::shared_ptr<std::atomic<int>> m_ActiveThreads;
 	int m_Running = 0;
 	std::vector<gfx::Image> m_Retired;

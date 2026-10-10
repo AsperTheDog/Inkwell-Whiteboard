@@ -9,6 +9,7 @@ module;
 #include <filesystem>
 #include <future>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -46,6 +47,9 @@ public:
 	[[nodiscard]] IoResult saveTo(const std::filesystem::path& p_Path);
 	[[nodiscard]] IoResult open(const std::filesystem::path& p_Path);
 	void newBoard();
+	// Replaces the board with one received from a collaboration host: untitled, with nothing to save yet
+	// (pictures and videos that are not in the data stay as placeholders until they arrive)
+	[[nodiscard]] IoResult adoptBoard(std::span<const uint8_t> p_Bytes);
 
 	// Call regularly (about once a second is plenty): writes the autosave copy when due
 	void tick(uint64_t p_NowNs);

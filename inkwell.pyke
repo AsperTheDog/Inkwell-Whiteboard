@@ -69,6 +69,12 @@ target wb_core(PUBLIC GLM):
         self.sources = ["src/**/*.cpp"]
         self.exports.modules = ["src/**/*.cppm"]
         self.warnings = "strict"
+        # Collaboration sockets (wb.net.socket) use Winsock
+        self.cmake += [
+            "if(WIN32)
+    target_link_libraries(wb_core PUBLIC ws2_32)
+endif()"
+        ]
         if compiler == "msvc":
             self.flags += msvc_flags
         if compiler == "clang":

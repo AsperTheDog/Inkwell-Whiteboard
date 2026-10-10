@@ -20,6 +20,10 @@ import wb.doc.object;
 
 export namespace wb
 {
+// Object and asset ids carry the slot of the peer that created them in their top bits (see Document::setIdSlot)
+inline constexpr unsigned ID_SLOT_SHIFT = 48;
+[[nodiscard]] inline uint16_t idSlotOf(const uint64_t p_Id) { return static_cast<uint16_t>(p_Id >> ID_SLOT_SHIFT); }
+
 // What a modify() call touched, so listeners can skip work (e.g. no GPU re-upload for a pure move)
 namespace ObjectChange
 {
@@ -49,6 +53,14 @@ struct FontAsset
 	std::vector<uint8_t> bytes;
 };
 
+// A tiny RGBA picture standing in for an image or video whose file has not arrived yet (collaboration). Not saved.
+struct AssetPreview
+{
+	uint32_t width = 0;
+	uint32_t height = 0;
+	std::vector<uint8_t> rgba; // width * height * 4
+};
+
 class DocumentListener
 {
 public:
@@ -76,8 +88,14 @@ public:
 	[[nodiscard]] ObjectId allocateId() { return m_NextId++; }
 	// The id the next allocateId() returns (saved in files so ids stay unique across sessions)
 	[[nodiscard]] ObjectId peekNextId() const { return m_NextId; }
-	// Ensures future ids are greater than p_Id (used when loading files)
+	// Ensures future ids are greater than p_Id (used when loading files). Ids from another slot are ignored.
 	void reserveId(ObjectId p_Id);
+
+	// Collaboration: the top 16 bits of every object and asset id this document creates are its slot, so peers never
+	// hand out the same id. Slot 0 (the default) is a plain single-user counter. Changing the slot restarts the
+	// counters above whatever the document already holds for that slot.
+	void setIdSlot(uint16_t p_Slot);
+	[[nodiscard]] uint16_t idSlot() const { return m_Slot; }
 
 	// Inserts at p_ZIndex (clamped; SIZE_MAX appends on top). The object id must be valid and unused.
 	void insert(std::unique_ptr<Object> p_Object, size_t p_ZIndex = SIZE_MAX);
@@ -110,6 +128,13 @@ public:
 	[[nodiscard]] const ImageAsset* findAsset(AssetId p_Id) const;
 	[[nodiscard]] const std::unordered_map<AssetId, ImageAsset>& assets() const { return m_Assets; }
 
+	void setPreview(AssetId p_Id, AssetPreview p_Preview) { m_Previews[p_Id] = std::move(p_Preview); }
+	[[nodiscard]] const AssetPreview* findPreview(AssetId p_Id) const
+	{
+		const auto l_It = m_Previews.find(p_Id);
+		return l_It != m_Previews.end() ? &l_It->second : nullptr;
+	}
+
 	// ---- embedded fonts (replaced when the same family and style is stored again)
 	void setFontAsset(FontAsset p_Font);
 	[[nodiscard]] const FontAsset* findFontAsset(std::string_view p_Family, uint8_t p_Style) const;
@@ -130,8 +155,10 @@ private:
 	std::unordered_map<ObjectId, Object*> m_ById;
 	std::vector<DocumentListener*> m_Listeners;
 	std::unordered_map<AssetId, ImageAsset> m_Assets;
+	std::unordered_map<AssetId, AssetPreview> m_Previews;
 	std::vector<FontAsset> m_Fonts;
 	std::unordered_map<uint64_t, std::vector<AssetId>> m_AssetsByHash;
+	uint16_t m_Slot = 0;
 	ObjectId m_NextId = 1;
 	AssetId m_NextAsset = 1;
 	uint64_t m_Revision = 0;

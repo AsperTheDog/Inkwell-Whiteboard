@@ -278,7 +278,7 @@ void App::recordExport(const VkCommandBuffer p_Cmd)
 	l_Camera.setCenter(l_Job.plan.region.center());
 
 	m_Canvas.setExportMode(l_Job.onlySelected ? &l_Job.only : nullptr, true);
-	m_Canvas.prepare(m_Context, m_Frames, m_Staging, p_Cmd, gfx::EXPORT_SLOT, l_Camera, nullptr, imageClock());
+	m_Canvas.prepare(m_Context, m_Frames, m_Staging, p_Cmd, gfx::EXPORT_SLOT, l_Camera, {}, imageClock());
 	m_Canvas.setExportMode(nullptr, false);
 
 	m_ExportImage = gfx::createImage2D(m_Context, l_Extent, m_Swapchain.format(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "export");

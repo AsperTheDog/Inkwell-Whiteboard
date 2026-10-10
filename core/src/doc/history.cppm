@@ -2,12 +2,15 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <vector>
 
 export module wb.doc.history;
 
+import wb.doc.object;
 import wb.doc.document;
 
 export namespace wb
@@ -23,6 +26,21 @@ public:
 	virtual bool mergeWith(Command& p_Next)
 	{
 		(void)p_Next;
+		return false;
+	}
+	// Collaboration: whether undoing or redoing this would be wrong after a remote peer changed object p_Id (or, when
+	// p_Removed, deleted it). Such commands are dropped from the history instead of overwriting the peer's work.
+	[[nodiscard]] virtual bool dependsOn(ObjectId p_Id, bool p_Removed) const
+	{
+		(void)p_Id;
+		(void)p_Removed;
+		return false;
+	}
+	// Collaboration: whether undoing or redoing this would bring back a picture or video that uses file p_Asset. Used when
+	// that file was cancelled before it arrived: nothing may resurrect the object it belonged to.
+	[[nodiscard]] virtual bool usesAsset(AssetId p_Asset) const
+	{
+		(void)p_Asset;
 		return false;
 	}
 };
@@ -41,6 +59,14 @@ public:
 	bool redo(Document& p_Document);
 	void clear();
 
+	// Drops every undo/redo entry that depends on one of p_Ids (see Command::dependsOn) and marks the history as
+	// changed. Returns how many entries were dropped.
+	size_t invalidate(std::span<const ObjectId> p_Ids, bool p_Removed);
+	// Drops every undo/redo entry that would bring back an object using file p_Asset (see Command::usesAsset)
+	size_t invalidateAsset(AssetId p_Asset);
+	// The document changed through something other than this history (a remote edit): the board counts as modified
+	void markExternalChange();
+
 	[[nodiscard]] bool canUndo() const { return !m_Undo.empty(); }
 	[[nodiscard]] bool canRedo() const { return !m_Redo.empty(); }
 	[[nodiscard]] size_t undoCount() const { return m_Undo.size(); }
@@ -56,6 +82,7 @@ public:
 
 private:
 	void trim();
+	size_t prune(const std::function<bool(const Command&)>& p_Stale);
 
 	std::vector<std::unique_ptr<Command>> m_Undo;
 	std::vector<std::unique_ptr<Command>> m_Redo;

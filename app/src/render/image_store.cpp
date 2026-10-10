@@ -112,6 +112,9 @@ void ImageStore::destroy(const gfx::GraphicsContext& p_Context)
 	for (auto& [l_Id, l_Entry] : m_Entries)
 		gfx::destroyImage(p_Context, l_Entry.image);
 	m_Entries.clear();
+	for (auto& [l_Id, l_Entry] : m_PreviewEntries)
+		gfx::destroyImage(p_Context, l_Entry.image);
+	m_PreviewEntries.clear();
 	for (gfx::Image& l_Image : m_Retired)
 		gfx::destroyImage(p_Context, l_Image);
 	m_Retired.clear();
@@ -309,6 +312,26 @@ void ImageStore::update(const gfx::GraphicsContext& p_Context, gfx::FrameSchedul
 
 	startJobs();
 
+	// Stand-in thumbnails are tiny: all of them go up at once
+	for (auto& [l_Id, l_Decoded] : m_PreviewQueue)
+	{
+		const auto l_It = m_PreviewEntries.find(l_Id);
+		if (l_It == m_PreviewEntries.end() || l_It->second.state != Entry::State::Queued)
+			continue;
+		Entry& l_Entry = l_It->second;
+		if (upload(p_Context, p_Frames, p_Cmd, l_Decoded, l_Entry.image, l_Entry.set))
+		{
+			l_Entry.width = l_Decoded.width;
+			l_Entry.height = l_Decoded.height;
+			l_Entry.state = Entry::State::Ready;
+		}
+		else
+		{
+			l_Entry.state = Entry::State::Failed;
+		}
+	}
+	m_PreviewQueue.clear();
+
 	size_t l_Uploads = 0;
 	for (auto& [l_Id, l_Entry] : m_Entries)
 	{
@@ -362,6 +385,42 @@ uint32_t ImageStore::frameFor(const Entry& p_Entry, const double p_Seconds)
 	return p_Entry.frames - 1;
 }
 
+ImageLookup ImageStore::previewLookup(const Document& p_Document, const AssetId p_Asset)
+{
+	ImageLookup l_Result;
+	l_Result.set = m_PlaceholderSet;
+	const AssetPreview* l_Preview = p_Document.findPreview(p_Asset);
+	if (l_Preview == nullptr || l_Preview->width == 0 || l_Preview->height == 0)
+		return l_Result;
+	auto l_It = m_PreviewEntries.find(p_Asset);
+	if (l_It == m_PreviewEntries.end())
+	{
+		image::Decoded l_Pixels;
+		l_Pixels.width = l_Preview->width;
+		l_Pixels.height = l_Preview->height;
+		l_Pixels.frames.push_back(l_Preview->rgba);
+		l_Pixels.delaysMs.push_back(100);
+		m_PreviewQueue.emplace_back(p_Asset, std::move(l_Pixels));
+		l_It = m_PreviewEntries.emplace(p_Asset, Entry{}).first;
+	}
+	if (l_It->second.state == Entry::State::Ready)
+	{
+		l_Result.set = l_It->second.set;
+		l_Result.layer = 0.f;
+	}
+	return l_Result;
+}
+
+void ImageStore::dropPreview(const AssetId p_Asset)
+{
+	const auto l_It = m_PreviewEntries.find(p_Asset);
+	if (l_It == m_PreviewEntries.end())
+		return;
+	if (l_It->second.image.isValid())
+		m_Retired.push_back(l_It->second.image);
+	m_PreviewEntries.erase(l_It);
+}
+
 ImageLookup ImageStore::lookup(const Document& p_Document, const ImageData& p_Image, const ImageClock& p_Clock)
 {
 	ImageLookup l_Result;
@@ -370,17 +429,11 @@ ImageLookup ImageStore::lookup(const Document& p_Document, const ImageData& p_Im
 	if (l_It == m_Entries.end())
 	{
 		const ImageAsset* l_Asset = p_Document.findAsset(p_Image.asset);
-		Entry l_Entry;
 		if (l_Asset == nullptr)
-		{
-			l_Entry.state = Entry::State::Failed;
-			l_Entry.error = "The picture is missing from the board.";
-		}
-		else
-		{
-			m_Queue.emplace_back(p_Image.asset, l_Asset->bytes);
-		}
-		l_It = m_Entries.emplace(p_Image.asset, std::move(l_Entry)).first;
+			return previewLookup(p_Document, p_Image.asset); // not here (yet: a collaboration streams files after the board): a thumbnail or the placeholder shows, and the next frame asks again
+		dropPreview(p_Image.asset);
+		m_Queue.emplace_back(p_Image.asset, l_Asset->bytes);
+		l_It = m_Entries.emplace(p_Image.asset, Entry{}).first;
 	}
 	const Entry& l_Entry = l_It->second;
 	if (l_Entry.state != Entry::State::Ready)
@@ -429,6 +482,13 @@ void ImageStore::clear()
 			m_Retired.push_back(l_Entry.image);
 	}
 	m_Entries.clear();
+	for (auto& [l_Id, l_Entry] : m_PreviewEntries)
+	{
+		if (l_Entry.image.isValid())
+			m_Retired.push_back(l_Entry.image);
+	}
+	m_PreviewEntries.clear();
+	m_PreviewQueue.clear();
 	m_Queue.clear();
 }
 

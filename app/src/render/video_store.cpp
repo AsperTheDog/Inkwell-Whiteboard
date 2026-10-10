@@ -283,6 +283,13 @@ void VideoStore::update(const gfx::GraphicsContext& p_Context, gfx::FrameSchedul
 						l_Entry.player->seek(l_Resume->second);
 						m_Resume.erase(l_Resume);
 					}
+					if (const auto l_Remote = m_Remote.find(l_It->first); l_Remote != m_Remote.end())
+					{
+						const double l_Elapsed = l_Remote->second.playing ? std::chrono::duration<double>(l_Now - l_Remote->second.at).count() : 0.0;
+						l_Entry.wantSeek = l_Remote->second.position + l_Elapsed;
+						l_Entry.wantPlay = l_Remote->second.playing;
+						m_Remote.erase(l_Remote);
+					}
 					if (l_Entry.wantSeek)
 						l_Entry.player->seek(*l_Entry.wantSeek);
 					l_Entry.wantSeek.reset();
@@ -344,6 +351,15 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 	}
 	if (l_It == m_Entries.end())
 	{
+		if (p_Document.findAsset(p_Video.asset) == nullptr)
+		{
+			// Still being received (a collaboration): a still thumbnail (or the placeholder) shows until it lands
+			const ImageLookup l_Preview = m_Images->previewLookup(p_Document, p_Video.asset);
+			l_Result.set = l_Preview.set;
+			l_Result.layer = l_Preview.layer;
+			return l_Result;
+		}
+		m_Images->dropPreview(p_Video.asset);
 		Entry l_Entry;
 		l_Entry.asset = p_Video.asset;
 		l_It = m_Entries.emplace(p_Id, std::move(l_Entry)).first;
@@ -422,9 +438,24 @@ void VideoStore::seek(const ObjectId p_Id, const double p_Seconds)
 		l_Entry.wantSeek = p_Seconds;
 }
 
+void VideoStore::applyRemote(const ObjectId p_Id, const bool p_Playing, const double p_Position)
+{
+	if (m_Entries.find(p_Id) == m_Entries.end())
+	{
+		if (m_Remote.size() > 4096)
+			m_Remote.clear();
+		m_Remote[p_Id] = RemoteState{ .playing = p_Playing, .position = p_Position, .at = std::chrono::steady_clock::now() };
+		m_Resume.erase(p_Id); // what they did is newer than where we left it
+		return;
+	}
+	seek(p_Id, p_Position);
+	setPlaying(p_Id, p_Playing);
+}
+
 void VideoStore::forget(const ObjectId p_Id)
 {
 	m_Resume.erase(p_Id);
+	m_Remote.erase(p_Id);
 	const auto l_It = m_Entries.find(p_Id);
 	if (l_It == m_Entries.end())
 		return;
@@ -442,5 +473,6 @@ void VideoStore::clear()
 	}
 	m_Entries.clear();
 	m_Resume.clear();
+	m_Remote.clear();
 }
 } // namespace wb::render

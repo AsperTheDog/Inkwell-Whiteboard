@@ -1,5 +1,6 @@
 // Standard document commands. Each restores the exact z-order on undo.
 module;
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -17,6 +18,18 @@ import wb.doc.object;
 
 export namespace wb
 {
+// Whether a picture or video object uses file p_Asset
+[[nodiscard]] inline bool objectUsesAsset(const Object* p_Object, const AssetId p_Asset)
+{
+	if (p_Object == nullptr)
+		return false;
+	if (const ImageData* l_Image = p_Object->image())
+		return l_Image->asset == p_Asset;
+	if (const VideoData* l_Video = p_Object->video())
+		return l_Video->asset == p_Asset;
+	return false;
+}
+
 // Adds new objects on top of the board
 class AddObjectsCommand final : public Command
 {
@@ -26,6 +39,15 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		// Undo removes and redo re-adds the objects; neither works once a peer deleted them
+		return p_Removed && std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
+	[[nodiscard]] bool usesAsset(AssetId p_Asset) const override
+	{
+		return std::ranges::any_of(m_Entries, [p_Asset](const Entry& p_Entry) { return objectUsesAsset(p_Entry.object.get(), p_Asset); });
+	}
 
 private:
 	struct Entry
@@ -47,6 +69,16 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Id;
+		(void)p_Removed;
+		return false;
+	}
+	[[nodiscard]] bool usesAsset(AssetId p_Asset) const override
+	{
+		return std::ranges::any_of(m_Removed, [p_Asset](const Document::Removed& p_Entry) { return objectUsesAsset(p_Entry.object.get(), p_Asset); });
+	}
 
 private:
 	std::vector<ObjectId> m_Ids;
@@ -69,6 +101,19 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		if (!p_Removed)
+			return false;
+		return std::ranges::any_of(m_Steps, [p_Id](const Step& p_Step) { return p_Step.removedId == p_Id || std::ranges::find(p_Step.addedIds, p_Id) != p_Step.addedIds.end(); });
+	}
+	[[nodiscard]] bool usesAsset(AssetId p_Asset) const override
+	{
+		return std::ranges::any_of(m_Steps, [p_Asset](const Step& p_Step)
+		{
+			return objectUsesAsset(p_Step.removed.get(), p_Asset) || std::ranges::any_of(p_Step.added, [p_Asset](const std::unique_ptr<Object>& p_Object) { return objectUsesAsset(p_Object.get(), p_Asset); });
+		});
+	}
 
 private:
 	struct Step
@@ -99,6 +144,11 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
 	bool mergeWith(Command& p_Next) override;
 	[[nodiscard]] bool changesAnything() const;
 
@@ -125,6 +175,12 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Id;
+		(void)p_Removed;
+		return false;
+	}
 	// After apply(): whether the order really changed (moving the top object forward changes nothing)
 	[[nodiscard]] bool changedOrder() const { return m_Changed; }
 
@@ -152,6 +208,15 @@ class SetImageDataCommand final : public Command
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
+	[[nodiscard]] bool usesAsset(AssetId p_Asset) const override
+	{
+		return std::ranges::any_of(m_Entries, [p_Asset](const Entry& p_Entry) { return p_Entry.before.asset == p_Asset || p_Entry.after.asset == p_Asset; });
+	}
 
 private:
 	std::vector<Entry> m_Entries;
@@ -174,6 +239,15 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
+	[[nodiscard]] bool usesAsset(AssetId p_Asset) const override
+	{
+		return std::ranges::any_of(m_Entries, [p_Asset](const Entry& p_Entry) { return p_Entry.before.asset == p_Asset || p_Entry.after.asset == p_Asset; });
+	}
 
 private:
 	std::vector<Entry> m_Entries;
@@ -198,6 +272,11 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
 
 private:
 	std::vector<Entry> m_Entries;
@@ -220,6 +299,11 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
 
 private:
 	std::vector<Entry> m_Entries;
@@ -235,6 +319,11 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::find(m_Ids, p_Id) != m_Ids.end();
+	}
 
 private:
 	std::vector<ObjectId> m_Ids;
@@ -251,6 +340,11 @@ public:
 	void apply(Document& p_Document) override;
 	void revert(Document& p_Document) override;
 	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::find(m_Ids, p_Id) != m_Ids.end();
+	}
 
 private:
 	std::vector<ObjectId> m_Ids;

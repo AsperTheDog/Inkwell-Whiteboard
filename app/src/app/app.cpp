@@ -124,6 +124,7 @@ void App::run()
 			if (!pumpEvents(!l_CanRender || !needsRedraw()))
 				break;
 			m_Session.tick(SDL_GetTicksNS());
+			pollCollab();
 			pollExport();
 			pollPdfImport();
 			updateTitle();
@@ -193,6 +194,7 @@ void App::init()
 		m_Ui.init(m_FontAtlas);
 		m_UiRenderer.init(m_Context, m_Swapchain.format());
 	}
+	initCollab();
 	initPersistence();
 	m_DarkTheme = m_DarkTheme || m_Options.smokeDark;
 	m_ThemeBlend = m_DarkTheme ? 1.f : 0.f;
@@ -217,6 +219,7 @@ void App::init()
 
 void App::shutdown()
 {
+	m_Collab.reset(); // stops the network threads before anything they could touch goes away
 	m_Context.waitIdle();
 	for (SDL_Cursor*& l_Cursor : m_Cursors)
 	{
@@ -309,6 +312,11 @@ void App::handleEvent(const SDL_Event& p_Event)
 	if (m_DialogEvent != 0 && p_Event.type == m_DialogEvent)
 	{
 		handleDialogResult();
+		return;
+	}
+	if (m_CollabEvent != 0 && p_Event.type == m_CollabEvent)
+	{
+		requestRedraw(1); // pollCollab (right after the events) does the work
 		return;
 	}
 
@@ -532,13 +540,20 @@ void App::renderFrame()
 	m_Frames.writeStartTimestamp(l_Cmd);
 
 	const Camera& l_Camera = m_Editor.camera();
+	// Lines other people are drawing, then this user's own on top
+	m_LiveStrokes.clear();
+	m_LiveStrokeSources = m_Collab && m_Collab->active() ? m_Collab->liveStrokes() : std::vector<net::CollabSession::StrokeView>{};
+	for (const net::CollabSession::StrokeView& l_Remote : m_LiveStrokeSources)
+		m_LiveStrokes.push_back(render::LiveStrokeView{ .origin = l_Remote.origin, .color = l_Remote.color, .committed = l_Remote.points, .tail = {} });
 	const std::optional<render::LiveStrokeView> l_Live = m_Editor.liveStroke();
+	if (l_Live)
+		m_LiveStrokes.push_back(*l_Live);
 	const bool l_Exporting = exportReady();
 	if (l_Exporting)
 		recordExport(l_Cmd);
 	{
 		const gfx::DebugLabel l_Label(l_Cmd, "canvas uploads");
-		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, l_Live ? &*l_Live : nullptr, imageClock());
+		m_Canvas.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, l_Camera, m_LiveStrokes, imageClock());
 		m_UiRenderer.prepare(m_Context, m_Frames, m_Staging, l_Cmd, l_Target->slot, m_FontAtlas, m_Ui.draw());
 	}
 

@@ -1,12 +1,16 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
+#include <functional>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 module wb.doc.history;
 
+import wb.doc.object;
 import wb.doc.document;
 
 namespace wb
@@ -80,6 +84,47 @@ void History::clear()
 	m_RedoStateIds.clear();
 	m_StateId = 0;
 	m_LastSealed = true;
+}
+
+size_t History::invalidateAsset(const AssetId p_Asset)
+{
+	return prune([&](const Command& p_Command) { return p_Command.usesAsset(p_Asset); });
+}
+
+size_t History::invalidate(const std::span<const ObjectId> p_Ids, const bool p_Removed)
+{
+	return prune([&](const Command& p_Command) { return std::ranges::any_of(p_Ids, [&](const ObjectId p_Id) { return p_Command.dependsOn(p_Id, p_Removed); }); });
+}
+
+size_t History::prune(const std::function<bool(const Command&)>& p_Stale)
+{
+	const auto l_Stale = [&](const std::unique_ptr<Command>& p_Command) { return p_Stale(*p_Command); };
+	const auto l_Prune = [&](std::vector<std::unique_ptr<Command>>& p_Commands, std::vector<uint64_t>& p_States)
+	{
+		size_t l_Dropped = 0;
+		for (size_t i = p_Commands.size(); i-- > 0;)
+		{
+			if (!l_Stale(p_Commands[i]))
+				continue;
+			p_Commands.erase(p_Commands.begin() + static_cast<std::ptrdiff_t>(i));
+			p_States.erase(p_States.begin() + static_cast<std::ptrdiff_t>(i));
+			++l_Dropped;
+		}
+		return l_Dropped;
+	};
+
+	const size_t l_Dropped = l_Prune(m_Undo, m_UndoStateIds) + l_Prune(m_Redo, m_RedoStateIds);
+	if (l_Dropped != 0)
+		m_LastSealed = true;
+	markExternalChange();
+	return l_Dropped;
+}
+
+void History::markExternalChange()
+{
+	m_StateId = m_NextStateId++;
+	if (!m_UndoStateIds.empty())
+		m_UndoStateIds.back() = m_StateId;
 }
 
 void History::trim()

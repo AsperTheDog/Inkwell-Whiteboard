@@ -5,6 +5,7 @@ module;
 #include <deque>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -27,6 +28,7 @@ import wb.gfx.image;
 import wb.gfx.swapchain;
 import wb.io.settings;
 import wb.math;
+import wb.net.collab;
 import wb.platform.clipboard;
 import wb.platform.input;
 import wb.platform.pdf;
@@ -85,6 +87,14 @@ private:
 		NewBoard,
 		OpenFile,
 		Quit,
+		JoinSession, // replaces the board with the host's
+	};
+	enum class CollabDialog : uint8_t
+	{
+		None,
+		Host,
+		Join,
+		Session, // who is here, and Leave
 	};
 	enum class DialogKind : uint8_t
 	{
@@ -132,6 +142,9 @@ private:
 	void buildCanvasOverlays();
 	void buildRulerOverlay();
 	void buildLaserOverlay();
+	void buildRemoteCursors();
+	void buildAssetSpinners();
+	void buildPeopleChip(float p_RightEdge);
 	void buildTopBar();
 	void buildToolbar();
 	void buildZoomPill();
@@ -143,6 +156,7 @@ private:
 	void buildSelectionBar();
 	// Videos (app_video.cpp)
 	void buildVideoViewer();
+	void shareVideoState(ObjectId p_Id, double p_Seek = -1.0);
 	// Text (app_text.cpp)
 	void buildTextOverlay();
 	void buildTextBar();
@@ -168,7 +182,8 @@ private:
 	void closePopup(const char* p_Why = "");
 	void togglePopup(Popup p_Popup);
 	void pushRecentColor(Color p_Color);
-	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen || m_ShowExport; }
+	[[nodiscard]] bool collabBusy() const { return m_Collab && (m_Collab->state() == net::LinkState::Connecting || m_Collab->state() == net::LinkState::Joining); }
+	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen || m_ShowExport || m_CollabDialog != CollabDialog::None || collabBusy(); }
 	// Keyboard input that belongs to dialogs and popups; returns true when it was used
 	bool handleUiKey(const SDL_KeyboardEvent& p_Event);
 	// Colour grid shared by the pen popover and the selection bar. Returns true when a swatch was clicked.
@@ -231,6 +246,16 @@ private:
 	void finishExport();
 	void pollExport();
 
+	// Collaboration (app_collab.cpp)
+	void initCollab();
+	void pollCollab();
+	void openCollabDialog(CollabDialog p_Kind);
+	void buildCollabDialog();
+	void buildCollabBusy();
+	void submitCollabDialog();
+	void startHosting();
+	void beginJoin();
+
 	// PDF import (app_pdf.cpp)
 	void startPdfImport(const std::filesystem::path& p_Path);
 	void pollPdfImport();
@@ -262,6 +287,7 @@ private:
 	debug::ImGuiLayer m_ImGui;
 	Editor m_Editor;
 	Session m_Session{ m_Editor };
+	std::unique_ptr<net::CollabSession> m_Collab;
 	Settings m_Settings;
 	std::filesystem::path m_PrefDir;     // empty: nothing is persisted (smoke test, or no writable location)
 	std::string m_LastDirectory;         // where the file dialogs start
@@ -365,6 +391,34 @@ private:
 	uint64_t m_ToastUntilNs = 0;
 	std::string m_LastTitle;
 	bool m_Failed = false;
+
+	// Collaboration
+	uint32_t m_CollabEvent = 0; // pushed by the network threads when something arrived
+	CollabDialog m_CollabDialog = CollabDialog::None;
+	struct CollabForm
+	{
+		std::string name;
+		std::string address; // join: host or host:port
+		std::string port = "5000"; // host
+		std::string password;
+	};
+	CollabForm m_CollabForm;
+	uint64_t m_CollabUsersSeen = ~0ull;
+	uint64_t m_CollabAssetsSeen = ~0ull;
+	uint32_t m_CollabFilesPending = 0;
+	uint64_t m_CollabCursorsSeen = ~0ull;
+	uint64_t m_CollabStrokesSeen = ~0ull;
+	std::vector<net::CollabSession::StrokeView> m_LiveStrokeSources; // what m_LiveStrokes points into, for this frame
+	std::vector<render::LiveStrokeView> m_LiveStrokes;
+	// What is drawn for each remote pointer: eased towards where it really is, so 30 updates a second look smooth
+	struct ShownCursor
+	{
+		DVec2 position{ 0.0 };
+		float alpha = 0.f;
+		bool placed = false;
+	};
+	std::unordered_map<uint16_t, ShownCursor> m_ShownCursors;
+	uint64_t m_CursorFrameNs = 0;
 
 	uint32_t m_DialogEvent = 0;
 	DialogKind m_DialogKind = DialogKind::None;

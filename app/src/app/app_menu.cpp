@@ -126,13 +126,13 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 4> ROW_COUNTS{ 6, 13, 12, 1 };
-	static constexpr std::array<const char*, 4> TITLES{ "Board", "Edit", "View", "Help" };
+	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 13, 12, 2, 1 };
+	static constexpr std::array<const char*, 5> TITLES{ "Board", "Edit", "View", "Collaborate", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
 
 	const float l_Open = m_Ui.animFrom(ui::Context::id("popover.open"), 0.f, 1.f, 24.f);
-	const float l_Height = l_Pad * 2.f + 4.f * l_HeaderHeight + (m_MenuSection >= 0 ? l_RowHeight * static_cast<float>(ROW_COUNTS[static_cast<size_t>(m_MenuSection)]) : 0.f);
+	const float l_Height = l_Pad * 2.f + 5.f * l_HeaderHeight + (m_MenuSection >= 0 ? l_RowHeight * static_cast<float>(ROW_COUNTS[static_cast<size_t>(m_MenuSection)]) : 0.f);
 	const Vec2 l_Viewport = m_Ui.viewport();
 	const float l_Margin = m_Ui.px(EDGE_MARGIN);
 	const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_Viewport.x - l_Margin - l_Width, m_MenuAnchor.max.y + m_Ui.px(10.f) - (1.f - l_Open) * m_Ui.px(8.f) }, Vec2{ l_Width, std::min(l_Height, l_Viewport.y - m_MenuAnchor.max.y - m_Ui.px(24.f)) });
@@ -151,7 +151,7 @@ void App::buildMenu()
 		return m_Ui.menuRow(std::string("menu.") + p_Label, l_RowRect, p_Icon, p_Label, p_Shortcut, p_Enabled, p_Checked);
 	};
 
-	for (int l_Section = 0; l_Section < 4; ++l_Section)
+	for (int l_Section = 0; l_Section < 5; ++l_Section)
 	{
 		// Section header (accordion)
 		const Rect2 l_HeaderRect = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_HeaderHeight });
@@ -300,6 +300,35 @@ void App::buildMenu()
 			}
 			break;
 		case 3:
+			if (m_Collab && m_Collab->active())
+			{
+				if (l_Row(ui::Icon::Layers, "People and session...", "", m_Collab->online()))
+				{
+					openCollabDialog(CollabDialog::Session);
+					l_Close = true;
+				}
+				if (l_Row(ui::Icon::Close, m_Collab->role() == net::Role::Host ? "Stop hosting" : "Leave session", ""))
+				{
+					m_Collab->leave();
+					showToast("Left the session");
+					l_Close = true;
+				}
+			}
+			else
+			{
+				if (l_Row(ui::Icon::Upload, "Host a session...", "", l_Idle))
+				{
+					openCollabDialog(CollabDialog::Host);
+					l_Close = true;
+				}
+				if (l_Row(ui::Icon::Open, "Join a session...", "", l_Idle))
+				{
+					openCollabDialog(CollabDialog::Join);
+					l_Close = true;
+				}
+			}
+			break;
+		case 4:
 			if (l_Row(ui::Icon::Keyboard, "Keyboard shortcuts", "F1"))
 			{
 				m_ShowShortcuts = true;
@@ -574,6 +603,7 @@ void App::buildDialogs()
 		m_Ui.setAnim(ui::Context::id("dialog.prompt", 1), 0.f);
 		m_Ui.setAnim(ui::Context::id("dialog.recovery", 1), 0.f);
 		m_Ui.setAnim(ui::Context::id("dialog.message", 1), 0.f);
+		m_Ui.setAnim(ui::Context::id("dialog.collab", 1), 0.f);
 		return;
 	}
 
@@ -582,6 +612,18 @@ void App::buildDialogs()
 		static constexpr std::array<DialogButton, 1> BUTTONS{ DialogButton{ "OK", ui::ButtonStyle::Primary } };
 		if (dialogCard(m_Ui, "dialog.message", "Inkwell", m_Message, BUTTONS) == 0)
 			m_MessageOpen = false;
+		return;
+	}
+
+	if (m_CollabDialog != CollabDialog::None)
+	{
+		buildCollabDialog();
+		return;
+	}
+
+	if (collabBusy())
+	{
+		buildCollabBusy();
 		return;
 	}
 

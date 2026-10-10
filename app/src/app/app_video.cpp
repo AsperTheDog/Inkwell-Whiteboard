@@ -109,6 +109,17 @@ bool pointInVideo(const VideoOnScreen& p_Screen, const Rect& p_Local, const Vec2
 }
 } // namespace
 
+// Tells the others where this video is and whether it plays (not its volume or loop, which are each person's own)
+void App::shareVideoState(const ObjectId p_Id, const double p_Seek)
+{
+	if (!m_Collab || !m_Collab->online())
+		return;
+	const render::VideoStatus l_Status = m_Canvas.videos().status(p_Id);
+	if (!l_Status.ready)
+		return;
+	m_Collab->sendVideoState(p_Id, l_Status.playing, p_Seek >= 0.0 ? p_Seek : l_Status.position);
+}
+
 void App::buildVideoViewer()
 {
 	ui::DrawList& l_Draw = m_Ui.draw();
@@ -296,7 +307,10 @@ void App::buildVideoViewer()
 	};
 
 	if (m_Ui.iconButton("video.play", l_NextButton(), l_Status.playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Status.playing ? "Pause" : "Play"))
+	{
 		l_Videos.setPlaying(l_Hot, !l_Status.playing);
+		shareVideoState(l_Hot);
+	}
 
 	// Everything right of the track is laid out first so the track takes what is left
 	float l_RightEdge = l_Bar.max.x - l_Pad;
@@ -331,19 +345,26 @@ void App::buildVideoViewer()
 				m_VideoScrubResume = l_Status.playing;
 				m_VideoScrubLastSeek = -1.0;
 				if (l_Status.playing)
+				{
 					l_Videos.setPlaying(l_Hot, false);
+					shareVideoState(l_Hot);
+				}
 			}
 			if (m_VideoScrubLastSeek < 0.0 || std::abs(l_T - m_VideoScrubLastSeek) > SEEK_SLOP_SECONDS || l_State.clicked)
 			{
 				l_Videos.seek(l_Hot, l_T);
 				m_VideoScrubLastSeek = l_T;
+				shareVideoState(l_Hot, l_T);
 			}
 			l_Shown = l_T;
 		}
 		if (m_VideoScrub == l_Hot && !l_State.held)
 		{
 			if (m_VideoScrubResume)
+			{
 				l_Videos.setPlaying(l_Hot, true);
+				shareVideoState(l_Hot);
+			}
 			m_VideoScrub = INVALID_OBJECT_ID;
 		}
 

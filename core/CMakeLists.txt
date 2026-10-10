@@ -14,6 +14,9 @@ target_sources(wb_core PUBLIC
     FILE_SET CXX_MODULES BASE_DIRS "${PROJECT_SOURCE_DIR}" FILES
         ${wb_core_MODULES_1}
 )
+if(WIN32)
+    target_link_libraries(wb_core PUBLIC ws2_32)
+endif()
 target_compile_options(wb_core PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:MSVC>>:/W4>")
 target_compile_options(wb_core PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wall;-Wextra;-Wpedantic>")
 if(MSVC)

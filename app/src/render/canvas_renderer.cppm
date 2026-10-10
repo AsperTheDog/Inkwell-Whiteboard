@@ -48,7 +48,7 @@ static_assert(sizeof(GpuStrokeInstance) == 64);
 
 export namespace wb::render
 {
-// The stroke currently being drawn (points relative to origin, in world units)
+// A stroke being drawn right now, by this user or another (points relative to origin, in world units)
 struct LiveStrokeView
 {
 	DVec2 origin{ 0.0 };
@@ -87,7 +87,7 @@ public:
 	void detach();
 
 	// Outside a rendering scope: uploads pending strokes and builds this frame's instances
-	void prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd, uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live, const ImageClock& p_Clock);
+	void prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, VkCommandBuffer p_Cmd, uint32_t p_Slot, const Camera& p_Camera, std::span<const LiveStrokeView> p_Live, const ImageClock& p_Clock);
 	// Inside the rendering scope of the frame target
 	void record(VkCommandBuffer p_Cmd, const Camera& p_Camera, const GridStyle& p_Grid) const;
 

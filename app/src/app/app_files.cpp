@@ -78,6 +78,9 @@ void App::loadSettings()
 	m_PlayAnimations = l_S.getBool("anim.play", m_PlayAnimations);
 	m_ShowGrid = l_S.getBool("ui.grid", m_ShowGrid);
 	m_LastDirectory = l_S.getString("files.lastDirectory");
+	m_CollabForm.name = l_S.getString("collab.name", m_CollabForm.name);
+	m_CollabForm.address = l_S.getString("collab.address");
+	m_CollabForm.port = l_S.getString("collab.port", m_CollabForm.port);
 	for (size_t i = 0; i < m_RecentColors.size(); ++i)
 		m_RecentColors[i] = static_cast<uint32_t>(l_S.getInt("brush.recent" + std::to_string(i), 0));
 
@@ -133,6 +136,9 @@ void App::saveSettings()
 	l_S.setBool("anim.play", m_PlayAnimations);
 	l_S.setBool("ui.grid", m_ShowGrid);
 	l_S.set("files.lastDirectory", m_LastDirectory);
+	l_S.set("collab.name", m_CollabForm.name); // the password is never stored
+	l_S.set("collab.address", m_CollabForm.address);
+	l_S.set("collab.port", m_CollabForm.port);
 	for (size_t i = 0; i < m_RecentColors.size(); ++i)
 		l_S.setInt("brush.recent" + std::to_string(i), static_cast<long long>(m_RecentColors[i]));
 
@@ -186,6 +192,12 @@ void App::saveSettings()
 void App::requestAction(const Action p_Action)
 {
 	requestRedraw();
+	// A board that belongs to the host cannot be swapped for another one underneath its collaborators
+	if (m_Collab && m_Collab->role() == net::Role::Client && (p_Action == Action::NewBoard || p_Action == Action::OpenFile))
+	{
+		showMessage("You are in somebody else's session. Leave it first (menu > Collaborate) to start or open another board.");
+		return;
+	}
 	if (m_Options.smokeTestFrames > 0 || !m_Session.dirty())
 	{
 		performAction(p_Action);
@@ -213,6 +225,9 @@ void App::performAction(const Action p_Action)
 	case Action::Quit:
 		m_Running = false;
 		return;
+	case Action::JoinSession:
+		beginJoin();
+		return;
 	}
 }
 
@@ -226,6 +241,8 @@ void App::requestSave(const bool p_SaveAs, const Action p_After)
 
 void App::saveToPath(const std::filesystem::path& p_Path, const Action p_After)
 {
+	// Pictures and videos still on their way are left out of the file (everything else is saved)
+	const uint32_t l_Unfinished = m_Collab ? m_Collab->assetProgress().files : 0;
 	const IoResult l_Result = m_Session.saveTo(p_Path);
 	requestRedraw();
 	if (!l_Result.ok)
@@ -235,7 +252,7 @@ void App::saveToPath(const std::filesystem::path& p_Path, const Action p_After)
 	}
 	m_LastDirectory = pathToUtf8(p_Path.parent_path());
 	updateTitle();
-	showToast("Saved " + m_Session.displayName());
+	showToast("Saved " + m_Session.displayName() + (l_Unfinished > 0 ? " (without " + std::to_string(l_Unfinished) + " picture/video still being received)" : std::string()));
 	performAction(p_After);
 }
 

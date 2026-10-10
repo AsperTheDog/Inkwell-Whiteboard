@@ -425,7 +425,7 @@ void CanvasRenderer::uploadPending(const gfx::GraphicsContext& p_Context, gfx::F
 
 // ------------------------------------------------------------------------------------------------ per frame
 
-void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, const VkCommandBuffer p_Cmd, const uint32_t p_Slot, const Camera& p_Camera, const LiveStrokeView* p_Live, const ImageClock& p_Clock)
+void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameScheduler& p_Frames, gfx::StagingBelt& p_Staging, const VkCommandBuffer p_Cmd, const uint32_t p_Slot, const Camera& p_Camera, const std::span<const LiveStrokeView> p_Live, const ImageClock& p_Clock)
 {
 	m_Slot = p_Slot;
 	m_Images.update(p_Context, p_Frames, p_Cmd);
@@ -519,21 +519,27 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 		}
 	}
 
-	// The stroke being drawn goes on top
+	// The strokes being drawn go on top (this user's last)
 	uint64_t l_LiveCount = 0;
-	if (p_Live != nullptr)
-		l_LiveCount = p_Live->committed.size() + p_Live->tail.size();
+	for (const LiveStrokeView& l_View : p_Live)
+		l_LiveCount += l_View.committed.size() + l_View.tail.size();
 	ensureCapacity(p_Context, p_Frames, l_Frame.livePoints, std::max<uint64_t>(l_LiveCount, 1) * sizeof(GpuPoint), "live stroke points");
 	if (l_LiveCount > 0)
 	{
 		GpuPoint* l_Dst = reinterpret_cast<GpuPoint*>(l_Frame.livePoints.mapped);
 		size_t l_Index = 0;
-		for (const std::span<const StrokePoint> l_Part : { p_Live->committed, p_Live->tail })
+		for (const LiveStrokeView& l_View : p_Live)
 		{
-			for (const StrokePoint& l_Point : l_Part)
-				l_Dst[l_Index++] = GpuPoint{ .x = l_Point.position.x, .y = l_Point.position.y, .radius = l_Point.radius, .unused = 0.f };
+			const size_t l_First = l_Index;
+			for (const std::span<const StrokePoint> l_Part : { l_View.committed, l_View.tail })
+			{
+				for (const StrokePoint& l_Point : l_Part)
+					l_Dst[l_Index++] = GpuPoint{ .x = l_Point.position.x, .y = l_Point.position.y, .radius = l_Point.radius, .unused = 0.f };
+			}
+			const uint32_t l_Count = static_cast<uint32_t>(l_Index - l_First);
+			if (l_Count > 0)
+				l_AddStroke(makeInstance(l_WorldToScreen * Affine2::translate(l_View.origin), l_View.color, static_cast<uint32_t>(l_First), l_Count, 1, STROKE_FLAG_LIVE), segmentsFor(l_Count, 1));
 		}
-		l_AddStroke(makeInstance(l_WorldToScreen * Affine2::translate(p_Live->origin), p_Live->color, 0, static_cast<uint32_t>(l_LiveCount), 1, STROKE_FLAG_LIVE), segmentsFor(static_cast<uint32_t>(l_LiveCount), 1));
 	}
 
 	if (m_TextSystem != nullptr)

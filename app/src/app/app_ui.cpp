@@ -177,6 +177,20 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 			m_MessageOpen = false;
 		return true;
 	}
+	if (m_CollabDialog != CollabDialog::None)
+	{
+		if (!p_Event.repeat && l_Escape)
+			m_CollabDialog = CollabDialog::None;
+		else if (!p_Event.repeat && l_Enter)
+			submitCollabDialog();
+		return true;
+	}
+	if (collabBusy())
+	{
+		if (!p_Event.repeat && l_Escape)
+			m_Collab->leave();
+		return true;
+	}
 	if (m_ShowExport)
 	{
 		if (!p_Event.repeat && l_Escape)
@@ -245,6 +259,8 @@ void App::buildCanvasOverlays()
 
 	buildRulerOverlay();
 	buildLaserOverlay();
+	buildAssetSpinners();
+	buildRemoteCursors();
 
 	const tools::SelectionOverlay l_Overlay = m_Editor.selectionOverlay();
 	if (l_Overlay.marquee)
@@ -362,6 +378,7 @@ void App::buildTopBar()
 		const Rect2 l_ThemeButton = Rect2::fromPosSize(l_Pill.min + Vec2{ l_Pad }, Vec2{ l_Button });
 		const Rect2 l_MenuButton = Rect2::fromPosSize(Vec2{ l_ThemeButton.max.x + m_Ui.px(2.f), l_ThemeButton.min.y }, Vec2{ l_Button });
 		m_MenuAnchor = l_Pill;
+		buildPeopleChip(l_Pill.min.x - m_Ui.px(10.f));
 
 		if (m_Ui.iconButton("topbar.theme", l_ThemeButton, m_DarkTheme ? ui::Icon::Sun : ui::Icon::Moon, false, true, m_DarkTheme ? "Switch to the light theme" : "Switch to the dark theme"))
 			m_DarkTheme = !m_DarkTheme;
@@ -369,6 +386,60 @@ void App::buildTopBar()
 			togglePopup(Popup::Menu);
 	}
 	(void)l_Scale;
+}
+
+// Who is in the session: overlapping coloured initials (the colours of their pointers). Opens the session dialog.
+void App::buildPeopleChip(const float p_RightEdge)
+{
+	if (!m_Collab || !m_Collab->online())
+		return;
+	const std::vector<net::UserInfo>& l_Users = m_Collab->users();
+	if (l_Users.empty())
+		return;
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	constexpr size_t MAX_SHOWN = 5;
+	const size_t l_Shown = std::min(l_Users.size(), MAX_SHOWN);
+	const float l_Avatar = m_Ui.px(28.f);
+	const float l_Step = m_Ui.px(21.f);
+	const float l_Height = m_Ui.px(40.f);
+	const float l_Pad = m_Ui.px(10.f);
+	const std::string l_More = l_Users.size() > MAX_SHOWN ? "+" + std::to_string(l_Users.size() - MAX_SHOWN) : std::string();
+	const float l_MoreWidth = l_More.empty() ? 0.f : m_Ui.font().measure(l_More, m_Ui.fontPx(12.5f)) + m_Ui.px(6.f);
+	const float l_Width = l_Pad * 2.f + l_Avatar + l_Step * static_cast<float>(l_Shown - 1) + l_MoreWidth;
+	const float l_Top = m_Ui.px(EDGE_MARGIN) - m_Ui.px(2.f) + (m_Ui.px(48.f) - l_Height) * 0.5f;
+	const Rect2 l_Chip = Rect2::fromPosSize(Vec2{ p_RightEdge - l_Width, l_Top }, Vec2{ l_Width, l_Height });
+	m_Ui.panel(l_Chip, l_Height * 0.5f);
+
+	const uint32_t l_Id = ui::Context::id("topbar.people");
+	const ui::Interaction l_State = m_Ui.interact(l_Id, l_Chip);
+	const float l_Hover = m_Ui.anim(l_Id + 1, l_State.hovered ? 1.f : 0.f, 22.f);
+	if (l_Hover > 0.001f)
+		l_Draw.rect(l_Chip, l_Height * 0.5f, ui::withAlpha(l_Theme.hover, l_Theme.hover.a * l_Hover));
+	for (size_t i = 0; i < l_Shown; ++i)
+	{
+		const net::UserInfo& l_User = l_Users[i];
+		const Vec2 l_Center{ l_Chip.min.x + l_Pad + l_Avatar * 0.5f + l_Step * static_cast<float>(i), l_Chip.center().y };
+		l_Draw.circle(l_Center, l_Avatar * 0.5f + m_Ui.px(2.f), l_Theme.panel);
+		l_Draw.circle(l_Center, l_Avatar * 0.5f, Color::fromRgba8(l_User.color));
+		// First letter of the name (a whole UTF-8 sequence)
+		size_t l_Length = 1;
+		while (l_Length < l_User.name.size() && (static_cast<uint8_t>(l_User.name[l_Length]) & 0xC0) == 0x80)
+			++l_Length;
+		std::string l_Initial = l_User.name.substr(0, l_Length);
+		if (l_Initial.size() == 1)
+			l_Initial[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(l_Initial[0])));
+		l_Draw.text(l_Center, l_Initial, m_Ui.fontPx(13.f), Color{ 1.f, 1.f, 1.f, 1.f }, ui::TextAlign::Center);
+	}
+	if (!l_More.empty())
+		l_Draw.text(Vec2{ l_Chip.max.x - l_Pad - l_MoreWidth + m_Ui.px(4.f), l_Chip.center().y }, l_More, m_Ui.fontPx(12.5f), l_Theme.textMuted);
+
+	std::string l_Tip;
+	for (const net::UserInfo& l_User : l_Users)
+		l_Tip += (l_Tip.empty() ? "" : ", ") + l_User.name + (l_User.slot == m_Collab->localSlot() ? " (you)" : "");
+	m_Ui.noteTooltip(l_Id, l_Chip, l_Tip, l_State.hovered);
+	if (l_State.clicked)
+		openCollabDialog(CollabDialog::Session);
 }
 
 // ------------------------------------------------------------------------------------------------ tool bar

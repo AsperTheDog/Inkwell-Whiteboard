@@ -205,7 +205,7 @@ std::optional<render::LiveStrokeView> Editor::liveStroke() const
 	{
 		if (m_ShapeTool->preview().empty())
 			return std::nullopt;
-		return render::LiveStrokeView{ .origin = m_ShapeTool->origin(), .color = m_ShapeTool->color(), .committed = m_ShapeTool->preview(), .tail = {} };
+		return render::LiveStrokeView{ .origin = m_ShapeTool->origin(), .color = m_ShapeTool->color(), .committed = {}, .tail = m_ShapeTool->preview() }; // all of it still changes
 	}
 	const StrokeBuilder& l_Builder = (m_Highlighter->builder().isActive() ? m_Highlighter : m_Pen)->builder();
 	if (!l_Builder.isActive())
@@ -847,10 +847,19 @@ SplitBoard Editor::saveBoardSplit(const std::string& p_SourcePath, const size_t 
 	return serializeBoardSplit(m_Document, l_Meta, p_BigAssetBytes, true);
 }
 
-LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta)
+std::vector<uint8_t> Editor::saveBoardShell(const size_t p_InlineAssetBytes)
+{
+	embedFonts();
+	BoardMeta l_Meta;
+	l_Meta.viewCenter = m_Camera.center();
+	l_Meta.viewZoom = m_Camera.zoom();
+	return serializeBoardShell(m_Document, l_Meta, p_InlineAssetBytes);
+}
+
+LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
 {
 	cancelGestures();
-	const LoadResult l_Result = deserializeBoard(p_Bytes, m_Document, p_Meta);
+	const LoadResult l_Result = deserializeBoard(p_Bytes, m_Document, p_Meta, p_AllowMissingAssets);
 	if (l_Result.ok)
 	{
 		m_History.clear();

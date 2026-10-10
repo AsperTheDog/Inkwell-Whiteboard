@@ -64,6 +64,9 @@ public:
 	// Work with players that may not exist yet: the request is kept and applied when the video has opened
 	void setPlaying(ObjectId p_Id, bool p_Playing);
 	void seek(ObjectId p_Id, double p_Seconds);
+	// Somebody else played, paused or moved this video: put it where they have it. A video that has not been on screen yet
+	// is put there when it first opens (a playing one a little further on, for the time that passed).
+	void applyRemote(ObjectId p_Id, bool p_Playing, double p_Position);
 
 	// The object left the board (its player stops at once; the textures go at the next update)
 	void forget(ObjectId p_Id);
@@ -129,6 +132,13 @@ private:
 	std::shared_ptr<std::vector<VkDescriptorSet>> m_FreeSets = std::make_shared<std::vector<VkDescriptorSet>>();
 	std::vector<Entry> m_Retired;
 	std::unordered_map<ObjectId, double> m_Resume; // where a video was when it left the screen
+	struct RemoteState
+	{
+		bool playing = false;
+		double position = 0.0;
+		std::chrono::steady_clock::time_point at;
+	};
+	std::unordered_map<ObjectId, RemoteState> m_Remote; // what others did to videos that have no player yet
 	std::unordered_map<AssetId, std::weak_ptr<const std::vector<uint8_t>>> m_Blobs;
 	uint64_t m_Tick = 0;
 	uint32_t m_MaxDimension = 1920;

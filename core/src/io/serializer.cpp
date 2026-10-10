@@ -504,6 +504,8 @@ void writeAssets(Writer& p_Writer, const Document& p_Document, const size_t p_Bi
 		if (l_Asset != INVALID_ASSET_ID && l_Seen.insert(l_Asset).second)
 			l_Used.push_back(l_Asset);
 	}
+	// An asset the document does not hold (still being received in a collaboration) has nothing to write
+	std::erase_if(l_Used, [&](const AssetId p_Id) { return p_Document.findAsset(p_Id) == nullptr; });
 	// Big assets are not copied: the caller writes them from the document's memory
 	if (p_Big != nullptr)
 	{
@@ -635,13 +637,90 @@ uint32_t crc32(const std::span<const uint8_t> p_Bytes)
 	return ~crcUpdate(0xFFFFFFFFu, p_Bytes.data(), p_Bytes.size());
 }
 
+std::vector<uint8_t> encodeObject(const Object& p_Object)
+{
+	Writer l_Writer;
+	if (const StrokeData* l_Stroke = p_Object.stroke())
+		writeStroke(l_Writer, p_Object, *l_Stroke);
+	else if (const ImageData* l_Image = p_Object.image())
+		writeImage(l_Writer, p_Object, *l_Image);
+	else if (const VideoData* l_Video = p_Object.video())
+		writeVideo(l_Writer, p_Object, *l_Video);
+	else if (const TextData* l_Text = p_Object.text())
+		writeText(l_Writer, p_Object, *l_Text);
+	return l_Writer.take();
+}
+
+ObjectDecode decodeObject(const std::span<const uint8_t> p_Bytes, std::unique_ptr<Object>& p_Object, size_t* p_Consumed)
+{
+	p_Object.reset();
+	Reader l_Reader(p_Bytes);
+	const ObjectId l_Id = l_Reader.u64();
+	const uint8_t l_Type = l_Reader.u8();
+	const uint32_t l_BodySize = l_Reader.u32();
+	const std::span<const uint8_t> l_Body = l_Reader.take(l_BodySize);
+	if (!l_Reader.ok() || l_Id == INVALID_OBJECT_ID)
+		return ObjectDecode::Corrupt;
+	if (p_Consumed != nullptr)
+		*p_Consumed = p_Bytes.size() - l_Reader.remaining();
+
+	auto l_Object = std::make_unique<Object>();
+	l_Object->id = l_Id;
+	Reader l_BodyReader(l_Body);
+	bool l_Skipped = false;
+	switch (l_Type)
+	{
+	case static_cast<uint8_t>(ObjectType::Stroke):
+		if (!readStroke(l_BodyReader, *l_Object, l_Skipped))
+			return ObjectDecode::Corrupt;
+		break;
+	case static_cast<uint8_t>(ObjectType::Image):
+		if (!readImage(l_BodyReader, *l_Object))
+			return ObjectDecode::Corrupt;
+		break;
+	case static_cast<uint8_t>(ObjectType::Text):
+		if (!readText(l_BodyReader, *l_Object))
+			return ObjectDecode::Corrupt;
+		break;
+	case static_cast<uint8_t>(ObjectType::Video):
+		if (!readVideo(l_BodyReader, *l_Object))
+			return ObjectDecode::Corrupt;
+		break;
+	default:
+		return ObjectDecode::Unknown;
+	}
+	if (l_Skipped)
+		return ObjectDecode::Unknown;
+	p_Object = std::move(l_Object);
+	return ObjectDecode::Ok;
+}
+
 namespace
 {
 // Everything but the closing chunk; big assets (when p_Big is set) are left out and listed there
-std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big, std::vector<size_t>* p_DeferredCrcs = nullptr)
+// A picture or video whose file the document does not hold (still being received in a collaboration)
+bool lacksAsset(const Document& p_Document, const Object& p_Object)
 {
-	size_t l_Estimate = 256 + p_Meta.sourcePath.size();
+	if (const ImageData* l_Image = p_Object.image())
+		return p_Document.findAsset(l_Image->asset) == nullptr;
+	if (const VideoData* l_Video = p_Object.video())
+		return p_Document.findAsset(l_Video->asset) == nullptr;
+	return false;
+}
+
+// p_IncludeUnresolved: also write pictures and videos whose file is missing (a collaboration snapshot; the receiver gets
+// the file separately). A saved file leaves them out, as it could not show them.
+std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big, std::vector<size_t>* p_DeferredCrcs = nullptr, const bool p_IncludeUnresolved = false)
+{
+	std::vector<const Object*> l_Objects;
+	l_Objects.reserve(p_Document.size());
 	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	{
+		if (p_IncludeUnresolved || !lacksAsset(p_Document, *l_Object))
+			l_Objects.push_back(l_Object.get());
+	}
+	size_t l_Estimate = 256 + p_Meta.sourcePath.size();
+	for (const Object* l_Object : l_Objects)
 	{
 		if (const StrokeData* l_Stroke = l_Object->stroke())
 			l_Estimate += OBJECT_HEADER_BYTES + strokeBodyBytes(*l_Stroke);
@@ -663,7 +742,7 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 
 	l_Writer.beginChunk(TAG_META);
 	l_Writer.u64(p_Document.peekNextId());
-	l_Writer.u64(p_Document.size());
+	l_Writer.u64(l_Objects.size());
 	l_Writer.string(p_Meta.sourcePath);
 	l_Writer.endChunk();
 
@@ -677,8 +756,8 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 	writeFonts(l_Writer, p_Document);
 
 	l_Writer.beginChunk(TAG_OBJS);
-	l_Writer.u32(static_cast<uint32_t>(p_Document.size()));
-	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	l_Writer.u32(static_cast<uint32_t>(l_Objects.size()));
+	for (const Object* l_Object : l_Objects)
 	{
 		if (const StrokeData* l_Stroke = l_Object->stroke())
 			writeStroke(l_Writer, *l_Object, *l_Stroke);
@@ -692,13 +771,13 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 	l_Writer.endChunk();
 
 	uint32_t l_LockedCount = 0;
-	for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+	for (const Object* l_Object : l_Objects)
 		l_LockedCount += l_Object->locked ? 1u : 0u;
 	if (l_LockedCount > 0)
 	{
 		l_Writer.beginChunk(TAG_LOCK);
 		l_Writer.u32(l_LockedCount);
-		for (const std::unique_ptr<Object>& l_Object : p_Document.objects())
+		for (const Object* l_Object : l_Objects)
 		{
 			if (l_Object->locked)
 				l_Writer.u64(l_Object->id);
@@ -720,6 +799,15 @@ std::vector<uint8_t> closingChunk()
 std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta& p_Meta)
 {
 	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, 0, nullptr);
+	const std::vector<uint8_t> l_End = closingChunk();
+	l_Bytes.insert(l_Bytes.end(), l_End.begin(), l_End.end());
+	return l_Bytes;
+}
+
+std::vector<uint8_t> serializeBoardShell(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_InlineAssetBytes)
+{
+	std::vector<BigAssetRef> l_Left;
+	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, p_InlineAssetBytes, &l_Left, nullptr, true);
 	const std::vector<uint8_t> l_End = closingChunk();
 	l_Bytes.insert(l_Bytes.end(), l_End.begin(), l_End.end());
 	return l_Bytes;
@@ -798,7 +886,7 @@ IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitB
 	return {};
 }
 
-LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_Document, BoardMeta& p_Meta)
+LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_Document, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
 {
 	Reader l_File(p_Bytes);
 	const std::span<const uint8_t> l_Magic = l_File.take(MAGIC.size());
@@ -895,6 +983,7 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 	if (!l_ParsedMeta || !l_HaveObjects)
 		return failure("The file is damaged (missing data).");
 	// Images whose picture is missing cannot be shown: drop them like objects of an unknown kind
+	if (!p_AllowMissingAssets)
 	{
 		std::unordered_set<AssetId> l_Known;
 		for (const ImageAsset& l_Asset : l_Assets)

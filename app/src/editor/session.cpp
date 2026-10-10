@@ -5,6 +5,7 @@ module;
 #include <future>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -82,6 +83,20 @@ IoResult Session::open(const std::filesystem::path& p_Path)
 		m_Warning = std::to_string(l_Loaded.skippedObjects) + " object(s) from a newer version of Inkwell were left out. Saving will drop them.";
 
 	m_Path = p_Path;
+	m_SavedState = m_Editor.history().stateId();
+	m_AutosavedState = m_SavedState;
+	discardRecovery();
+	return {};
+}
+
+IoResult Session::adoptBoard(const std::span<const uint8_t> p_Bytes)
+{
+	waitForAutosave();
+	BoardMeta l_Meta;
+	const LoadResult l_Loaded = m_Editor.loadBoard(p_Bytes, l_Meta, true);
+	if (!l_Loaded.ok)
+		return IoResult::failure(l_Loaded.error);
+	m_Path.reset();
 	m_SavedState = m_Editor.history().stateId();
 	m_AutosavedState = m_SavedState;
 	discardRecovery();

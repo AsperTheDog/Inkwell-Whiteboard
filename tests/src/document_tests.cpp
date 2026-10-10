@@ -228,3 +228,63 @@ TEST(Document, BoundsListStaysInStepWithTheObjects)
 	l_Doc.clear();
 	expectBoundsMatch(l_Doc);
 }
+
+TEST(Document, IdSlotsNeverCollide)
+{
+	wb::Document l_Host;
+	wb::Document l_Peer;
+	l_Peer.setIdSlot(3);
+
+	const wb::ObjectId l_HostId = l_Host.allocateId();
+	const wb::ObjectId l_PeerId = l_Peer.allocateId();
+	EXPECT_EQ(wb::idSlotOf(l_HostId), 0u);
+	EXPECT_EQ(wb::idSlotOf(l_PeerId), 3u);
+	EXPECT_NE(l_HostId, l_PeerId);
+
+	// A foreign id must not move the local counter, an own-slot id must
+	const wb::ObjectId l_Before = l_Peer.peekNextId();
+	l_Peer.reserveId(l_HostId + 100);
+	EXPECT_EQ(l_Peer.peekNextId(), l_Before);
+	l_Peer.reserveId(l_PeerId + 100);
+	EXPECT_EQ(l_Peer.peekNextId(), l_PeerId + 101);
+}
+
+TEST(Document, IdSlotResumesAboveExistingIds)
+{
+	wb::Document l_Doc;
+	auto l_Object = std::make_unique<wb::Object>();
+	l_Object->id = (uint64_t{ 5 } << wb::ID_SLOT_SHIFT) | 7;
+	l_Object->payload = wb::StrokeData{ .style = {}, .points = { { .position = { 0.f, 0.f }, .radius = 1.f } } };
+	l_Doc.insert(std::move(l_Object));
+
+	l_Doc.setIdSlot(5);
+	EXPECT_EQ(l_Doc.allocateId(), (uint64_t{ 5 } << wb::ID_SLOT_SHIFT) | 8);
+}
+
+TEST(History, InvalidateDropsCommandsThatWouldClobberRemoteEdits)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	auto l_A = makeStroke(l_Doc, 0.f);
+	auto l_B = makeStroke(l_Doc, 5.f);
+	const wb::ObjectId l_IdA = l_A->id;
+	const wb::ObjectId l_IdB = l_B->id;
+	std::vector<std::unique_ptr<wb::Object>> l_Added;
+	l_Added.push_back(std::move(l_A));
+	l_Added.push_back(std::move(l_B));
+	l_History.execute(l_Doc, std::make_unique<wb::AddObjectsCommand>(std::move(l_Added), "Draw"));
+	l_History.execute(l_Doc, std::make_unique<wb::TransformObjectsCommand>(std::vector{ wb::TransformObjectsCommand::Entry{ .id = l_IdA, .before = wb::Affine2::translate({ 0.0, 0.0 }), .after = wb::Affine2::translate({ 9.0, 0.0 }) } }, "Move"));
+	ASSERT_EQ(l_History.undoCount(), 2u);
+
+	// A peer moving B changes nothing for A's move; a peer moving A makes our move stale. The add of A and B stays undoable.
+	const wb::ObjectId l_Ids[] = { l_IdB };
+	EXPECT_EQ(l_History.invalidate(l_Ids, false), 0u);
+	const wb::ObjectId l_OtherIds[] = { l_IdA };
+	EXPECT_EQ(l_History.invalidate(l_OtherIds, false), 1u);
+	EXPECT_EQ(l_History.undoCount(), 1u);
+	EXPECT_EQ(l_History.undoName(), "Draw");
+
+	// A peer deleting A makes undoing the add impossible
+	EXPECT_EQ(l_History.invalidate(l_OtherIds, true), 1u);
+	EXPECT_FALSE(l_History.canUndo());
+}
