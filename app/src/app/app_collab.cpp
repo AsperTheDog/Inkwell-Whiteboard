@@ -246,9 +246,10 @@ void App::pollCollab()
 	}
 	if (m_Collab->online())
 	{
-		// Where my pointer is on the board, for the others (not while it is over the toolbar or outside the window)
-		const bool l_OnBoard = m_PointerInWindow && !m_CursorOverUi && m_LastPointer.has_value();
-		m_Collab->setLocalCursor(l_OnBoard ? m_Editor.camera().screenToWorld(DVec2{ m_LastPointer->position }) : DVec2{ 0.0 }, l_OnBoard);
+		// Where my pointer is on the board, for the others. It stays in sync over the toolbar and panels too; it is only
+		// hidden when it leaves the window.
+		const bool l_InWindow = m_PointerInWindow && m_LastPointer.has_value();
+		m_Collab->setLocalCursor(l_InWindow ? m_Editor.camera().screenToWorld(DVec2{ m_LastPointer->position }) : DVec2{ 0.0 }, l_InWindow);
 	}
 	if (m_Collab->online())
 	{

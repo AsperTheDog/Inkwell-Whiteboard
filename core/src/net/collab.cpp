@@ -923,7 +923,8 @@ void CollabSession::setLocalCursor(const DVec2 p_World, const bool p_Visible)
 {
 	if (p_Visible == m_LocalCursorVisible && (!p_Visible || (p_World.x == m_LocalCursor.x && p_World.y == m_LocalCursor.y)))
 		return;
-	m_LocalCursor = p_World;
+	if (p_Visible)
+		m_LocalCursor = p_World; // a hidden pointer keeps its last place, so it fades out where it was
 	m_LocalCursorVisible = p_Visible;
 	m_CursorDirty = true;
 }
@@ -970,7 +971,11 @@ void CollabSession::cursorReceived(Peer& p_Peer, const Frame& p_Frame)
 	{
 		return; // ourselves, or somebody we have not been told about
 	}
-	m_Cursors[l_Cursor.slot] = RemoteCursor{ .position = DVec2{ l_Cursor.x, l_Cursor.y }, .visible = l_Cursor.visible, .updated = l_Now };
+	RemoteCursor& l_Remote = m_Cursors[l_Cursor.slot];
+	if (l_Cursor.visible || l_Remote.updated == Clock::time_point{})
+		l_Remote.position = DVec2{ l_Cursor.x, l_Cursor.y };
+	l_Remote.visible = l_Cursor.visible;
+	l_Remote.updated = l_Now;
 	++m_CursorsRevision;
 }
 
