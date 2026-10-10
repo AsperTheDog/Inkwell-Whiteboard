@@ -19,6 +19,7 @@ import wb.gfx.context;
 import wb.io.blob;
 import wb.io.file;
 import wb.platform.input;
+import wb.text.subtitles;
 import wb.video.media;
 
 namespace
@@ -128,6 +129,27 @@ int videoSelfTest(const std::string& p_Path)
 		l_Second->setSubtitleTrack(-1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		spdlog::info("subtitles off: '{}'", l_Second->subtitle());
+	}
+
+	// WB_SELFTEST_SRT=<file>: subtitles from a file of their own instead of the video's
+	if (const char* l_Srt = std::getenv("WB_SELFTEST_SRT"))
+	{
+		std::vector<uint8_t> l_Bytes;
+		if (wb::readFile(wb::pathFromUtf8(l_Srt), l_Bytes).ok)
+		{
+			auto l_Cues = std::make_shared<const std::vector<wb::SubtitleCue>>(wb::parseSubtitles(std::string_view(reinterpret_cast<const char*>(l_Bytes.data()), l_Bytes.size())));
+			spdlog::info("subtitle file: {} lines", l_Cues->size());
+			l_Player->setExternalSubtitles(l_Cues);
+			for (const double l_At : { 0.2, 1.0, 2.3, 2.95 })
+			{
+				l_Player->setLoop(false);
+				l_Player->seek(l_At);
+				std::this_thread::sleep_for(std::chrono::milliseconds(60));
+				std::string l_Shown = l_Player->subtitle();
+				std::replace(l_Shown.begin(), l_Shown.end(), '\n', '|');
+				spdlog::info("external at {:.2f}: '{}'", l_At, l_Shown);
+			}
+		}
 	}
 	return 0;
 }

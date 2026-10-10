@@ -26,6 +26,7 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.image;
 import wb.render.image_store;
+import wb.text.subtitles;
 import wb.video.media;
 
 namespace wb::render
@@ -391,7 +392,35 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 	if (l_Entry.state == Entry::State::Ready)
 	{
 		l_Entry.player->setAudioTrack(p_Video.audioTrack);
-		l_Entry.player->setSubtitleTrack(p_Video.subtitleTrack);
+		// Subtitles: one of the file's own tracks, or one of the files somebody added (listed after them)
+		const int l_Embedded = static_cast<int>(l_Entry.info.subtitleTracks.size());
+		const int l_Wanted = p_Video.subtitleTrack;
+		if (l_Wanted >= l_Embedded && l_Wanted - l_Embedded < static_cast<int>(p_Video.subtitleFiles.size()))
+		{
+			const size_t l_Index = static_cast<size_t>(l_Wanted - l_Embedded);
+			const std::string& l_Text = p_Video.subtitleFiles[l_Index].text;
+			uint64_t l_Signature = static_cast<uint64_t>(l_Text.size()) * 1099511628211ull;
+			for (size_t k = 0; k < 16 && !l_Text.empty(); ++k)
+				l_Signature = (l_Signature ^ static_cast<uint8_t>(l_Text[l_Text.size() * k / 16])) * 1099511628211ull;
+			if (l_Entry.externalIndex != l_Index || l_Entry.externalSignature != l_Signature)
+			{
+				l_Entry.externalIndex = l_Index;
+				l_Entry.externalSignature = l_Signature;
+				l_Entry.externalCues = std::make_shared<const std::vector<SubtitleCue>>(parseSubtitles(l_Text));
+				l_Entry.player->setExternalSubtitles(l_Entry.externalCues);
+			}
+			l_Entry.player->setSubtitleTrack(-1);
+		}
+		else
+		{
+			if (l_Entry.externalCues)
+			{
+				l_Entry.externalCues.reset();
+				l_Entry.externalIndex = SIZE_MAX;
+				l_Entry.player->setExternalSubtitles(nullptr);
+			}
+			l_Entry.player->setSubtitleTrack(l_Wanted < l_Embedded ? l_Wanted : -1);
+		}
 		l_Entry.player->setLoop(p_Video.loop);
 		l_Entry.player->setVolume(l_Entry.gain);
 		if (l_Entry.shown >= 0)

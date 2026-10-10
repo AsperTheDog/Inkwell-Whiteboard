@@ -443,6 +443,12 @@ void App::handleDialogResult()
 		showToast("Saving " + m_MediaCopyName + "...");
 		return;
 	}
+	if (l_Kind == DialogKind::Subtitles)
+	{
+		for (const std::string& l_Path : l_Paths)
+			addSubtitleFile(m_SubtitleTarget, pathFromUtf8(l_Path));
+		return;
+	}
 	if (l_Kind == DialogKind::Fonts)
 	{
 		importFontFiles(l_Paths);

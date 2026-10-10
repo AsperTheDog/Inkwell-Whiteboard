@@ -23,6 +23,7 @@ module;
 module wb.video.media;
 
 import wb.io.blob;
+import wb.text.subtitles;
 
 namespace wb::video
 {
@@ -519,6 +520,7 @@ struct Player::Impl
 		std::string text;
 	};
 	std::vector<Cue> cues; // subtitle lines read so far, near the playhead (m)
+	std::shared_ptr<const std::vector<SubtitleCue>> external; // the lines of a subtitle file, sorted by start (m)
 
 	// Video decoder state handed to its thread
 	std::unique_ptr<Input> videoInput;
@@ -1288,13 +1290,32 @@ int Player::subtitleTrack() const
 	return m_Impl->subtitleOrdinal.load();
 }
 
+void Player::setExternalSubtitles(std::shared_ptr<const std::vector<SubtitleCue>> p_Cues)
+{
+	std::lock_guard l_Lock(m_Impl->m);
+	m_Impl->external = std::move(p_Cues);
+}
+
 std::string Player::subtitle() const
 {
 	Impl& l_Impl = *m_Impl;
-	if (l_Impl.subtitleOrdinal.load() < 0)
-		return {};
 	const double l_Position = l_Impl.position();
 	std::string l_Text;
+	if (l_Impl.subtitleOrdinal.load() < 0)
+	{
+		std::lock_guard l_Lock(l_Impl.m);
+		if (!l_Impl.external)
+			return {};
+		const std::vector<SubtitleCue>& l_Cues = *l_Impl.external;
+		auto l_It = std::ranges::upper_bound(l_Cues, l_Position, {}, &SubtitleCue::start);
+		for (int l_Back = 0; l_Back < 24 && l_It != l_Cues.begin(); ++l_Back)
+		{
+			--l_It;
+			if (l_Position < l_It->end && l_Text.find(l_It->text) == std::string::npos)
+				l_Text = l_Text.empty() ? l_It->text : l_It->text + "\n" + l_Text; // earlier lines above later ones
+		}
+		return l_Text;
+	}
 	std::lock_guard l_Lock(l_Impl.m);
 	for (const Impl::Cue& l_Cue : l_Impl.cues)
 	{

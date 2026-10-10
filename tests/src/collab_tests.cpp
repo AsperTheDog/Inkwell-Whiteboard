@@ -497,6 +497,43 @@ TEST(Collab, VideoPlaybackIsSharedButLoopAndVolumeAreNot)
 	EXPECT_LT(l_CyEvents.back().position, 60.0);
 }
 
+// Anybody can add a subtitle file to a video and it is listed for everybody; which one each person watches is their own
+TEST(Collab, SubtitleFilesAreSharedButTheChoiceIsNot)
+{
+	Node l_Host;
+	Node l_Ana;
+	Node l_Bo;
+	const wb::ObjectId l_Video = addPicture(l_Host.doc, noise(4u << 10, 6), "clip.mp4");
+	const wb::AssetId l_Asset = l_Host.doc.find(l_Video)->image()->asset;
+	l_Host.doc.modify(l_Video, [&](wb::Object& p_Object) { p_Object.payload = wb::VideoData{ .asset = l_Asset, .size = { 40.f, 30.f } }; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return joinedAndOnline(l_Ana) && joinedAndOnline(l_Bo) && l_Ana.session->users().size() == 3 && l_Bo.session->users().size() == 3; }));
+
+	// Ana adds a file and watches with it; the others see it in their list but are not switched to it
+	l_Ana.doc.modify(l_Video, [&](wb::Object& p_Object)
+	{
+		p_Object.video()->subtitleFiles.push_back(wb::SubtitleFile{ .name = "english.srt", .text = "1\n00:00:01,000 --> 00:00:02,000\nHello\n" });
+		p_Object.video()->subtitleTrack = 0;
+	}, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.doc.find(l_Video)->video()->subtitleFiles.size() == 1 && l_Bo.doc.find(l_Video)->video()->subtitleFiles.size() == 1; }));
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->subtitleFiles[0].name, "english.srt");
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->subtitleFiles[0].text, "1\n00:00:01,000 --> 00:00:02,000\nHello\n");
+	EXPECT_EQ(l_Ana.doc.find(l_Video)->video()->subtitleTrack, 0);
+	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->subtitleTrack, -1);
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->subtitleTrack, -1);
+
+	// Bo picks it for themselves, then the host adds another: Bo keeps what they chose
+	l_Bo.doc.modify(l_Video, [](wb::Object& p_Object) { p_Object.video()->subtitleTrack = 0; }, wb::ObjectChange::Style);
+	l_Host.doc.modify(l_Video, [](wb::Object& p_Object) { p_Object.video()->subtitleFiles.push_back(wb::SubtitleFile{ .name = "spanish.srt", .text = "1\n00:00:01,000 --> 00:00:02,000\nHola\n" }); }, wb::ObjectChange::Style);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Ana.doc.find(l_Video)->video()->subtitleFiles.size() == 2 && l_Bo.doc.find(l_Video)->video()->subtitleFiles.size() == 2; }));
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->subtitleTrack, 0);
+	EXPECT_EQ(l_Ana.doc.find(l_Video)->video()->subtitleTrack, 0);
+	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->subtitleTrack, -1);
+}
+
 TEST(Protocol, VideoStateMessagesRoundTripAndRejectNonsense)
 {
 	wb::net::VideoStateMessage l_Back;

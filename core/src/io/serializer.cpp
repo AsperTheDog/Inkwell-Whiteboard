@@ -62,7 +62,15 @@ enum class ObjectType : uint8_t
 };
 
 constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
-constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float) + 2;
+constexpr size_t VIDEO_BODY_BASE_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float) + 2;
+
+size_t videoBodyBytes(const VideoData& p_Video)
+{
+	size_t l_Bytes = VIDEO_BODY_BASE_BYTES + 1; // and the number of subtitle files
+	for (const SubtitleFile& l_File : p_Video.subtitleFiles)
+		l_Bytes += 2 * sizeof(uint32_t) + l_File.name.size() + l_File.text.size();
+	return l_Bytes;
+}
 constexpr size_t MAX_NAME_BYTES = 1024;
 constexpr size_t MAX_TEXT_BYTES = 64u << 20;
 constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
@@ -368,7 +376,7 @@ void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Vid
 {
 	p_Writer.u64(p_Object.id);
 	p_Writer.u8(static_cast<uint8_t>(ObjectType::Video));
-	p_Writer.u32(static_cast<uint32_t>(VIDEO_BODY_BYTES));
+	p_Writer.u32(static_cast<uint32_t>(videoBodyBytes(p_Video)));
 	writeTransform(p_Writer, p_Object.transform);
 	p_Writer.u64(p_Video.asset);
 	p_Writer.f32(p_Video.size.x);
@@ -378,6 +386,12 @@ void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Vid
 	p_Writer.f32(p_Video.volume);
 	p_Writer.u8(static_cast<uint8_t>(p_Video.audioTrack));
 	p_Writer.u8(static_cast<uint8_t>(p_Video.subtitleTrack));
+	p_Writer.u8(static_cast<uint8_t>(std::min(p_Video.subtitleFiles.size(), MAX_SUBTITLE_FILES)));
+	for (size_t i = 0; i < p_Video.subtitleFiles.size() && i < MAX_SUBTITLE_FILES; ++i)
+	{
+		p_Writer.string(p_Video.subtitleFiles[i].name);
+		p_Writer.string(p_Video.subtitleFiles[i].text);
+	}
 }
 
 bool readVideo(Reader& p_Reader, Object& p_Object)
@@ -401,6 +415,21 @@ bool readVideo(Reader& p_Reader, Object& p_Object)
 	{
 		l_Video.audioTrack = static_cast<int8_t>(std::max<int>(-1, static_cast<int8_t>(p_Reader.u8())));
 		l_Video.subtitleTrack = static_cast<int8_t>(std::max<int>(-1, static_cast<int8_t>(p_Reader.u8())));
+	}
+	if (p_Reader.remaining() >= 1) // boards saved before subtitle files end here
+	{
+		const uint8_t l_Count = p_Reader.u8();
+		if (l_Count > MAX_SUBTITLE_FILES)
+			return false;
+		for (uint8_t i = 0; i < l_Count; ++i)
+		{
+			SubtitleFile l_File;
+			l_File.name = p_Reader.string(MAX_NAME_BYTES);
+			l_File.text = p_Reader.string(MAX_SUBTITLE_FILE_BYTES);
+			if (!p_Reader.ok())
+				return false;
+			l_Video.subtitleFiles.push_back(std::move(l_File));
+		}
 	}
 	if (!p_Reader.ok() || l_Video.asset == INVALID_ASSET_ID || !finite(l_Video.size.x) || !finite(l_Video.size.y) || l_Video.size.x <= 0.f || l_Video.size.y <= 0.f)
 		return false;
@@ -837,7 +866,7 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 		else if (l_Object->image() != nullptr)
 			l_Estimate += OBJECT_HEADER_BYTES + IMAGE_BODY_BYTES;
 		else if (l_Object->video() != nullptr)
-			l_Estimate += OBJECT_HEADER_BYTES + VIDEO_BODY_BYTES;
+			l_Estimate += OBJECT_HEADER_BYTES + videoBodyBytes(*l_Object->video());
 		else if (const TextData* l_Text = l_Object->text())
 			l_Estimate += OBJECT_HEADER_BYTES + textBodyBytes(*l_Text);
 	}

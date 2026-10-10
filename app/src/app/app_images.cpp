@@ -231,6 +231,14 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 		return;
 	}
 
+	if (std::string l_Extension = pathToUtf8(l_Path.extension()); std::ranges::any_of(std::array<const char*, 8>{ ".srt", ".SRT", ".vtt", ".VTT", ".ass", ".ASS", ".ssa", ".SSA" }, [&](const char* p_Known) { return l_Extension == p_Known; }))
+	{
+		const float l_Scale = m_Window.pixelDensity();
+		if (!dropSubtitleFile(l_Path, Vec2{ p_Event.x, p_Event.y } * l_Scale))
+			showToast("Drop subtitle files on a video");
+		return;
+	}
+
 	platform::ClipboardPicture l_Picture;
 	l_Picture.path = l_Path; // opened when it is inserted
 	l_Picture.name = pathToUtf8(l_Path.filename());

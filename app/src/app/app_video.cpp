@@ -35,6 +35,7 @@ import wb.tools.tool;
 import wb.ui.context;
 import wb.ui.draw;
 import wb.ui.font;
+import wb.text.subtitles;
 import wb.ui.theme;
 import wb.video.media;
 import wb.view.camera;
@@ -118,6 +119,84 @@ bool pointInVideo(const VideoOnScreen& p_Screen, const Rect& p_Local, const Vec2
 	return p_Local.contains(p_Screen.localToScreen.inverse().apply(DVec2{ p_Point }));
 }
 } // namespace
+
+void App::showSubtitleDialog(const ObjectId p_Video)
+{
+	if (m_DialogKind != DialogKind::None)
+		return;
+	static const SDL_DialogFileFilter s_Filters[] = { { "Subtitles", "srt;vtt;ass;ssa" }, { "All files", "*" } };
+	m_DialogKind = DialogKind::Subtitles;
+	m_SubtitleTarget = p_Video;
+	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
+}
+
+void App::addSubtitleFile(const ObjectId p_Video, const std::filesystem::path& p_Path)
+{
+	const Object* l_Object = m_Editor.document().find(p_Video);
+	if (l_Object == nullptr || l_Object->video() == nullptr)
+	{
+		showToast("That video is no longer on the board");
+		return;
+	}
+	std::vector<uint8_t> l_Bytes;
+	if (const IoResult l_Read = readFile(p_Path, l_Bytes, MAX_SUBTITLE_FILE_BYTES); !l_Read.ok)
+	{
+		showMessage("The subtitle file could not be read (they can be 2 MB at most).\n\n" + l_Read.error);
+		return;
+	}
+	SubtitleFile l_File;
+	l_File.name = pathToUtf8(p_Path.filename());
+	l_File.text = subtitleTextToUtf8(std::string_view(reinterpret_cast<const char*>(l_Bytes.data()), l_Bytes.size()));
+	if (parseSubtitles(l_File.text).empty())
+	{
+		showMessage(l_File.name + " has no subtitles Inkwell can read. SRT, WebVTT and ASS files work.");
+		return;
+	}
+	const VideoData& l_Video = *l_Object->video();
+	const int l_Embedded = m_Canvas.videos().info(p_Video) != nullptr ? static_cast<int>(m_Canvas.videos().info(p_Video)->subtitleTracks.size()) : 0;
+	// The same file again is not listed twice: it is just chosen
+	for (size_t i = 0; i < l_Video.subtitleFiles.size(); ++i)
+	{
+		if (l_Video.subtitleFiles[i].text == l_File.text)
+		{
+			m_Editor.editVideo(p_Video, "Subtitles", [&](VideoData& p_Data) { p_Data.subtitleTrack = static_cast<int8_t>(l_Embedded + static_cast<int>(i)); return true; });
+			return;
+		}
+	}
+	if (l_Video.subtitleFiles.size() >= MAX_SUBTITLE_FILES)
+	{
+		showMessage("A video can have " + std::to_string(MAX_SUBTITLE_FILES) + " subtitle files at most. Remove one first.");
+		return;
+	}
+	m_LastDirectory = pathToUtf8(p_Path.parent_path());
+	const std::string l_Name = l_File.name;
+	m_Editor.editVideo(p_Video, "Add subtitles", [&](VideoData& p_Data)
+	{
+		p_Data.subtitleFiles.push_back(std::move(l_File));
+		p_Data.subtitleTrack = static_cast<int8_t>(l_Embedded + static_cast<int>(p_Data.subtitleFiles.size()) - 1);
+		return true;
+	});
+	showToast("Added " + l_Name);
+}
+
+bool App::dropSubtitleFile(const std::filesystem::path& p_Path, const Vec2 p_Position)
+{
+	const Camera& l_Camera = m_Editor.camera();
+	const std::span<const ObjectId> l_Visible = m_Canvas.visibleVideos();
+	for (auto l_It = l_Visible.rbegin(); l_It != l_Visible.rend(); ++l_It)
+	{
+		const Object* l_Object = m_Editor.document().find(*l_It);
+		const VideoData* l_Video = l_Object != nullptr ? l_Object->video() : nullptr;
+		if (l_Video == nullptr)
+			continue;
+		if (const std::optional<VideoOnScreen> l_Screen = videoOnScreen(*l_Object, *l_Video, l_Camera); l_Screen && l_Screen->box.contains(p_Position) && pointInVideo(*l_Screen, l_Video->localBounds(), p_Position))
+		{
+			addSubtitleFile(*l_It, p_Path);
+			return true;
+		}
+	}
+	return false;
+}
 
 // Tells the others where this video is and whether it plays (not its volume or loop, which are each person's own)
 void App::shareVideoState(const ObjectId p_Id, const double p_Seek)
@@ -407,7 +486,7 @@ void App::buildVideoViewer()
 	if (l_ShowLoop)
 		l_RightEdge -= l_Button + l_Gap;
 	const video::VideoInfo* l_Info = l_Videos.info(l_Hot);
-	const bool l_ShowTracks = l_Info != nullptr && (l_Info->audioTracks.size() > 1 || !l_Info->subtitleTracks.empty()) && l_Available >= m_Ui.px(250.f);
+	const bool l_ShowTracks = l_Info != nullptr && l_Available >= m_Ui.px(250.f);
 	const Rect2 l_TracksRect = Rect2::fromPosSize(Vec2{ l_RightEdge - l_Button, l_ButtonY }, Vec2{ l_Button });
 	if (l_ShowTracks)
 		l_RightEdge -= l_Button + l_Gap;
@@ -552,14 +631,14 @@ void App::buildVideoViewer()
 		{
 			const bool l_Sounds = l_Info->audioTracks.size() > 1;
 			const size_t l_SubCount = l_Info->subtitleTracks.size();
+			const size_t l_FileCount = l_Video->subtitleFiles.size();
 			const float l_Header = m_Ui.px(26.f);
 			const float l_Row = m_Ui.px(30.f);
 			const float l_PanelWidth = m_Ui.px(250.f);
 			float l_PanelHeight = m_Ui.px(12.f);
 			if (l_Sounds)
 				l_PanelHeight += l_Header + l_Row * static_cast<float>(l_Info->audioTracks.size());
-			if (l_SubCount > 0)
-				l_PanelHeight += l_Header + l_Row * static_cast<float>(l_SubCount + 1);
+			l_PanelHeight += l_Header + l_Row * static_cast<float>(l_SubCount + l_FileCount + 2); // "Off", the tracks, the files, "Add"
 			Rect2 l_Panel = Rect2::fromPosSize(Vec2{ std::clamp(l_TracksRect.max.x - l_PanelWidth + m_Ui.px(16.f), m_Ui.px(8.f), std::max(l_Viewport.x - l_PanelWidth - m_Ui.px(8.f), m_Ui.px(8.f))), l_Bar.min.y - m_Ui.px(8.f) - l_PanelHeight }, Vec2{ l_PanelWidth, l_PanelHeight });
 			if (l_Panel.min.y < m_Ui.px(8.f))
 				l_Panel = l_Panel.translated(Vec2{ 0.f, l_Bar.max.y + m_Ui.px(8.f) - l_Panel.min.y });
@@ -573,17 +652,31 @@ void App::buildVideoViewer()
 			const int l_RowPx = m_Ui.fontPx(13.f);
 			const float l_TextMax = l_PanelWidth - m_Ui.px(52.f);
 			// One line of the menu: a check mark when it is the one in use; true when it was clicked
-			const auto l_Item = [&](const std::string& p_Key, const std::string& p_Label, const bool p_Selected)
+			// p_Removed (when given) adds a cross at the right end of the line that sets it
+			const auto l_Item = [&](const std::string& p_Key, const std::string& p_Label, const bool p_Selected, bool* p_Removed = nullptr, const ui::Icon p_Icon = ui::Icon::Check)
 			{
 				const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_Panel.min.x + m_Ui.px(6.f), l_Y }, Vec2{ l_PanelWidth - m_Ui.px(12.f), l_Row });
+				bool l_CrossClicked = false;
+				bool l_CrossHovered = false;
+				if (p_Removed != nullptr)
+				{
+					const Rect2 l_Cross = Rect2::fromCenter(Vec2{ l_Rect.max.x - m_Ui.px(16.f), l_Rect.center().y }, Vec2{ m_Ui.px(24.f) });
+					const ui::Interaction l_CrossState = m_Ui.interact(ui::Context::id(p_Key + ".x"), l_Cross);
+					l_CrossClicked = l_CrossState.clicked;
+					l_CrossHovered = l_CrossState.hovered;
+				}
 				const ui::Interaction l_State = m_Ui.interact(ui::Context::id(p_Key), l_Rect);
 				if (l_State.hovered)
 					l_Draw.rect(l_Rect, m_Ui.px(8.f), ui::withAlpha(l_Theme.accent, 0.16f));
-				if (p_Selected)
-					l_Draw.icon(ui::Icon::Check, Vec2{ l_Rect.min.x + m_Ui.px(16.f), l_Rect.center().y }, m_Ui.fontPx(15.f), l_Theme.accent);
-				l_Draw.text(Vec2{ l_Rect.min.x + m_Ui.px(34.f), l_Rect.center().y }, m_Ui.font().fit(p_Label, l_RowPx, l_TextMax), l_RowPx, l_Theme.text);
+				if (p_Selected || p_Icon != ui::Icon::Check)
+					l_Draw.icon(p_Icon, Vec2{ l_Rect.min.x + m_Ui.px(16.f), l_Rect.center().y }, m_Ui.fontPx(15.f), l_Theme.accent);
+				l_Draw.text(Vec2{ l_Rect.min.x + m_Ui.px(34.f), l_Rect.center().y }, m_Ui.font().fit(p_Label, l_RowPx, l_TextMax - (p_Removed != nullptr ? m_Ui.px(24.f) : 0.f)), l_RowPx, l_Theme.text);
+				if (p_Removed != nullptr && l_State.hovered)
+					l_Draw.icon(ui::Icon::Close, Vec2{ l_Rect.max.x - m_Ui.px(16.f), l_Rect.center().y }, m_Ui.fontPx(14.f), l_CrossHovered ? l_Theme.danger : l_Theme.textMuted);
 				l_Y += l_Row;
-				return l_State.clicked;
+				if (p_Removed != nullptr)
+					*p_Removed = l_CrossClicked;
+				return l_State.clicked && !l_CrossClicked;
 			};
 			const auto l_Title = [&](const char* p_Text)
 			{
@@ -602,22 +695,50 @@ void App::buildVideoViewer()
 					}
 				}
 			}
-			if (l_SubCount > 0)
+			l_Title("Subtitles");
+			if (l_Item("video.track.s-1", "Off", l_Video->subtitleTrack < 0))
 			{
-				l_Title("Subtitles");
-				if (l_Item("video.track.s-1", "Off", l_Video->subtitleTrack < 0))
+				m_Editor.editVideo(l_Hot, "Subtitles off", [](VideoData& p_Data) { p_Data.subtitleTrack = -1; return true; });
+				m_VideoTracksPinned = false;
+			}
+			for (size_t i = 0; i < l_SubCount; ++i)
+			{
+				if (l_Item("video.track.s" + std::to_string(i), trackLabel(l_Info->subtitleTracks[i], i), l_Video->subtitleTrack == static_cast<int8_t>(i)))
 				{
-					m_Editor.editVideo(l_Hot, "Subtitles off", [](VideoData& p_Data) { p_Data.subtitleTrack = -1; return true; });
+					m_Editor.editVideo(l_Hot, "Subtitles", [i](VideoData& p_Data) { p_Data.subtitleTrack = static_cast<int8_t>(i); return true; });
 					m_VideoTracksPinned = false;
 				}
-				for (size_t i = 0; i < l_SubCount; ++i)
+			}
+			// Files somebody added: listed for everybody, chosen by each person for themselves
+			for (size_t i = 0; i < l_FileCount; ++i)
+			{
+				const int l_Position = static_cast<int>(l_SubCount + i);
+				bool l_Removed = false;
+				const bool l_Chosen = l_Item("video.track.f" + std::to_string(i), l_Video->subtitleFiles[i].name, l_Video->subtitleTrack == l_Position, &l_Removed);
+				if (l_Removed)
 				{
-					if (l_Item("video.track.s" + std::to_string(i), trackLabel(l_Info->subtitleTracks[i], i), l_Video->subtitleTrack == static_cast<int8_t>(i)))
+					m_Editor.editVideo(l_Hot, "Remove subtitles", [i, l_Position](VideoData& p_Data)
 					{
-						m_Editor.editVideo(l_Hot, "Subtitles", [i](VideoData& p_Data) { p_Data.subtitleTrack = static_cast<int8_t>(i); return true; });
-						m_VideoTracksPinned = false;
-					}
+						if (i >= p_Data.subtitleFiles.size())
+							return false;
+						p_Data.subtitleFiles.erase(p_Data.subtitleFiles.begin() + static_cast<std::ptrdiff_t>(i));
+						if (p_Data.subtitleTrack == l_Position)
+							p_Data.subtitleTrack = -1;
+						else if (p_Data.subtitleTrack > l_Position)
+							--p_Data.subtitleTrack;
+						return true;
+					});
 				}
+				else if (l_Chosen)
+				{
+					m_Editor.editVideo(l_Hot, "Subtitles", [l_Position](VideoData& p_Data) { p_Data.subtitleTrack = static_cast<int8_t>(l_Position); return true; });
+					m_VideoTracksPinned = false;
+				}
+			}
+			if (l_Item("video.track.add", "Add a subtitle file...", false, nullptr, ui::Icon::Plus))
+			{
+				m_VideoTracksPinned = false;
+				showSubtitleDialog(l_Hot);
 			}
 		}
 	}

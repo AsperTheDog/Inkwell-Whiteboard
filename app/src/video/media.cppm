@@ -15,6 +15,7 @@ module;
 export module wb.video.media;
 
 import wb.io.blob;
+import wb.text.subtitles;
 
 export namespace wb::video
 {
@@ -86,6 +87,8 @@ public:
 	// Another sound track from the current place on, and subtitles from the next line on. Picture and clock go on.
 	void setAudioTrack(int p_Track);
 	void setSubtitleTrack(int p_Track);
+	// Subtitles from a file of their own instead of the video's: shown while no subtitle track of the video is chosen
+	void setExternalSubtitles(std::shared_ptr<const std::vector<SubtitleCue>> p_Cues);
 	[[nodiscard]] int audioTrack() const;    // the one that plays
 	[[nodiscard]] int subtitleTrack() const; // -1: none
 	// The subtitle line to show at the current position (empty: none). Lines are separated by '\n'.

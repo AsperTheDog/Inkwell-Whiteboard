@@ -94,6 +94,17 @@ struct ImageData
 // A video. Like a picture the object-local rectangle is centred on the origin and p_Size units big; the encoded file is
 // an asset (the video's pictures and sound are decoded while it is on screen). Where it is playing from is not part
 // of the board: a video always opens paused at the start.
+// A subtitle file somebody added to a video (SRT, WebVTT or ASS). It belongs to the video, so everyone sees it in the list.
+struct SubtitleFile
+{
+	std::string name; // the file's name
+	std::string text; // its content as UTF-8
+
+	bool operator==(const SubtitleFile&) const = default;
+};
+inline constexpr size_t MAX_SUBTITLE_FILES = 16;
+inline constexpr size_t MAX_SUBTITLE_FILE_BYTES = size_t{ 2 } << 20;
+
 struct VideoData
 {
 	AssetId asset = INVALID_ASSET_ID;
@@ -103,7 +114,8 @@ struct VideoData
 	float volume = 1.f; // 0..1 on the volume slider; the sound plays at volume squared
 	// Which sound track and which subtitles each person watches with (like loop and volume, their own business)
 	int8_t audioTrack = -1;    // position among the file's sound tracks; -1: the file's own choice
-	int8_t subtitleTrack = -1; // position among its text subtitle tracks; -1: none
+	int8_t subtitleTrack = -1; // among the file's own text subtitle tracks, then subtitleFiles; -1: none
+	std::vector<SubtitleFile> subtitleFiles; // shared: added by anyone, listed for everyone
 
 	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
 

@@ -18,6 +18,7 @@ export module wb.render.video_store;
 import wb.doc.object;
 import wb.doc.document;
 import wb.io.blob;
+import wb.text.subtitles;
 import wb.gfx.buffer;
 import wb.gfx.context;
 import wb.gfx.frames;
@@ -126,6 +127,9 @@ private:
 		float gain = 0.f;
 		int audioTrack = -1;
 		int subtitleTrack = -1;
+		size_t externalIndex = SIZE_MAX;       // the subtitle file whose lines are parsed below
+		uint64_t externalSignature = 0;
+		std::shared_ptr<const std::vector<SubtitleCue>> externalCues;
 		uint64_t seenTick = 0;
 		std::chrono::steady_clock::time_point seenTime{};
 		double resumeAt = 0.0;

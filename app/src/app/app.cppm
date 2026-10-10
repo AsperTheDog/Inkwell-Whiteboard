@@ -105,6 +105,7 @@ private:
 		Fonts,
 		ExportPng,
 		SaveMedia, // a picture or video file of the board, saved on its own
+		Subtitles, // a subtitle file for a video
 	};
 	// The floating panel that is open, if any
 	enum class Popup : uint8_t
@@ -262,6 +263,11 @@ private:
 	void startPdfImport(const std::filesystem::path& p_Path);
 	void pollPdfImport();
 	void pollSave();
+	void showSubtitleDialog(ObjectId p_Video);
+	// Adds the file to the video's list for everybody and selects it for this person
+	void addSubtitleFile(ObjectId p_Video, const std::filesystem::path& p_Path);
+	// A subtitle file dropped on the window: goes to the video under the pointer. False when there is none.
+	bool dropSubtitleFile(const std::filesystem::path& p_Path, Vec2 p_Position);
 
 	// Scripted input for --smoke-test (smoke_test.cpp)
 	void driveSmokeTest();
@@ -430,6 +436,7 @@ private:
 	DialogKind m_DialogKind = DialogKind::None;
 	Action m_DialogAfter = Action::None;
 	AssetId m_SaveMediaAsset = INVALID_ASSET_ID;
+	ObjectId m_SubtitleTarget = INVALID_OBJECT_ID; // the video a subtitle file is being chosen for
 	// The board is written by a background job (big pictures and videos are copied across in pieces)
 	Action m_SaveAfter = Action::None;
 	uint32_t m_SaveUnfinished = 0;

@@ -23,7 +23,7 @@ One person hosts, the others join. Open **Collaborate** in the top bar.
 - **Join a session...** takes the host's `address:port`, the password and your name.
 - Everybody edits the same board: strokes, shapes, text, pictures, GIFs, videos and PDF pages. You see the others' pointers (in their colour, with their name), the people list at the top, and the lines they are drawing as they draw them. Undo only undoes your own edits.
 - Pictures and videos stream after the board arrives; until a file is there you see a thumbnail with a spinner. A big video is written to a temporary file as it arrives and starts playing as soon as the beginning is there (a video whose index sits at the end of the file has to arrive first). Saving skips files that have not finished arriving and saves the rest.
-- Video play/pause and the playhead are shared; loop, mute, volume and which sound track and subtitles you watch with are your own.
+- Video play/pause and the playhead are shared; loop, mute, volume and which sound track and subtitles you watch with are your own. Anyone can add a subtitle file (SRT, WebVTT or ASS, from the video bar or by dropping it on the video) and it appears in everybody's list.
 
 **Reaching the host.** The host needs an address the others can reach: the same local network, a VPN such as Tailscale or ZeroTier (easiest, nothing to open), or a router port forward to the chosen port. The host's firewall must allow the app.
 
