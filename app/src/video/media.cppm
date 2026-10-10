@@ -1,9 +1,10 @@
 // Video playback: demuxing and decoding with FFmpeg, audio through an SDL audio stream.
 //
-// A Player decodes a video file held in memory on its own threads (pictures and sound are separate, each with its own
+// A Player decodes a video file read from a ByteSource on its own threads (pictures and sound are separate, each with its own
 // demuxer) and hands out RGBA pictures when their time has come. The clock is the sound card's when the video has sound
 // and the sound device works, the wall clock otherwise. Nothing here knows about Vulkan or the board.
 module;
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -13,10 +14,13 @@ module;
 
 export module wb.video.media;
 
+import wb.io.blob;
+
 export namespace wb::video
 {
-// An encoded file shared between the board's asset table and the decoder threads
-using Blob = std::shared_ptr<const std::vector<uint8_t>>;
+// The encoded file is read through a ByteSource, so a video of any size plays straight from where it is on disk (or from
+// memory, or while it is still being downloaded: the decoder then waits for the bytes it needs).
+using Source = std::shared_ptr<const ByteSource>;
 
 struct VideoInfo
 {
@@ -29,6 +33,7 @@ struct VideoInfo
 
 // Looks at the container and the first video stream without decoding a picture. Nothing when it is no video.
 [[nodiscard]] std::optional<VideoInfo> probe(std::span<const uint8_t> p_Bytes);
+[[nodiscard]] std::optional<VideoInfo> probe(const ByteSource& p_Source);
 
 // One decoded picture, shown from `pts` on
 struct Frame
@@ -47,6 +52,8 @@ public:
 		uint32_t maxDimension = 1920; // longer side of the decoded pictures; bigger videos are scaled down
 		bool loop = false;
 		float volume = 0.f; // sound gain, 0 = silent
+		// Set by the owner to give up on a player that is still opening (it may be waiting for a download)
+		std::shared_ptr<std::atomic<bool>> cancel;
 	};
 
 	~Player();
@@ -54,7 +61,7 @@ public:
 	Player& operator=(const Player&) = delete;
 
 	// Opens the file and starts decoding (paused at the start). May take a moment: call it off the UI thread.
-	[[nodiscard]] static std::unique_ptr<Player> open(Blob p_Data, const Options& p_Options, std::string& p_Error);
+	[[nodiscard]] static std::unique_ptr<Player> open(Source p_Data, const Options& p_Options, std::string& p_Error);
 
 	[[nodiscard]] const VideoInfo& info() const;
 

@@ -25,6 +25,7 @@ module wb.render.image_store;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.blob;
 import wb.gfx.buffer;
 import wb.gfx.commands;
 import wb.gfx.context;
@@ -259,7 +260,7 @@ void ImageStore::startJobs()
 
 	while (l_Running < MAX_DECODER_THREADS && !m_Queue.empty())
 	{
-		std::pair<AssetId, std::vector<uint8_t>> l_Item = std::move(m_Queue.front());
+		std::pair<AssetId, std::shared_ptr<const ByteSource>> l_Item = std::move(m_Queue.front());
 		m_Queue.pop_front();
 		const AssetId l_Asset = l_Item.first;
 		const auto l_It = m_Entries.find(l_Asset);
@@ -275,9 +276,10 @@ void ImageStore::startJobs()
 		image::DecodeLimits l_Limits;
 		l_Limits.maxDimension = m_MaxDimension;
 		l_Limits.maxBytes = 768ull * 1024 * 1024;
-		std::thread([l_Job, l_Active = m_ActiveThreads, l_Limits, l_Data = std::move(l_Item.second)]
+		std::thread([l_Job, l_Active = m_ActiveThreads, l_Limits, l_Source = std::move(l_Item.second)]
 		{
 			std::string l_Error;
+			const std::vector<uint8_t> l_Data = readAllBytes(*l_Source, l_Limits.maxBytes);
 			l_Job->result = image::decode(l_Data, l_Limits, l_Error);
 			l_Job->error = std::move(l_Error);
 			l_Job->done.store(true, std::memory_order_release);
@@ -429,10 +431,10 @@ ImageLookup ImageStore::lookup(const Document& p_Document, const ImageData& p_Im
 	if (l_It == m_Entries.end())
 	{
 		const ImageAsset* l_Asset = p_Document.findAsset(p_Image.asset);
-		if (l_Asset == nullptr)
+		if (l_Asset == nullptr || !l_Asset->complete())
 			return previewLookup(p_Document, p_Image.asset); // not here (yet: a collaboration streams files after the board): a thumbnail or the placeholder shows, and the next frame asks again
 		dropPreview(p_Image.asset);
-		m_Queue.emplace_back(p_Image.asset, l_Asset->bytes);
+		m_Queue.emplace_back(p_Image.asset, l_Asset->source());
 		l_It = m_Entries.emplace(p_Image.asset, Entry{}).first;
 	}
 	const Entry& l_Entry = l_It->second;

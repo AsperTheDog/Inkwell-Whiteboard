@@ -27,6 +27,7 @@ import wb.doc.document;
 import wb.doc.object;
 import wb.editor;
 import wb.image.codec;
+import wb.io.blob;
 import wb.io.file;
 import wb.math;
 import wb.platform.clipboard;
@@ -43,8 +44,7 @@ namespace wb
 namespace
 {
 constexpr double CASCADE_POINTS = 28.0; // offset between several pictures inserted together
-constexpr uint64_t MAX_PICTURE_BYTES = 512ull << 20;
-constexpr uint64_t MAX_VIDEO_BYTES = 256ull << 20; // videos are embedded in the board file
+constexpr uint64_t MAX_PICTURE_BYTES = 512ull << 20; // pictures are decoded in memory; videos are played from their file and have no limit
 
 std::string formatSize(const size_t p_Bytes)
 {
@@ -67,9 +67,49 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 
 	std::vector<ObjectId> l_Inserted;
 	int l_Rejected = 0;
-	int l_TooBig = 0;
+	int l_Unreadable = 0;
 	for (platform::ClipboardPicture& l_Picture : p_Pictures)
 	{
+		// A file on disk is opened, not read: a big one stays where it is and a video is played straight from it
+		if (l_Picture.bytes.empty() && !l_Picture.path.empty())
+		{
+			std::string l_Error;
+			const std::shared_ptr<FileSource> l_File = FileSource::open(l_Picture.path, l_Error);
+			if (!l_File || l_File->size() == 0)
+			{
+				++l_Unreadable;
+				continue;
+			}
+			if (l_Picture.name.empty())
+				l_Picture.name = pathToUtf8(l_Picture.path.filename());
+			if (l_File->size() > LARGE_ASSET_BYTES)
+			{
+				if (const std::optional<video::VideoInfo> l_Video = video::probe(*l_File))
+				{
+					ImageAsset l_Asset;
+					l_Asset.width = l_Video->width;
+					l_Asset.height = l_Video->height;
+					l_Asset.name = std::move(l_Picture.name);
+					l_Asset.stream = l_File;
+					const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
+					const ObjectId l_Id = m_Editor.insertVideo(std::move(l_Asset), l_Center + DVec2{ l_Shift });
+					if (l_Id != INVALID_OBJECT_ID)
+						l_Inserted.push_back(l_Id);
+					continue;
+				}
+				if (l_File->size() > MAX_PICTURE_BYTES)
+				{
+					++l_Rejected;
+					continue;
+				}
+			}
+			l_Picture.bytes = readAllBytes(*l_File, MAX_PICTURE_BYTES);
+			if (l_Picture.bytes.empty())
+			{
+				++l_Unreadable;
+				continue;
+			}
+		}
 		const std::optional<image::ImageInfo> l_Info = image::probe(l_Picture.bytes);
 		if (!l_Info)
 		{
@@ -78,11 +118,6 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 			if (!l_Video)
 			{
 				++l_Rejected;
-				continue;
-			}
-			if (l_Picture.bytes.size() > MAX_VIDEO_BYTES)
-			{
-				++l_TooBig;
 				continue;
 			}
 			ImageAsset l_Asset;
@@ -113,12 +148,12 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 		m_Editor.setTool(tools::ToolKind::Select); // ready to move and resize it
 		if (l_Rejected > 0)
 			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file was not a picture or video" : " files were not pictures or videos"));
-		else if (l_TooBig > 0)
-			showToast("A video bigger than 256 MB was left out");
+		else if (l_Unreadable > 0)
+			showToast(std::to_string(l_Unreadable) + (l_Unreadable == 1 ? " file could not be read" : " files could not be read"));
 	}
-	else if (l_TooBig > 0)
+	else if (l_Unreadable > 0)
 	{
-		showToast("Videos can be 256 MB at most, they are saved inside the board");
+		showToast(l_Unreadable == 1 ? "That file could not be read" : "Those files could not be read");
 	}
 	else if (l_Rejected > 0)
 	{
@@ -135,7 +170,8 @@ bool App::pasteFromSystemClipboard()
 	if (platform::clipboardMayHavePictures())
 	{
 		l_Pictures = platform::readClipboardPictures(MAX_PICTURE_BYTES);
-		std::erase_if(l_Pictures, [](const platform::ClipboardPicture& p_Picture) { return !image::probe(p_Picture.bytes); });
+		// Pictures and videos stay (a big file is only looked at when it is inserted)
+		std::erase_if(l_Pictures, [](const platform::ClipboardPicture& p_Picture) { return p_Picture.bytes.empty() ? p_Picture.path.empty() : (!image::probe(p_Picture.bytes) && !video::probe(p_Picture.bytes)); });
 	}
 	if (l_Pictures.empty())
 	{
@@ -196,11 +232,7 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 	}
 
 	platform::ClipboardPicture l_Picture;
-	if (const IoResult l_Read = readFile(l_Path, l_Picture.bytes, MAX_PICTURE_BYTES); !l_Read.ok)
-	{
-		showToast("That file could not be read");
-		return;
-	}
+	l_Picture.path = l_Path; // opened when it is inserted
 	l_Picture.name = pathToUtf8(l_Path.filename());
 
 	const float l_Density = m_Window.pixelDensity();
@@ -227,10 +259,11 @@ void App::compressSelectedPictures()
 		if (l_Image == nullptr || l_Replacements.contains(l_Image->asset))
 			continue;
 		const ImageAsset* l_Asset = l_Document.findAsset(l_Image->asset);
-		if (l_Asset == nullptr)
+		if (l_Asset == nullptr || !l_Asset->complete())
 			continue;
 		std::string l_Error;
-		std::optional<image::Recompressed> l_Result = image::recompress(l_Asset->bytes, 4096, 85, l_Error);
+		const std::vector<uint8_t> l_Original = l_Asset->load(MAX_PICTURE_BYTES);
+		std::optional<image::Recompressed> l_Result = l_Original.empty() ? std::nullopt : image::recompress(l_Original, 4096, 85, l_Error);
 		if (!l_Result)
 		{
 			l_Reason = l_Error;
@@ -240,7 +273,7 @@ void App::compressSelectedPictures()
 		l_New.width = l_Result->width;
 		l_New.height = l_Result->height;
 		l_New.name = pathToUtf8(pathFromUtf8(l_Asset->name).stem()) + "." + l_Result->extension;
-		l_Before += l_Asset->bytes.size();
+		l_Before += l_Asset->size();
 		l_After += l_Result->bytes.size();
 		l_New.bytes = std::move(l_Result->bytes);
 		l_Replacements[l_Image->asset] = l_Document.addAsset(std::move(l_New));

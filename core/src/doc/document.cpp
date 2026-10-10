@@ -15,6 +15,7 @@ module wb.doc.document;
 
 import wb.math;
 import wb.doc.object;
+import wb.io.blob;
 
 namespace wb
 {
@@ -155,16 +156,47 @@ void Document::setOrder(const std::span<const ObjectId> p_Order)
 		l_Listener->onObjectsReordered();
 }
 
-AssetId Document::addAsset(ImageAsset p_Asset)
+namespace
+{
+// Same for memory and streamed assets with the same content, so they find each other
+uint64_t assetFingerprint(const ImageAsset& p_Asset)
 {
 	uint64_t l_Hash = 14695981039346656037ull;
-	for (const uint8_t l_Byte : p_Asset.bytes)
-		l_Hash = (l_Hash ^ l_Byte) * 1099511628211ull;
-	l_Hash ^= p_Asset.bytes.size();
+	const auto l_Mix = [&](const uint8_t* p_Data, const size_t p_Size)
+	{
+		for (size_t i = 0; i < p_Size; ++i)
+			l_Hash = (l_Hash ^ p_Data[i]) * 1099511628211ull;
+	};
+	const uint64_t l_Size = p_Asset.size();
+	l_Mix(reinterpret_cast<const uint8_t*>(&l_Size), sizeof(l_Size));
+	if (!p_Asset.complete())
+		return l_Hash; // reading the middle of a download would wait for it
+	constexpr size_t SAMPLE = 64u << 10;
+	std::vector<uint8_t> l_Buffer(static_cast<size_t>(std::min<uint64_t>(SAMPLE, std::max<uint64_t>(l_Size, 1))));
+	const uint64_t l_Middle = l_Size / 2 > SAMPLE / 2 ? l_Size / 2 - SAMPLE / 2 : 0;
+	const uint64_t l_Starts[3] = { 0, l_Middle, l_Size > SAMPLE ? l_Size - SAMPLE : 0 };
+	for (const uint64_t l_Start : l_Starts)
+		l_Mix(l_Buffer.data(), p_Asset.read(l_Start, l_Buffer.data(), l_Buffer.size()));
+	return l_Hash;
+}
+
+bool sameContent(const ImageAsset& p_A, const ImageAsset& p_B)
+{
+	if (p_A.size() != p_B.size() || !p_A.complete() || !p_B.complete())
+		return false;
+	if (!p_A.stream && !p_B.stream)
+		return p_A.bytes == p_B.bytes;
+	return sameBytes(*p_A.source(), *p_B.source());
+}
+} // namespace
+
+AssetId Document::addAsset(ImageAsset p_Asset)
+{
+	const uint64_t l_Hash = assetFingerprint(p_Asset);
 	std::vector<AssetId>& l_Candidates = m_AssetsByHash[l_Hash];
 	for (const AssetId l_Id : l_Candidates)
 	{
-		if (m_Assets.at(l_Id).bytes == p_Asset.bytes)
+		if (sameContent(m_Assets.at(l_Id), p_Asset))
 			return l_Id;
 	}
 	p_Asset.id = m_NextAsset++;
@@ -178,15 +210,32 @@ bool Document::insertAsset(ImageAsset p_Asset)
 {
 	if (p_Asset.id == INVALID_ASSET_ID || m_Assets.contains(p_Asset.id))
 		return false;
-	uint64_t l_Hash = 14695981039346656037ull;
-	for (const uint8_t l_Byte : p_Asset.bytes)
-		l_Hash = (l_Hash ^ l_Byte) * 1099511628211ull;
-	l_Hash ^= p_Asset.bytes.size();
+	const uint64_t l_Hash = assetFingerprint(p_Asset);
 	if (idSlotOf(p_Asset.id) == m_Slot)
 		m_NextAsset = std::max(m_NextAsset, p_Asset.id + 1);
 	m_AssetsByHash[l_Hash].push_back(p_Asset.id);
 	m_Assets.emplace(p_Asset.id, std::move(p_Asset));
 	return true;
+}
+
+bool Document::rebindAsset(const AssetId p_Id, std::shared_ptr<const ByteSource> p_Source)
+{
+	const auto l_It = m_Assets.find(p_Id);
+	if (l_It == m_Assets.end() || !p_Source || p_Source->size() != l_It->second.size())
+		return false;
+	l_It->second.stream = std::move(p_Source);
+	std::vector<uint8_t>().swap(l_It->second.bytes);
+	return true;
+}
+
+void Document::eraseAsset(const AssetId p_Id)
+{
+	const auto l_It = m_Assets.find(p_Id);
+	if (l_It == m_Assets.end())
+		return;
+	for (auto& [l_Hash, l_Ids] : m_AssetsByHash)
+		std::erase(l_Ids, p_Id);
+	m_Assets.erase(l_It);
 }
 
 const ImageAsset* Document::findAsset(const AssetId p_Id) const

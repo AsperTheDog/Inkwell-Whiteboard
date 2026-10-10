@@ -18,6 +18,7 @@ export module wb.render.image_store;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.blob;
 import wb.gfx.buffer;
 import wb.gfx.context;
 import wb.gfx.frames;
@@ -133,7 +134,7 @@ private:
 	static uint32_t frameFor(const Entry& p_Entry, double p_Seconds);
 
 	std::unordered_map<AssetId, Entry> m_Entries;
-	std::deque<std::pair<AssetId, std::vector<uint8_t>>> m_Queue;
+	std::deque<std::pair<AssetId, std::shared_ptr<const ByteSource>>> m_Queue;
 	std::unordered_map<AssetId, Entry> m_PreviewEntries;
 	std::deque<std::pair<AssetId, image::Decoded>> m_PreviewQueue;
 	std::shared_ptr<std::atomic<int>> m_ActiveThreads;

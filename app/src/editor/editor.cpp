@@ -837,14 +837,14 @@ std::vector<uint8_t> Editor::saveBoard(const std::string& p_SourcePath)
 	return serializeBoard(m_Document, l_Meta);
 }
 
-SplitBoard Editor::saveBoardSplit(const std::string& p_SourcePath, const size_t p_BigAssetBytes)
+SplitBoard Editor::saveBoardSplit(const std::string& p_SourcePath, const SplitOptions& p_Options)
 {
 	embedFonts();
 	BoardMeta l_Meta;
 	l_Meta.viewCenter = m_Camera.center();
 	l_Meta.viewZoom = m_Camera.zoom();
 	l_Meta.sourcePath = p_SourcePath;
-	return serializeBoardSplit(m_Document, l_Meta, p_BigAssetBytes, true);
+	return serializeBoardSplit(m_Document, l_Meta, p_Options);
 }
 
 std::vector<uint8_t> Editor::saveBoardShell(const size_t p_InlineAssetBytes)
@@ -859,16 +859,28 @@ std::vector<uint8_t> Editor::saveBoardShell(const size_t p_InlineAssetBytes)
 LoadResult Editor::loadBoard(const std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
 {
 	cancelGestures();
-	const LoadResult l_Result = deserializeBoard(p_Bytes, m_Document, p_Meta, p_AllowMissingAssets);
+	LoadResult l_Result = deserializeBoard(p_Bytes, m_Document, p_Meta, p_AllowMissingAssets);
 	if (l_Result.ok)
-	{
-		m_History.clear();
-		for (const FontAsset& l_Font : m_Document.fontAssets())
-			m_TextSystem.fonts().addDocumentFont(l_Font.family, l_Font.style, l_Font.bytes);
-		remeasureText();
-		lookAt(p_Meta.viewCenter, p_Meta.viewZoom);
-	}
+		finishLoading(p_Meta);
 	return l_Result;
+}
+
+LoadResult Editor::loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, BoardMeta& p_Meta)
+{
+	cancelGestures();
+	LoadResult l_Result = wb::loadBoardFile(p_File, m_Document, p_Meta);
+	if (l_Result.ok)
+		finishLoading(p_Meta);
+	return l_Result;
+}
+
+void Editor::finishLoading(const BoardMeta& p_Meta)
+{
+	m_History.clear();
+	for (const FontAsset& l_Font : m_Document.fontAssets())
+		m_TextSystem.fonts().addDocumentFont(l_Font.family, l_Font.style, l_Font.bytes);
+	remeasureText();
+	lookAt(p_Meta.viewCenter, p_Meta.viewZoom);
 }
 
 void Editor::newBoard()

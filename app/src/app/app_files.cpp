@@ -2,7 +2,9 @@
 module;
 #include <algorithm>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
+#include <future>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -16,6 +18,7 @@ import wb.brush.shapes;
 import wb.brush.stroke_builder;
 import wb.doc.commands;
 import wb.editor;
+import wb.io.blob;
 import wb.io.file;
 import wb.io.settings;
 import wb.math;
@@ -52,6 +55,11 @@ void App::initPersistence()
 		return;
 	}
 	m_Session.setStorageDirectory(m_PrefDir);
+	// Downloaded videos live in files that vanish with the program; this clears what a crash may have left behind
+	std::error_code l_Ignored;
+	std::filesystem::remove_all(m_PrefDir / "cache", l_Ignored);
+	if (m_Collab)
+		m_Collab->setCacheDirectory(m_PrefDir / "cache");
 	loadSettings();
 
 	m_Recovery = m_Session.peekRecovery();
@@ -241,19 +249,67 @@ void App::requestSave(const bool p_SaveAs, const Action p_After)
 
 void App::saveToPath(const std::filesystem::path& p_Path, const Action p_After)
 {
-	// Pictures and videos still on their way are left out of the file (everything else is saved)
-	const uint32_t l_Unfinished = m_Collab ? m_Collab->assetProgress().files : 0;
-	const IoResult l_Result = m_Session.saveTo(p_Path);
-	requestRedraw();
-	if (!l_Result.ok)
+	if (m_Session.saving())
 	{
-		showMessage("The board could not be saved.\n\n" + l_Result.error);
+		showToast("The board is still being saved");
+		return;
+	}
+	// Pictures and videos still on their way are left out of the file (everything else is saved)
+	m_SaveUnfinished = m_Collab ? m_Collab->assetProgress().files : 0;
+	if (const IoResult l_Started = m_Session.beginSave(p_Path); !l_Started.ok)
+	{
+		showMessage("The board could not be saved.\n\n" + l_Started.error);
 		return; // a pending Quit / New / Open is dropped so nothing is lost
 	}
-	m_LastDirectory = pathToUtf8(p_Path.parent_path());
-	updateTitle();
-	showToast("Saved " + m_Session.displayName() + (l_Unfinished > 0 ? " (without " + std::to_string(l_Unfinished) + " picture/video still being received)" : std::string()));
-	performAction(p_After);
+	m_SaveAfter = p_After;
+	m_SaveToastNs = 0;
+	showToast("Saving " + pathToUtf8(p_Path.filename()) + "...");
+}
+
+// Once per frame: follows the background save and the background copy of a picture or video
+void App::pollSave()
+{
+	if (m_Session.saving())
+	{
+		// Big files take a while: say how far it is, and keep the loop turning so the end is noticed
+		const uint64_t l_Now = SDL_GetTicksNS();
+		if (l_Now - m_SaveToastNs > 250'000'000ull)
+		{
+			m_SaveToastNs = l_Now;
+			const double l_Progress = m_Session.saveProgress();
+			showToast("Saving..." + (l_Progress > 0.0 ? " " + std::to_string(static_cast<int>(l_Progress * 100.0)) + "%" : std::string()));
+		}
+		requestRedraw(2);
+	}
+	if (const std::optional<SaveOutcome> l_Done = m_Session.pollSave())
+	{
+		requestRedraw();
+		const Action l_After = std::exchange(m_SaveAfter, Action::None);
+		if (!l_Done->ok)
+		{
+			showMessage("The board could not be saved.\n\n" + l_Done->error);
+			return; // a pending Quit / New / Open is dropped so nothing is lost
+		}
+		m_LastDirectory = pathToUtf8(l_Done->path.parent_path());
+		updateTitle();
+		showToast("Saved " + m_Session.displayName() + (m_SaveUnfinished > 0 ? " (without " + std::to_string(m_SaveUnfinished) + " picture/video still being received)" : std::string()));
+		performAction(l_After);
+	}
+	if (m_MediaCopy.valid())
+	{
+		if (m_MediaCopy.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+		{
+			const IoResult l_Result = m_MediaCopy.get();
+			if (!l_Result.ok)
+				showMessage("The file could not be saved.\n\n" + l_Result.error);
+			else
+				showToast("Saved " + m_MediaCopyName);
+		}
+		else
+		{
+			requestRedraw(2);
+		}
+	}
 }
 
 void App::openPath(const std::filesystem::path& p_Path)
@@ -371,10 +427,20 @@ void App::handleDialogResult()
 			showMessage("The file is no longer on the board, so it could not be saved.");
 			return;
 		}
-		if (const IoResult l_Written = writeFileAtomic(l_Target, l_Asset->bytes); !l_Written.ok)
-			showMessage("The file could not be saved.\n\n" + l_Written.error);
-		else
-			showToast("Saved " + pathToUtf8(l_Target.filename()));
+		if (!l_Asset->complete())
+		{
+			showMessage("The file is still arriving: it can be saved when it has finished.");
+			return;
+		}
+		if (m_MediaCopy.valid())
+		{
+			showToast("Another file is still being saved");
+			return;
+		}
+		// A video can be many gigabytes: copied by a background job from wherever it is read
+		m_MediaCopyName = pathToUtf8(l_Target.filename());
+		m_MediaCopy = std::async(std::launch::async, [l_Source = l_Asset->source(), l_Target]() { return copySourceToFile(*l_Source, l_Target); });
+		showToast("Saving " + m_MediaCopyName + "...");
 		return;
 	}
 	if (l_Kind == DialogKind::Fonts)
@@ -393,13 +459,8 @@ void App::handleDialogResult()
 				continue;
 			}
 			platform::ClipboardPicture l_Picture;
-			const std::filesystem::path l_PicturePath = pathFromUtf8(l_Path);
-			if (const IoResult l_Read = readFile(l_PicturePath, l_Picture.bytes, 512ull << 20); !l_Read.ok)
-			{
-				showMessage("A picture could not be read.\n\n" + l_Read.error);
-				continue;
-			}
-			l_Picture.name = pathToUtf8(l_PicturePath.filename());
+			l_Picture.path = pathFromUtf8(l_Path); // opened when it is inserted: a big video is not read
+			l_Picture.name = pathToUtf8(l_Picture.path.filename());
 			l_Pictures.push_back(std::move(l_Picture));
 		}
 		importPictures(std::move(l_Pictures), std::nullopt);

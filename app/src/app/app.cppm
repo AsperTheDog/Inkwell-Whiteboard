@@ -261,6 +261,7 @@ private:
 	// PDF import (app_pdf.cpp)
 	void startPdfImport(const std::filesystem::path& p_Path);
 	void pollPdfImport();
+	void pollSave();
 
 	// Scripted input for --smoke-test (smoke_test.cpp)
 	void driveSmokeTest();
@@ -426,6 +427,13 @@ private:
 	DialogKind m_DialogKind = DialogKind::None;
 	Action m_DialogAfter = Action::None;
 	AssetId m_SaveMediaAsset = INVALID_ASSET_ID;
+	// The board is written by a background job (big pictures and videos are copied across in pieces)
+	Action m_SaveAfter = Action::None;
+	uint32_t m_SaveUnfinished = 0;
+	uint64_t m_SaveToastNs = 0;
+	// "Save this file" of a picture or video: copied by a background job too
+	std::future<IoResult> m_MediaCopy;
+	std::string m_MediaCopyName;
 	std::mutex m_DialogMutex;
 	bool m_DialogReady = false;
 	std::vector<std::string> m_DialogPaths;

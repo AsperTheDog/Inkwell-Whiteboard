@@ -12,6 +12,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -28,6 +29,7 @@ export module wb.net.collab;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.blob;
 import wb.net.connection;
 import wb.net.ops;
 import wb.net.protocol;
@@ -70,7 +72,7 @@ struct CollabHooks
 	// Optional. Makes a small RGBA thumbnail (a still image, the first frame of a GIF or video) of an asset file, so the
 	// people receiving it see something while it streams. Called on a worker thread of the session; nothing when the
 	// file cannot be shown.
-	std::function<std::optional<AssetPreview>(std::span<const uint8_t>)> makePreview;
+	std::function<std::optional<AssetPreview>(const std::shared_ptr<const ByteSource>&)> makePreview;
 	// Any thread: the session has something to process, wake the main loop
 	std::function<void()> wake;
 };
@@ -88,6 +90,9 @@ public:
 	// Connects in the background; progress and failure are reported through state() and the message hook
 	void join(std::string p_Host, uint16_t p_Port, std::string p_Password, std::string p_Name);
 	void leave();
+
+	// Where big files that arrive are kept while they are received and played (they vanish when the program ends)
+	void setCacheDirectory(std::filesystem::path p_Directory) { m_CacheDir = std::move(p_Directory); }
 
 	// Call every loop iteration on the main thread: sends local edits, applies what arrived
 	void tick();
@@ -260,7 +265,9 @@ private:
 		uint32_t width = 0;
 		uint32_t height = 0;
 		std::string name;
-		std::vector<uint8_t> bytes;
+		uint64_t received = 0;
+		std::vector<uint8_t> bytes;        // small files wait here until they are whole
+		std::shared_ptr<FileSource> file;  // big ones are written to a temporary file as they arrive (and can be played meanwhile)
 	};
 	struct Failures
 	{
@@ -292,6 +299,8 @@ private:
 	void serveAssets(Peer& p_Peer);
 	void queueUpload(Peer& p_Peer, AssetId p_Id, uint32_t p_Ticket);
 	void resetAssetTransfers();
+	void clearDownloads();
+	[[nodiscard]] const ImageAsset* completeAsset(AssetId p_Id) const;
 	// Forgets a transfer (and whoever waited for it)
 	void dropDownload(AssetId p_Id, bool p_Lost = false);
 	// Host: nobody can supply this file now. Everyone is told; the owner may offer it again.
@@ -361,14 +370,15 @@ private:
 	// Thumbnails being made (worker thread) and the ones that could not be
 	std::mutex m_PreviewMutex;
 	std::condition_variable m_PreviewWake;
-	std::deque<std::pair<AssetId, std::vector<uint8_t>>> m_PreviewJobs;
+	std::deque<std::pair<AssetId, std::shared_ptr<const ByteSource>>> m_PreviewJobs;
 	std::unordered_set<AssetId> m_PreviewActive; // main thread: asked for, not finished
 	std::unordered_set<AssetId> m_PreviewFailed;
 	std::thread m_PreviewThread;
 	bool m_PreviewStop = false;
 
 	std::unordered_map<AssetId, Download> m_Downloads;
-	uint64_t m_DownloadBytes = 0;
+	uint64_t m_DownloadBytes = 0; // of the small ones, which are held in memory
+	std::filesystem::path m_CacheDir;
 	// host: peers that asked for a file the host does not have yet (it is on its way from another peer)
 	struct Waiter
 	{

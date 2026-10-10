@@ -17,6 +17,7 @@ export module wb.render.video_store;
 
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.blob;
 import wb.gfx.buffer;
 import wb.gfx.context;
 import wb.gfx.frames;
@@ -83,6 +84,7 @@ private:
 	struct OpenJob
 	{
 		std::atomic<bool> done{ false };
+		std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false); // the player gives up waiting for bytes
 		std::unique_ptr<video::Player> player;
 		std::string error;
 	};
@@ -139,7 +141,7 @@ private:
 		std::chrono::steady_clock::time_point at;
 	};
 	std::unordered_map<ObjectId, RemoteState> m_Remote; // what others did to videos that have no player yet
-	std::unordered_map<AssetId, std::weak_ptr<const std::vector<uint8_t>>> m_Blobs;
+	std::unordered_map<AssetId, std::weak_ptr<const ByteSource>> m_Sources;
 	uint64_t m_Tick = 0;
 	uint32_t m_MaxDimension = 1920;
 	bool m_Animating = false;

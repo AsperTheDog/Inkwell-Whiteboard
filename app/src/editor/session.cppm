@@ -8,23 +8,35 @@ module;
 #include <cstdint>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 export module wb.session;
 
 import wb.editor;
 import wb.io.file;
+import wb.io.serializer;
 
 export namespace wb
 {
+// How a save that ran in the background ended
+struct SaveOutcome
+{
+	bool ok = false;
+	std::string error;
+	std::filesystem::path path;
+};
+
 struct RecoveryInfo
 {
 	std::string sourcePath; // file the unsaved board was opened from; empty for an untitled board
 	uint64_t objectCount = 0;
 	int64_t ageSeconds = 0;
+	std::vector<std::string> missingFiles; // pictures and videos it points at that are no longer where they were
 };
 
 class Session
@@ -44,6 +56,16 @@ public:
 	// A note about the last load (e.g. objects from a newer version were left out); cleared when read
 	[[nodiscard]] std::string takeWarning() { return std::exchange(m_Warning, {}); }
 
+	// Saves in the background: the board is written by a worker thread (big pictures and videos are copied across in
+	// pieces, so a board with a movie of many gigabytes neither stalls the program nor needs the memory). The result
+	// comes from pollSave. Fails at once only when a save is already running.
+	[[nodiscard]] IoResult beginSave(const std::filesystem::path& p_Path);
+	[[nodiscard]] bool saving() const { return m_Save.has_value(); }
+	[[nodiscard]] double saveProgress() const; // 0..1
+	void cancelSave();
+	// Once per frame: the outcome of the save that has just ended, if any
+	[[nodiscard]] std::optional<SaveOutcome> pollSave();
+	// beginSave and wait for it
 	[[nodiscard]] IoResult saveTo(const std::filesystem::path& p_Path);
 	[[nodiscard]] IoResult open(const std::filesystem::path& p_Path);
 	void newBoard();
@@ -61,9 +83,24 @@ public:
 	void discardRecovery();
 
 private:
+	struct SaveJob
+	{
+		std::future<IoResult> done;
+		std::shared_ptr<WriteProgress> progress;
+		std::shared_ptr<std::vector<PlacedAsset>> placed;
+		std::filesystem::path path;
+		uint64_t state = 0;
+		uint64_t bigBytes = 0;
+	};
+
 	[[nodiscard]] std::filesystem::path recoveryPath() const;
 	void reapAutosave();
 	void waitForAutosave();
+	void waitForSave();
+	std::optional<SaveOutcome> finishSave();
+
+	std::optional<SaveJob> m_Save;
+	std::optional<SaveOutcome> m_Outcome; // ended while something else was waiting for it
 
 	Editor& m_Editor;
 	std::filesystem::path m_StorageDir;

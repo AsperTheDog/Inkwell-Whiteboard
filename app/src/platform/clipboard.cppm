@@ -1,6 +1,7 @@
 // Pictures on the system clipboard: copied image data (PNG, bitmaps) and copied image files.
 module;
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@ struct ClipboardPicture
 {
 	std::vector<uint8_t> bytes; // a complete image file (PNG, JPEG, GIF, BMP...)
 	std::string name;
+	// A big file (a video) is not read: it stays where it is and `path` says where; `bytes` is empty then
+	std::filesystem::path path;
 };
 
 // Cheap check: the clipboard holds something readPictures() may turn into pictures

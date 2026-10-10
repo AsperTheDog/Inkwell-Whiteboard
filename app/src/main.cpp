@@ -4,7 +4,10 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <algorithm>
 #include <exception>
+#include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <SDL3/SDL.h>
@@ -13,6 +16,7 @@
 
 import wb.app;
 import wb.gfx.context;
+import wb.io.blob;
 import wb.io.file;
 import wb.platform.input;
 import wb.video.media;
@@ -22,13 +26,13 @@ namespace
 // --video-selftest <file>: decodes a video for a few seconds without any window and reports what the player did
 int videoSelfTest(const std::string& p_Path)
 {
-	std::vector<uint8_t> l_Bytes;
-	if (const wb::IoResult l_Read = wb::readFile(wb::pathFromUtf8(p_Path), l_Bytes); !l_Read.ok)
+	std::string l_OpenError;
+	const std::shared_ptr<const wb::ByteSource> l_Blob = wb::FileSource::open(wb::pathFromUtf8(p_Path), l_OpenError); // played from the file, like on a board
+	if (!l_Blob)
 	{
-		spdlog::error("Cannot read {}", p_Path);
+		spdlog::error("Cannot read {}: {}", p_Path, l_OpenError);
 		return 1;
 	}
-	const auto l_Blob = std::make_shared<const std::vector<uint8_t>>(std::move(l_Bytes));
 	const auto l_Info = wb::video::probe(*l_Blob);
 	if (!l_Info)
 	{
@@ -83,6 +87,72 @@ int videoSelfTest(const std::string& p_Path)
 	return 0;
 }
 
+// --video-streamtest <file>: the file "arrives" slowly into a temporary file while it is played, then another copy stops
+// arriving half way. Nothing may hang, and the first must play.
+int videoStreamTest(const std::string& p_Path)
+{
+	std::vector<uint8_t> l_Data;
+	if (const wb::IoResult l_Read = wb::readFile(wb::pathFromUtf8(p_Path), l_Data); !l_Read.ok)
+	{
+		spdlog::error("Cannot read {}", p_Path);
+		return 1;
+	}
+	int l_Bad = 0;
+	const auto l_Run = [&](const double p_FeedSeconds, const double p_Fraction, const char* p_Name)
+	{
+		std::string l_Error;
+		const std::shared_ptr<wb::FileSource> l_File = wb::FileSource::createTemporary(std::filesystem::temp_directory_path(), l_Data.size(), l_Error);
+		if (!l_File)
+		{
+			spdlog::error("{}: {}", p_Name, l_Error);
+			++l_Bad;
+			return;
+		}
+		const auto l_Begin = std::chrono::steady_clock::now();
+		std::thread l_Feeder([&]
+		{
+			const size_t l_Limit = static_cast<size_t>(static_cast<double>(l_Data.size()) * p_Fraction);
+			const size_t l_Step = std::max<size_t>(1, l_Data.size() / 150);
+			std::string l_Problem;
+			for (size_t l_At = 0; l_At < l_Limit; l_At += l_Step)
+			{
+				(void)l_File->append(std::span<const uint8_t>(l_Data).subspan(l_At, std::min(l_Step, l_Data.size() - l_At)), l_Problem);
+				std::this_thread::sleep_for(std::chrono::duration<double>(p_FeedSeconds / 150.0));
+			}
+			if (p_Fraction < 1.0)
+				l_File->abandon();
+		});
+		std::unique_ptr<wb::video::Player> l_Player = wb::video::Player::open(l_File, {}, l_Error);
+		const double l_OpenedAt = std::chrono::duration<double>(std::chrono::steady_clock::now() - l_Begin).count();
+		int l_Frames = 0;
+		if (l_Player)
+		{
+			l_Player->play();
+			uint64_t l_Last = 0;
+			const auto l_PlayStart = std::chrono::steady_clock::now();
+			while (std::chrono::steady_clock::now() - l_PlayStart < std::chrono::milliseconds(1500))
+			{
+				l_Player->tick();
+				if (const auto l_Frame = l_Player->currentFrame(); l_Frame && l_Frame->serial != l_Last)
+				{
+					l_Last = l_Frame->serial;
+					++l_Frames;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(4));
+			}
+		}
+		l_Player.reset();
+		l_Feeder.join();
+		spdlog::info("{}: opened {} after {:.2f}s, {} distinct frames, file complete {}", p_Name, l_Player == nullptr && !l_Frames ? "no" : "yes", l_OpenedAt, l_Frames, l_File->complete());
+		if (p_Fraction >= 1.0 && l_Frames < 10)
+			++l_Bad;
+	};
+	l_Run(2.0, 1.0, "slowly arriving file");
+	l_Run(1.0, 0.5, "file that stops arriving");
+	spdlog::info(l_Bad == 0 ? "stream test OK" : "stream test FAILED");
+	return l_Bad == 0 ? 0 : 1;
+}
+
 wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 {
 	wb::AppOptions l_Options{};
@@ -112,6 +182,14 @@ int main(int p_Argc, char** p_Argv)
 {
 	for (int i = 1; i + 1 < p_Argc; ++i)
 	{
+		if (std::string_view(p_Argv[i]) == "--video-streamtest")
+		{
+			SDL_SetMainReady();
+			SDL_Init(SDL_INIT_VIDEO);
+			const int l_Result = videoStreamTest(p_Argv[i + 1]);
+			SDL_Quit();
+			return l_Result;
+		}
 		if (std::string_view(p_Argv[i]) == "--video-selftest")
 		{
 			SDL_SetMainReady();

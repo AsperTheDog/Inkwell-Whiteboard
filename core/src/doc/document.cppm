@@ -3,8 +3,11 @@
 // All mutations go through Document so listeners (GPU caches, spatial index, autosave...) stay in sync.
 // Undoable edits are expressed as Commands (wb.doc.history) that call these primitives.
 module;
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <span>
@@ -17,6 +20,7 @@ export module wb.doc.document;
 
 import wb.math;
 import wb.doc.object;
+import wb.io.blob;
 
 export namespace wb
 {
@@ -34,14 +38,42 @@ inline constexpr uint32_t Lock = 1u << 3;     // locked / unlocked
 inline constexpr uint32_t All = Transform | Geometry | Style | Lock;
 } // namespace ObjectChange
 
-// An image file as it was imported (PNG, JPEG, GIF, BMP...), kept byte for byte so saving never re-encodes it
+// Files at least this big are not kept in memory: they are read from disk when needed
+inline constexpr uint64_t LARGE_ASSET_BYTES = uint64_t{ 16 } << 20;
+
+// An image or video file as it was imported (PNG, JPEG, GIF, MP4...), kept byte for byte so saving never re-encodes it.
+// Small files sit in `bytes`. Big ones (videos, mostly) are never loaded: `stream` reads them from wherever they are on
+// disk (the original file, the board file they were saved in, or the copy that was downloaded from a collaborator).
 struct ImageAsset
 {
 	AssetId id = INVALID_ASSET_ID;
 	std::vector<uint8_t> bytes;
+	std::shared_ptr<const ByteSource> stream; // when set, the file is here and `bytes` is empty
 	uint32_t width = 0;  // pixels of the first frame
 	uint32_t height = 0;
 	std::string name;    // file name it came from, for the user's benefit
+
+	[[nodiscard]] uint64_t size() const { return stream ? stream->size() : bytes.size(); }
+	// A file that is still being downloaded can be played from the start, but nothing else should rely on all of it
+	[[nodiscard]] bool complete() const { return !stream || stream->available() >= stream->size(); }
+	// Copies up to p_Count bytes from p_Offset; fewer only at the end or when the file cannot be read any more
+	size_t read(const uint64_t p_Offset, void* p_Target, size_t p_Count, const std::atomic<bool>* p_Cancel = nullptr) const
+	{
+		if (stream)
+			return stream->read(p_Offset, p_Target, p_Count, p_Cancel);
+		if (p_Offset >= bytes.size())
+			return 0;
+		p_Count = static_cast<size_t>(std::min<uint64_t>(p_Count, bytes.size() - p_Offset));
+		std::memcpy(p_Target, bytes.data() + p_Offset, p_Count);
+		return p_Count;
+	}
+	// The file as a source that outlives this asset (memory is copied)
+	[[nodiscard]] std::shared_ptr<const ByteSource> source() const { return stream ? stream : std::make_shared<MemorySource>(bytes); }
+	// The whole file in memory; empty when it is bigger than p_Max or cannot be read
+	[[nodiscard]] std::vector<uint8_t> load(const uint64_t p_Max = uint64_t{ 1 } << 30) const
+	{
+		return stream ? readAllBytes(*stream, p_Max) : (bytes.size() <= p_Max ? bytes : std::vector<uint8_t>{});
+	}
 };
 
 // A font file embedded in the board so text looks the same on machines that do not have the font. Identified by
@@ -125,7 +157,12 @@ public:
 	AssetId addAsset(ImageAsset p_Asset);
 	// Loading: stores the asset under the id it was saved with. False when the id is taken or invalid.
 	bool insertAsset(ImageAsset p_Asset);
+	// The file of an asset now also exists as p_Source (same content: the board was saved, a download finished). The asset
+	// lets go of its memory and reads from there from now on. False when the asset is unknown or the sizes differ.
+	bool rebindAsset(AssetId p_Id, std::shared_ptr<const ByteSource> p_Source);
 	[[nodiscard]] const ImageAsset* findAsset(AssetId p_Id) const;
+	// Removes an asset (a download that will never finish). Objects that use it keep their id and show a placeholder.
+	void eraseAsset(AssetId p_Id);
 	[[nodiscard]] const std::unordered_map<AssetId, ImageAsset>& assets() const { return m_Assets; }
 
 	void setPreview(AssetId p_Id, AssetPreview p_Preview) { m_Previews[p_Id] = std::move(p_Preview); }

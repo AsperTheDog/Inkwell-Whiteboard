@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -26,6 +27,7 @@ module wb.net.collab;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
+import wb.io.blob;
 import wb.io.serializer;
 import wb.net.connection;
 import wb.net.ops;
@@ -302,8 +304,7 @@ void CollabSession::stop(const std::string& p_Goodbye)
 	}
 	m_Pending.clear();
 	m_PendingMove.clear();
-	m_Downloads.clear();
-	m_DownloadBytes = 0;
+	clearDownloads();
 	m_AssetWaiters.clear();
 	m_Stalled.clear();
 	m_Reuploadable.clear();
@@ -1254,7 +1255,7 @@ CollabSession::AssetProgress CollabSession::assetProgress() const
 	l_Progress.files = static_cast<uint32_t>(m_Downloads.size());
 	for (const auto& [l_Id, l_Download] : m_Downloads)
 	{
-		l_Progress.received += l_Download.bytes.size();
+		l_Progress.received += l_Download.received;
 		l_Progress.expected += l_Download.total;
 	}
 	return l_Progress;
@@ -1265,14 +1266,13 @@ double CollabSession::assetFraction(const AssetId p_Id) const
 	const auto l_It = m_Downloads.find(p_Id);
 	if (l_It == m_Downloads.end())
 		return -1.0;
-	return l_It->second.total == 0 ? 0.0 : static_cast<double>(l_It->second.bytes.size()) / static_cast<double>(l_It->second.total);
+	return l_It->second.total == 0 ? 0.0 : static_cast<double>(l_It->second.received) / static_cast<double>(l_It->second.total);
 }
 
 void CollabSession::resetAssetTransfers()
 {
 	// Asset ids restart with a new board, so nothing in flight may be mistaken for the new files
-	m_Downloads.clear();
-	m_DownloadBytes = 0;
+	clearDownloads();
 	m_AssetWaiters.clear();
 	m_Stalled.clear();
 	m_Reuploadable.clear();
@@ -1283,6 +1283,29 @@ void CollabSession::resetAssetTransfers()
 			l_Peer.connection->dropBulk();
 	}
 	++m_AssetsRevision;
+}
+
+// Forgets every transfer. A file that was being played while it arrived will never be whole: whoever waits for its
+// bytes is let go.
+void CollabSession::clearDownloads()
+{
+	for (auto& [l_Id, l_Download] : m_Downloads)
+	{
+		if (l_Download.file)
+			l_Download.file->abandon();
+		const ImageAsset* l_Asset = m_Document.findAsset(l_Id);
+		if (l_Download.file && l_Asset != nullptr && l_Asset->stream == l_Download.file)
+			m_Document.eraseAsset(l_Id);
+	}
+	m_Downloads.clear();
+	m_DownloadBytes = 0;
+}
+
+// The asset, once it is whole (one still arriving is not there yet for anybody but a player)
+const ImageAsset* CollabSession::completeAsset(const AssetId p_Id) const
+{
+	const ImageAsset* l_Asset = m_Document.findAsset(p_Id);
+	return l_Asset != nullptr && l_Asset->complete() ? l_Asset : nullptr;
 }
 
 void CollabSession::sendPreview(Peer& p_Peer, const AssetId p_Id)
@@ -1297,7 +1320,7 @@ void CollabSession::startPreviewJob(const AssetId p_Id)
 {
 	if (!m_PreviewActive.insert(p_Id).second)
 		return; // already being made
-	const ImageAsset* l_Asset = m_Document.findAsset(p_Id);
+	const ImageAsset* l_Asset = completeAsset(p_Id);
 	if (l_Asset == nullptr)
 	{
 		m_PreviewActive.erase(p_Id);
@@ -1305,7 +1328,7 @@ void CollabSession::startPreviewJob(const AssetId p_Id)
 	}
 	{
 		const std::lock_guard l_Lock(m_PreviewMutex);
-		m_PreviewJobs.emplace_back(p_Id, l_Asset->bytes); // a copy: the worker must not depend on the board
+		m_PreviewJobs.emplace_back(p_Id, l_Asset->source()); // memory is copied: the worker must not depend on the board
 	}
 	if (!m_PreviewThread.joinable())
 		m_PreviewThread = std::thread([this] { previewWorker(); });
@@ -1316,7 +1339,7 @@ void CollabSession::previewWorker()
 {
 	while (true)
 	{
-		std::pair<AssetId, std::vector<uint8_t>> l_Job;
+		std::pair<AssetId, std::shared_ptr<const ByteSource>> l_Job;
 		{
 			std::unique_lock l_Lock(m_PreviewMutex);
 			m_PreviewWake.wait(l_Lock, [&] { return m_PreviewStop || !m_PreviewJobs.empty(); });
@@ -1399,6 +1422,13 @@ void CollabSession::dropDownload(const AssetId p_Id, const bool p_Lost)
 	if (l_It == m_Downloads.end())
 		return;
 	m_DownloadBytes -= l_It->second.bytes.size();
+	if (l_It->second.file)
+	{
+		l_It->second.file->abandon();
+		const ImageAsset* l_Partial = m_Document.findAsset(p_Id);
+		if (l_Partial != nullptr && l_Partial->stream == l_It->second.file)
+			m_Document.eraseAsset(p_Id);
+	}
 	m_Downloads.erase(l_It);
 	m_AssetWaiters.erase(p_Id);
 	++m_AssetsRevision;
@@ -1530,7 +1560,7 @@ void CollabSession::assetRequested(Peer& p_Peer, const Frame& p_Frame)
 			failClient("The host sent a damaged file request");
 		return;
 	}
-	if (m_Document.findAsset(l_Request.id) != nullptr)
+	if (completeAsset(l_Request.id) != nullptr)
 	{
 		queueUpload(p_Peer, l_Request.id, l_Request.ticket);
 		serveAssets(p_Peer);
@@ -1697,8 +1727,8 @@ void CollabSession::serveAssets(Peer& p_Peer)
 	while (!p_Peer.uploads.empty() && p_Peer.connection->queuedBulkBytes() < ASSET_QUEUE_BYTES)
 	{
 		Peer::Upload& l_Upload = p_Peer.uploads.front();
-		const ImageAsset* l_Asset = m_Document.findAsset(l_Upload.id);
-		if (l_Asset == nullptr || l_Upload.offset >= l_Asset->bytes.size())
+		const ImageAsset* l_Asset = completeAsset(l_Upload.id);
+		if (l_Asset == nullptr || l_Upload.offset >= l_Asset->size())
 		{
 			p_Peer.uploads.pop_front();
 			continue;
@@ -1724,17 +1754,24 @@ void CollabSession::serveAssets(Peer& p_Peer)
 		AssetChunk l_Chunk;
 		l_Chunk.id = l_Asset->id;
 		l_Chunk.ticket = l_Upload.ticket;
-		l_Chunk.total = l_Asset->bytes.size();
+		l_Chunk.total = l_Asset->size();
 		l_Chunk.offset = l_Upload.offset;
 		l_Chunk.width = l_Asset->width;
 		l_Chunk.height = l_Asset->height;
 		l_Chunk.name = l_Asset->name.substr(0, MAX_ASSET_NAME_BYTES);
-		const size_t l_Size = std::min<uint64_t>(ASSET_CHUNK, l_Asset->bytes.size() - l_Upload.offset);
-		const auto l_Begin = l_Asset->bytes.begin() + static_cast<std::ptrdiff_t>(l_Upload.offset);
-		l_Chunk.bytes.assign(l_Begin, l_Begin + static_cast<std::ptrdiff_t>(l_Size));
+		const size_t l_Size = std::min<uint64_t>(ASSET_CHUNK, l_Asset->size() - l_Upload.offset);
+		l_Chunk.bytes.resize(l_Size);
+		if (l_Asset->read(l_Upload.offset, l_Chunk.bytes.data(), l_Size) != l_Size)
+		{
+			// The file this was made from is gone (a drive was removed, say): the other side cannot be given the rest
+			note("Could not read \"" + l_Asset->name + "\" to send it; the transfer was cancelled");
+			p_Peer.uploads.pop_front();
+			p_Peer.connection->send(type(MsgType::AssetStalled), encode(AssetRequest{ .id = l_Asset->id }));
+			continue;
+		}
 		p_Peer.connection->send(type(MsgType::AssetChunk), encode(l_Chunk), Priority::Bulk);
 		l_Upload.offset += l_Size;
-		if (l_Upload.offset >= l_Asset->bytes.size())
+		if (l_Upload.offset >= l_Asset->size())
 			p_Peer.uploads.pop_front();
 	}
 }
@@ -1755,19 +1792,18 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 	if (l_It == m_Downloads.end() || l_It->second.from != p_Peer.id || l_It->second.ticket != l_Chunk.ticket)
 		return; // not asked for, or a piece of a transfer that was cancelled since
 	Download& l_Download = l_It->second;
+	const AssetId l_Id = l_Chunk.id;
 	const bool l_First = l_Download.total == 0;
-	if (l_First ? l_Chunk.offset != 0 : (l_Chunk.offset != l_Download.bytes.size() || l_Chunk.total != l_Download.total))
+	if (l_First ? l_Chunk.offset != 0 : (l_Chunk.offset != l_Download.received || l_Chunk.total != l_Download.total))
 	{
 		note("Dropped a damaged transfer of \"" + l_Download.name + "\"");
-		m_DownloadBytes -= l_Download.bytes.size();
-		m_Downloads.erase(l_It);
+		dropDownload(l_Id);
 		return;
 	}
-	if (m_DownloadBytes + l_Chunk.bytes.size() > MAX_DOWNLOAD_BYTES)
+	if (!l_Download.file && m_DownloadBytes + l_Chunk.bytes.size() > MAX_DOWNLOAD_BYTES)
 	{
 		note("Dropped a transfer: too much data waiting to be completed");
-		m_DownloadBytes -= l_Download.bytes.size();
-		m_Downloads.erase(l_It);
+		dropDownload(l_Id);
 		return;
 	}
 	if (l_First)
@@ -1778,28 +1814,78 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 		l_Download.name = std::move(l_Chunk.name);
 		if (l_Download.total >= BIG_LOG_BYTES)
 			note("Receiving \"" + l_Download.name + "\" (" + std::to_string(l_Download.total >> 20) + " MiB)");
+		if (l_Download.total >= LARGE_ASSET_BYTES)
+		{
+			// Too big for memory: the pieces go to a temporary file, and the video can be played while they arrive
+			std::string l_Problem;
+			const std::filesystem::path l_Folder = m_CacheDir.empty() ? std::filesystem::temp_directory_path() / "Inkwell" : m_CacheDir;
+			l_Download.file = FileSource::createTemporary(l_Folder, l_Download.total, l_Problem);
+			if (!l_Download.file)
+			{
+				const std::string l_Name = l_Download.name;
+				note("Could not receive \"" + l_Name + "\": " + l_Problem);
+				tell("\"" + l_Name + "\" could not be received: " + l_Problem);
+				dropDownload(l_Id);
+				m_Stalled.insert(l_Id);
+				return;
+			}
+			ImageAsset l_Partial;
+			l_Partial.id = l_Id;
+			l_Partial.width = l_Download.width;
+			l_Partial.height = l_Download.height;
+			l_Partial.name = l_Download.name;
+			l_Partial.stream = l_Download.file;
+			if (!m_Document.insertAsset(std::move(l_Partial)))
+			{
+				note("A received file clashed with one already on the board and was dropped");
+				l_Download.file->abandon();
+				l_Download.file.reset();
+				dropDownload(l_Id);
+				return;
+			}
+		}
 	}
-	l_Download.bytes.insert(l_Download.bytes.end(), l_Chunk.bytes.begin(), l_Chunk.bytes.end());
-	m_DownloadBytes += l_Chunk.bytes.size();
-	if (l_Download.bytes.size() < l_Download.total)
+	if (l_Download.file)
+	{
+		std::string l_Problem;
+		if (!l_Download.file->append(l_Chunk.bytes, l_Problem))
+		{
+			const std::string l_Name = l_Download.name;
+			note("Could not store \"" + l_Name + "\": " + l_Problem);
+			tell("\"" + l_Name + "\" could not be received: " + l_Problem);
+			dropDownload(l_Id);
+			m_Stalled.insert(l_Id);
+			return;
+		}
+	}
+	else
+	{
+		l_Download.bytes.insert(l_Download.bytes.end(), l_Chunk.bytes.begin(), l_Chunk.bytes.end());
+		m_DownloadBytes += l_Chunk.bytes.size();
+	}
+	l_Download.received += l_Chunk.bytes.size();
+	if (l_Download.received < l_Download.total)
 	{
 		++m_AssetsRevision; // progress changed
 		return;
 	}
 
-	ImageAsset l_Asset;
-	l_Asset.id = l_Chunk.id;
-	l_Asset.width = l_Download.width;
-	l_Asset.height = l_Download.height;
-	l_Asset.name = std::move(l_Download.name);
-	l_Asset.bytes = std::move(l_Download.bytes);
-	m_DownloadBytes -= l_Asset.bytes.size();
+	// Whole. A big file is already on the board (it has been playable since its first piece); a small one is added now.
+	if (!l_Download.file)
+	{
+		ImageAsset l_Asset;
+		l_Asset.id = l_Id;
+		l_Asset.width = l_Download.width;
+		l_Asset.height = l_Download.height;
+		l_Asset.name = std::move(l_Download.name);
+		l_Asset.bytes = std::move(l_Download.bytes);
+		m_DownloadBytes -= l_Asset.bytes.size();
+		if (!m_Document.insertAsset(std::move(l_Asset)))
+			note("A received file clashed with one already on the board and was dropped");
+	}
 	m_Downloads.erase(l_It);
-	const AssetId l_Id = l_Asset.id;
 	m_Stalled.erase(l_Id);
 	m_Reuploadable.erase(l_Id);
-	if (!m_Document.insertAsset(std::move(l_Asset)))
-		note("A received file clashed with one already on the board and was dropped");
 	++m_AssetsRevision;
 
 	// Others that asked the host for it while it was still on its way

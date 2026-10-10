@@ -16,6 +16,7 @@ import wb.doc.object;
 import wb.doc.commands;
 import wb.doc.document;
 import wb.doc.history;
+import wb.io.blob;
 import wb.io.serializer;
 import wb.net.collab;
 import wb.net.ops;
@@ -79,10 +80,11 @@ struct Node
 		if (p_Thumbnails)
 		{
 			// A fixed 4x2 thumbnail whose first pixel carries the file's first byte
-			l_Hooks.makePreview = [](const std::span<const uint8_t> p_Bytes) -> std::optional<wb::AssetPreview>
+			l_Hooks.makePreview = [](const std::shared_ptr<const wb::ByteSource>& p_Source) -> std::optional<wb::AssetPreview>
 			{
 				wb::AssetPreview l_Preview{ .width = 4, .height = 2, .rgba = std::vector<uint8_t>(32, 7) };
-				l_Preview.rgba[0] = p_Bytes.empty() ? 0 : p_Bytes[0];
+				uint8_t l_First = 0;
+				l_Preview.rgba[0] = p_Source->read(0, &l_First, 1) == 1 ? l_First : 0;
 				return l_Preview;
 			};
 		}
@@ -143,6 +145,13 @@ wb::ObjectId addPicture(wb::Document& p_Document, std::vector<uint8_t> p_Bytes, 
 	const wb::ObjectId l_Id = l_Object->id;
 	p_Document.insert(std::move(l_Object));
 	return l_Id;
+}
+
+// The file is on the board and all of it has arrived (a big one is on the board from its first piece)
+bool hasWhole(const wb::Document& p_Document, const wb::AssetId p_Id)
+{
+	const wb::ImageAsset* l_Asset = p_Document.findAsset(p_Id);
+	return l_Asset != nullptr && l_Asset->complete();
 }
 
 const wb::ImageAsset* assetOf(const wb::Document& p_Document, const wb::ObjectId p_Id)
@@ -760,6 +769,52 @@ TEST(Collab, ThumbnailsTravelWithTheFile)
 }
 
 // The person sending a file leaves before it is complete: the transfer is cancelled and its pictures go for everybody
+// A file too big for memory goes into a temporary file as it arrives, and can be read (played) from the start meanwhile
+TEST(Collab, VeryBigFilesArriveInATemporaryFile)
+{
+	Node l_Host;
+	Node l_Ana;
+	l_Host.inlineAssetBytes = 256u << 10;
+	const std::vector<uint8_t> l_Big = noise(static_cast<size_t>(wb::LARGE_ASSET_BYTES) + (3u << 20), 9);
+	const wb::ObjectId l_Id = addPicture(l_Host.doc, l_Big, "movie.mp4");
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return joinedAndOnline(l_Ana); }));
+
+	// It is on the board from its first piece, readable up to what has arrived
+	bool l_SawPartial = false;
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] {
+		const wb::ImageAsset* l_Asset = assetOf(l_Ana.doc, l_Id);
+		if (l_Asset == nullptr)
+			return false;
+		if (!l_Asset->complete())
+		{
+			l_SawPartial = true;
+			EXPECT_LT(l_Asset->stream->available(), l_Asset->size());
+			uint8_t l_First = 0;
+			EXPECT_EQ(l_Asset->read(0, &l_First, 1), 1u); // the start is there as soon as there is a piece
+			EXPECT_EQ(l_First, l_Big[0]);
+		}
+		return l_Asset->complete();
+	}, 30000));
+	(void)l_SawPartial;
+	const wb::ImageAsset* l_Asset = assetOf(l_Ana.doc, l_Id);
+	ASSERT_NE(l_Asset, nullptr);
+	EXPECT_TRUE(l_Asset->stream != nullptr);
+	EXPECT_TRUE(l_Asset->bytes.empty());
+	EXPECT_TRUE(l_Asset->stream->temporary());
+	EXPECT_EQ(l_Asset->size(), l_Big.size());
+	EXPECT_EQ(l_Asset->load(), l_Big);
+	EXPECT_EQ(l_Ana.session->assetProgress().files, 0u);
+
+	// What is held in a file is served on to others like any other file
+	Node l_Bo;
+	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return assetOf(l_Bo.doc, l_Id) != nullptr && assetOf(l_Bo.doc, l_Id)->complete(); }, 30000));
+	EXPECT_EQ(assetOf(l_Bo.doc, l_Id)->load(), l_Big);
+}
+
 TEST(Collab, ASenderLeavingMidTransferCancelsItsFile)
 {
 	Node l_Host;
@@ -783,6 +838,7 @@ TEST(Collab, ASenderLeavingMidTransferCancelsItsFile)
 	}));
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Bo }, [&] { return l_Host.doc.find(l_Id) == nullptr && l_Bo.doc.find(l_Id) == nullptr; }));
 	EXPECT_EQ(l_Host.session->assetProgress().files, 0u);
+	EXPECT_EQ(assetOf(l_Host.doc, l_Id), nullptr); // no half a file is left on the board
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Bo }, [&] { return l_Bo.session->assetProgress().files == 0; })); // Bo stops waiting for it too
 	EXPECT_EQ(l_Host.doc.size(), 1u); // the other things on the board stay
 	EXPECT_EQ(l_Bo.doc.size(), 1u);
@@ -880,9 +936,9 @@ TEST(Collab, ADeletedAndRestoredUnfinishedPictureWaitsForItsOwnerToResend)
 
 	// Ana presses the button: everybody gets it
 	l_Ana.session->reupload(l_Asset);
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.doc.findAsset(l_Asset) != nullptr && l_Bo.doc.findAsset(l_Asset) != nullptr; }, 30000));
-	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->bytes, l_Bytes);
-	EXPECT_EQ(l_Bo.doc.findAsset(l_Asset)->bytes, l_Bytes);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return hasWhole(l_Host.doc, l_Asset) && hasWhole(l_Bo.doc, l_Asset); }, 30000));
+	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->load(), l_Bytes);
+	EXPECT_EQ(l_Bo.doc.findAsset(l_Asset)->load(), l_Bytes);
 	EXPECT_FALSE(l_Host.session->assetStalled(l_Asset));
 	EXPECT_FALSE(l_Bo.session->assetStalled(l_Asset));
 	EXPECT_FALSE(l_Ana.session->assetReuploadable(l_Asset));
@@ -910,8 +966,8 @@ TEST(Collab, TheOwnersOwnUndoRestartsTheTransfer)
 	}));
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return l_Host.doc.find(l_Id) == nullptr && l_Host.session->assetProgress().files == 0; }));
 	l_Ana.doc.insert(std::move(l_Taken)); // undo
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return l_Host.doc.findAsset(l_Asset) != nullptr; }, 30000));
-	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->bytes, l_Bytes);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana }, [&] { return hasWhole(l_Host.doc, l_Asset); }, 30000));
+	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->load(), l_Bytes);
 	EXPECT_FALSE(l_Host.session->assetStalled(l_Asset));
 }
 

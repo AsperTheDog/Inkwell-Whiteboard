@@ -29,6 +29,7 @@ import wb.render.video_store;
 import wb.editor;
 import wb.gfx.buffer;
 import wb.gfx.commands;
+import wb.io.blob;
 import wb.io.file;
 import wb.io.serializer;
 import wb.text.system;
@@ -58,6 +59,11 @@ size_t s_SmokeUndoBefore = 0;
 float s_SmokeWidthBefore = 0.f;
 bool s_SmokeExtraPicture = false;
 ObjectId s_SmokeVideo = INVALID_OBJECT_ID;
+ObjectId s_SmokeBigVideo = INVALID_OBJECT_ID;
+size_t s_SmokeBigClipSize = 0;
+std::vector<uint8_t> s_SmokeBigClipHead;
+std::filesystem::path s_SmokeBigPath;
+std::filesystem::path s_SmokeBigBoard;
 uint32_t s_SmokeVideoWaits = 0;
 uint64_t s_SmokeVideoMarkNs = 0;
 
@@ -1011,6 +1017,162 @@ void App::driveSmokeTest()
 	}
 	case 27:
 	{
+		// A video too big for memory: the clip gets a long unused box on the end (players skip it), is imported by path and
+		// has to stay in its file
+		std::filesystem::path l_Path;
+		if (const char* l_Env = SDL_getenv("WB_SMOKE_VIDEO"))
+		{
+			l_Path = pathFromUtf8(l_Env);
+		}
+		else
+		{
+			const char* l_Base = SDL_GetBasePath();
+			l_Path = (l_Base != nullptr ? std::filesystem::path(reinterpret_cast<const char8_t*>(l_Base)) : std::filesystem::current_path()) / "assets" / "test" / "clip.mp4";
+		}
+		std::vector<uint8_t> l_Clip;
+		if (!readFile(l_Path, l_Clip).ok)
+		{
+			spdlog::error("Smoke test (big video): cannot read {}", pathToUtf8(l_Path));
+			m_Failed = true;
+			return;
+		}
+		s_SmokeBigClipSize = l_Clip.size();
+		s_SmokeBigClipHead.assign(l_Clip.begin(), l_Clip.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(l_Clip.size(), 1u << 16)));
+		const uint32_t l_Padding = static_cast<uint32_t>(LARGE_ASSET_BYTES + (4u << 20));
+		const uint32_t l_BoxSize = SDL_Swap32BE(l_Padding);
+		const uint8_t* l_Size = reinterpret_cast<const uint8_t*>(&l_BoxSize);
+		l_Clip.insert(l_Clip.end(), l_Size, l_Size + 4);
+		for (const char l_Letter : { 'f', 'r', 'e', 'e' })
+			l_Clip.push_back(static_cast<uint8_t>(l_Letter));
+		l_Clip.resize(l_Clip.size() + (l_Padding - 8), 0);
+		s_SmokeBigPath = std::filesystem::temp_directory_path() / "inkwell_smoke_big.mp4";
+		s_SmokeBigBoard = std::filesystem::temp_directory_path() / "inkwell_smoke_big.wbrd";
+		if (!writeFileAtomic(s_SmokeBigPath, l_Clip).ok)
+		{
+			spdlog::error("Smoke test (big video): cannot write the padded clip");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.clearSelection();
+		platform::ClipboardPicture l_Picture;
+		l_Picture.path = s_SmokeBigPath;
+		l_Picture.name = "big.mp4";
+		s_SmokeObjectsBefore = m_Editor.document().size();
+		std::vector<platform::ClipboardPicture> l_Pictures;
+		l_Pictures.push_back(std::move(l_Picture));
+		importPictures(std::move(l_Pictures), l_C + Vec2{ -300.f * l_S, -140.f * l_S });
+		s_SmokeVideoWaits = 0;
+		return;
+	}
+	case 28:
+	{
+		const Document& l_Document = m_Editor.document();
+		s_SmokeBigVideo = l_Document.size() == s_SmokeObjectsBefore + 1 ? l_Document.objects().back()->id : INVALID_OBJECT_ID;
+		const Object* l_Object = s_SmokeBigVideo != INVALID_OBJECT_ID ? l_Document.find(s_SmokeBigVideo) : nullptr;
+		const ImageAsset* l_Asset = l_Object != nullptr && l_Object->video() != nullptr ? l_Document.findAsset(l_Object->video()->asset) : nullptr;
+		if (l_Asset == nullptr || !l_Asset->stream || !l_Asset->bytes.empty() || l_Asset->size() <= LARGE_ASSET_BYTES)
+		{
+			spdlog::error("Smoke test (big video): the video was not kept in its file");
+			m_Failed = true;
+			return;
+		}
+		// Playing straight from the file
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeBigVideo);
+		if (!l_Status.ready)
+		{
+			if (l_Status.failed || ++s_SmokeVideoWaits > 400)
+			{
+				spdlog::error("Smoke test (big video): the video did not open ({})", l_Status.error);
+				m_Failed = true;
+				return;
+			}
+			--m_SmokeStep;
+			return;
+		}
+		if (std::abs(l_Status.duration - 3.0) > 0.2)
+		{
+			spdlog::error("Smoke test (big video): wrong duration {}", l_Status.duration);
+			m_Failed = true;
+			return;
+		}
+		m_Canvas.videos().setPlaying(s_SmokeBigVideo, true);
+		s_SmokeVideoMarkNs = SDL_GetTicksNS();
+		return;
+	}
+	case 29:
+	{
+		if (SDL_GetTicksNS() - s_SmokeVideoMarkNs < 600'000'000ull)
+		{
+			--m_SmokeStep;
+			return;
+		}
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeBigVideo);
+		if (!l_Status.playing || l_Status.position < 0.3 || l_Status.position > 1.5)
+		{
+			spdlog::error("Smoke test (big video): playback did not advance as expected (playing {}, position {})", l_Status.playing, l_Status.position);
+			m_Failed = true;
+			return;
+		}
+		m_Canvas.videos().setPlaying(s_SmokeBigVideo, false);
+		// Save it: the file is copied across in pieces, and the video then reads from the saved board, not the original
+		if (const IoResult l_Saved = m_Session.saveTo(s_SmokeBigBoard); !l_Saved.ok)
+		{
+			spdlog::error("Smoke test (big video): saving failed: {}", l_Saved.error);
+			m_Failed = true;
+			return;
+		}
+		const Document& l_Document = m_Editor.document();
+		const ImageAsset* l_Asset = l_Document.findAsset(l_Document.find(s_SmokeBigVideo)->video()->asset);
+		if (l_Asset == nullptr || !l_Asset->stream || l_Asset->stream->path() != s_SmokeBigBoard || l_Asset->stream->fileOffset() == 0)
+		{
+			spdlog::error("Smoke test (big video): the video does not read from the saved board");
+			m_Failed = true;
+			return;
+		}
+		// The original may go now: a new player must open from the board file
+		removeFileQuiet(s_SmokeBigPath);
+		m_Canvas.videos().forget(s_SmokeBigVideo);
+		s_SmokeVideoWaits = 0;
+		return;
+	}
+	case 30:
+	{
+		const render::VideoStatus l_Status = m_Canvas.videos().status(s_SmokeBigVideo);
+		if (!l_Status.ready)
+		{
+			if (l_Status.failed || ++s_SmokeVideoWaits > 400)
+			{
+				spdlog::error("Smoke test (big video): the video did not open from the saved board ({})", l_Status.error);
+				m_Failed = true;
+				return;
+			}
+			--m_SmokeStep;
+			return;
+		}
+		// Open the board file again as a new session would: the video stays in the file
+		std::string l_OpenError;
+		const std::shared_ptr<FileSource> l_File = FileSource::open(s_SmokeBigBoard, l_OpenError);
+		Document l_Loaded;
+		BoardMeta l_LoadedMeta;
+		const LoadResult l_Result = l_File ? loadBoardFile(l_File, l_Loaded, l_LoadedMeta) : LoadResult{ .error = l_OpenError };
+		const Object* l_Back = l_Result.ok ? l_Loaded.find(s_SmokeBigVideo) : nullptr;
+		const ImageAsset* l_Asset = l_Back != nullptr && l_Back->video() != nullptr ? l_Loaded.findAsset(l_Back->video()->asset) : nullptr;
+		std::vector<uint8_t> l_Head(s_SmokeBigClipHead.size());
+		if (l_Asset == nullptr || !l_Asset->stream || !l_Asset->bytes.empty() || l_Asset->size() <= LARGE_ASSET_BYTES
+			|| l_Asset->read(0, l_Head.data(), l_Head.size()) != l_Head.size() || l_Head != s_SmokeBigClipHead)
+		{
+			spdlog::error("Smoke test (big video): the video did not survive saving and opening ({})", l_Result.error);
+			m_Failed = true;
+			return;
+		}
+		// Done with the file; undoing the import is not needed, the object stays as a normal part of the board
+		removeFileQuiet(s_SmokeBigBoard);
+		if (!m_Failed)
+			spdlog::info("Smoke test: a video bigger than memory stays in its file, plays from it and from the saved board OK");
+		return;
+	}
+	case 31:
+	{
 		// Leave a panel open for the screenshot
 		const std::string& l_Ui = m_Options.smokeUi;
 		if (l_Ui == "pen" || l_Ui == "picker")
@@ -1114,7 +1276,7 @@ void App::driveSmokeTest()
 		}
 		return;
 	}
-	case 28:
+	case 32:
 	{
 		// A few frames later the viewer's bar is known: rest the pointer on its speaker
 		if (m_Options.smokeUi == "videovolume" && m_VideoBarRect.max.x > m_VideoBarRect.min.x)
@@ -1129,7 +1291,7 @@ void App::driveSmokeTest()
 		return;
 	}
 	// ---- --smoke-ui=tools: the highlighter, shapes, ruler, lock, export and laser pointer on a fresh board
-	case 29:
+	case 33:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1140,7 +1302,7 @@ void App::driveSmokeTest()
 			sampleCurve(60, [&](const float p_T) { return l_C + Vec2{ (-420.f + p_T * 380.f) * l_S, (-250.f + 14.f * std::sin(p_T * 14.f)) * l_S }; }), {});
 		return;
 	}
-	case 30:
+	case 34:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1151,17 +1313,17 @@ void App::driveSmokeTest()
 			sampleCurve(40, [&](const float p_T) { return l_C + Vec2{ (-380.f + p_T * 250.f) * l_S, (-252.f + 6.f * std::sin(p_T * 9.f)) * l_S }; }), {});
 		return;
 	}
-	case 31:
-	case 32:
-	case 33:
-	case 34:
 	case 35:
 	case 36:
+	case 37:
+	case 38:
+	case 39:
+	case 40:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
 		static constexpr std::array<ShapeKind, 6> KINDS{ ShapeKind::Rectangle, ShapeKind::Ellipse, ShapeKind::Triangle, ShapeKind::Diamond, ShapeKind::Arrow, ShapeKind::Line };
-		const size_t l_Index = m_SmokeStep - 1 - 31;
+		const size_t l_Index = m_SmokeStep - 1 - 35;
 		m_Editor.setTool(tools::ToolKind::Shape);
 		m_Editor.shapeState().kind = KINDS[l_Index];
 		m_Editor.brush() = { .color = Color::fromRgba8(l_Index % 2 == 0 ? 0x1E88E5FFu : 0xE53935FFu), .sizePoints = 4.f };
@@ -1169,7 +1331,7 @@ void App::driveSmokeTest()
 		queueStroke(platform::PointerDevice::Mouse, m_Editor.brush(), { l_C + Vec2{ l_X, -180.f * l_S }, l_C + Vec2{ l_X + 100.f * l_S, -80.f * l_S } }, {});
 		return;
 	}
-	case 37:
+	case 41:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1190,7 +1352,7 @@ void App::driveSmokeTest()
 		queueStroke(platform::PointerDevice::Mouse, m_Editor.brush(), l_Points, {});
 		return;
 	}
-	case 38:
+	case 42:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1221,7 +1383,7 @@ void App::driveSmokeTest()
 		}
 		return;
 	}
-	case 39:
+	case 43:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1250,7 +1412,7 @@ void App::driveSmokeTest()
 		}
 		return;
 	}
-	case 40:
+	case 44:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1264,7 +1426,7 @@ void App::driveSmokeTest()
 		startExport(s_SmokeExportPath);
 		return;
 	}
-	case 41:
+	case 45:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1299,7 +1461,7 @@ void App::driveSmokeTest()
 		m_Editor.setTool(tools::ToolKind::Laser);
 		return;
 	}
-	case 42:
+	case 46:
 	{
 		if (m_Options.smokeUi != "tools")
 			return;
@@ -1327,7 +1489,7 @@ void App::driveSmokeTest()
 		return;
 	}
 	// ---- --smoke-ui=pdf: a two page PDF lands on the board as locked pictures
-	case 43:
+	case 47:
 	{
 		if (m_Options.smokeUi != "pdf")
 			return;
@@ -1344,7 +1506,7 @@ void App::driveSmokeTest()
 		startPdfImport(l_Path);
 		return;
 	}
-	case 44:
+	case 48:
 	{
 		if (m_Options.smokeUi != "pdf")
 			return;

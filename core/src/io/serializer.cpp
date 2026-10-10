@@ -10,6 +10,7 @@ module;
 #include <fstream>
 #include <system_error>
 #include <memory>
+#include <unordered_map>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,6 +26,7 @@ module wb.io.serializer;
 import wb.math;
 import wb.doc.document;
 import wb.doc.object;
+import wb.io.blob;
 import wb.io.file;
 
 static_assert(std::endian::native == std::endian::little, "the .wbrd reader/writer assumes a little endian host");
@@ -48,6 +50,7 @@ constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_FONT = tag("FONT");
 constexpr uint32_t TAG_LOCK = tag("LOCK"); // ids of the locked objects
 constexpr uint32_t TAG_ABIG = tag("ABIG"); // one big asset, written by a background save
+constexpr uint32_t TAG_AREF = tag("AREF"); // big assets that stay in a file of their own (recovery files)
 constexpr uint32_t TAG_END = tag("END ");
 
 enum class ObjectType : uint8_t
@@ -63,7 +66,11 @@ constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * 
 constexpr size_t MAX_NAME_BYTES = 1024;
 constexpr size_t MAX_TEXT_BYTES = 64u << 20;
 constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
-constexpr uint64_t MAX_ASSET_BYTES = 1ull << 31;
+constexpr uint64_t MAX_ASSET_BYTES = 1ull << 40;
+// Chunks up to this size are read into memory to be parsed; the only bigger ones that make sense carry big files
+constexpr uint64_t MAX_RESIDENT_CHUNK = 1ull << 31;
+// Header fields of a big asset chunk (before the file itself) never need more room than this
+constexpr size_t MAX_ASSET_PREFIX_BYTES = 8 + 4 + 4 + 4 + MAX_NAME_BYTES + 8;
 
 constexpr size_t TRANSFORM_BYTES = 6 * sizeof(double);
 constexpr size_t STROKE_HEADER_BYTES = 4 * sizeof(float) + sizeof(float) + 1 + sizeof(uint32_t);
@@ -493,7 +500,19 @@ bool parseFonts(const std::span<const uint8_t> p_Payload, std::vector<FontAsset>
 	return l_Reader.ok();
 }
 
-void writeAssets(Writer& p_Writer, const Document& p_Document, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big)
+struct AssetRefEntry
+{
+	AssetId id = INVALID_ASSET_ID;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	std::string name;
+	uint64_t size = 0;
+	std::string path;
+	uint64_t offset = 0;
+	int64_t modified = 0;
+};
+
+void writeAssets(Writer& p_Writer, const Document& p_Document, const SplitOptions& p_Options, std::vector<BigAssetRef>* p_Big)
 {
 	// Only assets some object still uses are saved (undone or deleted images do not bloat the file)
 	std::vector<AssetId> l_Used;
@@ -505,16 +524,35 @@ void writeAssets(Writer& p_Writer, const Document& p_Document, const size_t p_Bi
 			l_Used.push_back(l_Asset);
 	}
 	// An asset the document does not hold (still being received in a collaboration) has nothing to write
-	std::erase_if(l_Used, [&](const AssetId p_Id) { return p_Document.findAsset(p_Id) == nullptr; });
-	// Big assets are not copied: the caller writes them from the document's memory
+	std::erase_if(l_Used, [&](const AssetId p_Id)
+	{
+		const ImageAsset* l_Asset = p_Document.findAsset(p_Id);
+		return l_Asset == nullptr || !l_Asset->complete();
+	});
+	// Big assets are not copied here: the caller writes them in pieces from where they are
+	std::vector<AssetRefEntry> l_Refs;
 	if (p_Big != nullptr)
 	{
 		std::erase_if(l_Used, [&](const AssetId p_Id)
 		{
 			const ImageAsset* l_Asset = p_Document.findAsset(p_Id);
-			if (l_Asset == nullptr || l_Asset->bytes.size() < p_BigAssetBytes)
+			if (l_Asset == nullptr || l_Asset->size() < p_Options.bigAssetBytes)
 				return false;
-			p_Big->push_back(BigAssetRef{ .id = p_Id, .width = l_Asset->width, .height = l_Asset->height, .name = l_Asset->name, .data = l_Asset->bytes.data(), .size = l_Asset->bytes.size() });
+			std::error_code l_PathError;
+			const bool l_Excluded = !p_Options.noReferencesTo.empty() && l_Asset->stream && !l_Asset->stream->path().empty()
+				&& (std::filesystem::equivalent(l_Asset->stream->path(), p_Options.noReferencesTo, l_PathError) || l_Asset->stream->path() == p_Options.noReferencesTo);
+			if (p_Options.referenceFiles && l_Asset->stream && !l_Excluded)
+			{
+				// A file of the user's own is only pointed at; a download exists nowhere else, so it cannot be
+				if (!l_Asset->stream->temporary() && !l_Asset->stream->path().empty())
+				{
+					l_Refs.push_back(AssetRefEntry{ .id = p_Id, .width = l_Asset->width, .height = l_Asset->height, .name = l_Asset->name, .size = l_Asset->size(),
+						.path = pathToUtf8(l_Asset->stream->path()), .offset = l_Asset->stream->fileOffset(), .modified = l_Asset->stream->modified() });
+				}
+				return true;
+			}
+			p_Big->push_back(BigAssetRef{ .id = p_Id, .width = l_Asset->width, .height = l_Asset->height, .name = l_Asset->name, .source = l_Asset->stream,
+				.data = l_Asset->stream ? nullptr : l_Asset->bytes.data(), .size = l_Asset->size() });
 			return true;
 		});
 	}
@@ -523,15 +561,35 @@ void writeAssets(Writer& p_Writer, const Document& p_Document, const size_t p_Bi
 	for (const AssetId l_Id : l_Used)
 	{
 		const ImageAsset* l_Asset = p_Document.findAsset(l_Id);
+		const std::vector<uint8_t> l_Loaded = l_Asset != nullptr && l_Asset->stream ? l_Asset->load() : std::vector<uint8_t>{};
+		const uint8_t* l_Data = l_Asset != nullptr ? (l_Asset->stream ? l_Loaded.data() : l_Asset->bytes.data()) : nullptr;
+		const size_t l_Size = l_Asset != nullptr ? (l_Asset->stream ? l_Loaded.size() : l_Asset->bytes.size()) : 0;
 		p_Writer.u64(l_Id);
 		p_Writer.u32(l_Asset != nullptr ? l_Asset->width : 0);
 		p_Writer.u32(l_Asset != nullptr ? l_Asset->height : 0);
 		p_Writer.string(l_Asset != nullptr ? std::string_view(l_Asset->name) : std::string_view());
-		p_Writer.u64(l_Asset != nullptr ? l_Asset->bytes.size() : 0);
-		if (l_Asset != nullptr)
-			p_Writer.raw(l_Asset->bytes.data(), l_Asset->bytes.size());
+		p_Writer.u64(l_Size);
+		if (l_Size > 0)
+			p_Writer.raw(l_Data, l_Size);
 	}
 	p_Writer.endChunk();
+	if (!l_Refs.empty())
+	{
+		p_Writer.beginChunk(TAG_AREF);
+		p_Writer.u32(static_cast<uint32_t>(l_Refs.size()));
+		for (const AssetRefEntry& l_Ref : l_Refs)
+		{
+			p_Writer.u64(l_Ref.id);
+			p_Writer.u32(l_Ref.width);
+			p_Writer.u32(l_Ref.height);
+			p_Writer.string(l_Ref.name);
+			p_Writer.u64(l_Ref.size);
+			p_Writer.string(l_Ref.path);
+			p_Writer.u64(l_Ref.offset);
+			p_Writer.u64(static_cast<uint64_t>(l_Ref.modified));
+		}
+		p_Writer.endChunk();
+	}
 }
 
 bool parseOneAsset(Reader& p_Reader, std::vector<ImageAsset>& p_Assets, std::unordered_set<AssetId>& p_Seen)
@@ -560,6 +618,51 @@ bool parseAssets(const std::span<const uint8_t> p_Payload, std::vector<ImageAsse
 	{
 		if (!parseOneAsset(l_Reader, p_Assets, p_Seen))
 			return false;
+	}
+	return l_Reader.ok();
+}
+
+// Files that recovery files point at, opened once however many assets live in them
+struct OpenFiles
+{
+	std::unordered_map<std::string, std::shared_ptr<FileSource>> files;
+	std::vector<std::string> missing;
+};
+
+bool parseRefs(const std::span<const uint8_t> p_Payload, std::vector<ImageAsset>& p_Assets, std::unordered_set<AssetId>& p_Seen, OpenFiles& p_Open)
+{
+	Reader l_Reader(p_Payload);
+	const uint32_t l_Count = l_Reader.u32();
+	if (!l_Reader.ok())
+		return false;
+	for (uint32_t i = 0; i < l_Count; ++i)
+	{
+		ImageAsset l_Asset;
+		l_Asset.id = l_Reader.u64();
+		l_Asset.width = l_Reader.u32();
+		l_Asset.height = l_Reader.u32();
+		l_Asset.name = l_Reader.string(MAX_NAME_BYTES);
+		const uint64_t l_Size = l_Reader.u64();
+		const std::string l_Path = l_Reader.string(MAX_PATH_BYTES);
+		const uint64_t l_Offset = l_Reader.u64();
+		const int64_t l_Modified = static_cast<int64_t>(l_Reader.u64());
+		if (!l_Reader.ok() || l_Size > MAX_ASSET_BYTES || l_Offset > MAX_ASSET_BYTES * 64 || l_Asset.id == INVALID_ASSET_ID || !p_Seen.insert(l_Asset.id).second)
+			return false;
+
+		std::shared_ptr<FileSource>& l_File = p_Open.files[l_Path];
+		if (!l_File)
+		{
+			std::string l_Error;
+			l_File = FileSource::open(pathFromUtf8(l_Path), l_Error);
+		}
+		// Only the very same file will do: if it was edited since, what it holds is not what the board showed
+		if (!l_File || l_File->modified() != l_Modified || l_File->size() < l_Offset || l_File->size() - l_Offset < l_Size)
+		{
+			p_Open.missing.push_back(l_Asset.name.empty() ? l_Path : l_Asset.name);
+			continue; // the objects that used it are dropped like those of an unknown kind
+		}
+		l_Asset.stream = std::make_shared<RangeSource>(l_File, l_Offset, l_Size);
+		p_Assets.push_back(std::move(l_Asset));
 	}
 	return l_Reader.ok();
 }
@@ -701,16 +804,16 @@ namespace
 // A picture or video whose file the document does not hold (still being received in a collaboration)
 bool lacksAsset(const Document& p_Document, const Object& p_Object)
 {
-	if (const ImageData* l_Image = p_Object.image())
-		return p_Document.findAsset(l_Image->asset) == nullptr;
-	if (const VideoData* l_Video = p_Object.video())
-		return p_Document.findAsset(l_Video->asset) == nullptr;
-	return false;
+	const AssetId l_Id = p_Object.image() != nullptr ? p_Object.image()->asset : (p_Object.video() != nullptr ? p_Object.video()->asset : INVALID_ASSET_ID);
+	if (l_Id == INVALID_ASSET_ID)
+		return false;
+	const ImageAsset* l_Asset = p_Document.findAsset(l_Id);
+	return l_Asset == nullptr || !l_Asset->complete();
 }
 
 // p_IncludeUnresolved: also write pictures and videos whose file is missing (a collaboration snapshot; the receiver gets
 // the file separately). A saved file leaves them out, as it could not show them.
-std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, std::vector<BigAssetRef>* p_Big, std::vector<size_t>* p_DeferredCrcs = nullptr, const bool p_IncludeUnresolved = false)
+std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& p_Meta, const SplitOptions& p_Options, std::vector<BigAssetRef>* p_Big, std::vector<size_t>* p_DeferredCrcs = nullptr, const bool p_IncludeUnresolved = false)
 {
 	std::vector<const Object*> l_Objects;
 	l_Objects.reserve(p_Document.size());
@@ -732,7 +835,7 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 			l_Estimate += OBJECT_HEADER_BYTES + textBodyBytes(*l_Text);
 	}
 	for (const auto& [l_Id, l_Asset] : p_Document.assets())
-		l_Estimate += (p_Big != nullptr && l_Asset.bytes.size() >= p_BigAssetBytes ? 0 : l_Asset.bytes.size()) + 64;
+		l_Estimate += (p_Big != nullptr && l_Asset.size() >= p_Options.bigAssetBytes ? 0 : l_Asset.size()) + 64;
 
 	Writer l_Writer;
 	l_Writer.deferChecksums(p_DeferredCrcs);
@@ -752,7 +855,7 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 	l_Writer.f64(p_Meta.viewZoom);
 	l_Writer.endChunk();
 
-	writeAssets(l_Writer, p_Document, p_BigAssetBytes, p_Big);
+	writeAssets(l_Writer, p_Document, p_Options, p_Big);
 	writeFonts(l_Writer, p_Document);
 
 	l_Writer.beginChunk(TAG_OBJS);
@@ -798,7 +901,7 @@ std::vector<uint8_t> closingChunk()
 
 std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta& p_Meta)
 {
-	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, 0, nullptr);
+	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, SplitOptions{}, nullptr);
 	const std::vector<uint8_t> l_End = closingChunk();
 	l_Bytes.insert(l_Bytes.end(), l_End.begin(), l_End.end());
 	return l_Bytes;
@@ -807,17 +910,19 @@ std::vector<uint8_t> serializeBoard(const Document& p_Document, const BoardMeta&
 std::vector<uint8_t> serializeBoardShell(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_InlineAssetBytes)
 {
 	std::vector<BigAssetRef> l_Left;
-	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, p_InlineAssetBytes, &l_Left, nullptr, true);
+	std::vector<uint8_t> l_Bytes = serializeBody(p_Document, p_Meta, SplitOptions{ .bigAssetBytes = p_InlineAssetBytes }, &l_Left, nullptr, true);
 	const std::vector<uint8_t> l_End = closingChunk();
 	l_Bytes.insert(l_Bytes.end(), l_End.begin(), l_End.end());
 	return l_Bytes;
 }
 
-SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, const size_t p_BigAssetBytes, const bool p_DeferChecksums)
+SplitBoard serializeBoardSplit(const Document& p_Document, const BoardMeta& p_Meta, const SplitOptions& p_Options)
 {
 	SplitBoard l_Board;
-	l_Board.head = serializeBody(p_Document, p_Meta, p_BigAssetBytes, &l_Board.big, p_DeferChecksums ? &l_Board.pendingChecksums : nullptr);
+	l_Board.head = serializeBody(p_Document, p_Meta, p_Options, &l_Board.big, p_Options.deferChecksums ? &l_Board.pendingChecksums : nullptr);
 	l_Board.tail = closingChunk();
+	for (const BigAssetRef& l_Ref : l_Board.big)
+		l_Board.bigBytes += l_Ref.size;
 	return l_Board;
 }
 
@@ -834,21 +939,30 @@ void finishChecksums(SplitBoard& p_Board)
 	p_Board.pendingChecksums.clear();
 }
 
-IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitBoard& p_Board)
+IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitBoard& p_Board, std::vector<PlacedAsset>* p_Placed, WriteProgress* p_Progress)
 {
 	std::error_code l_Error;
 	if (p_Path.has_parent_path())
 		std::filesystem::create_directories(p_Path.parent_path(), l_Error);
 	std::filesystem::path l_Temp = p_Path;
 	l_Temp += ".tmp";
+	if (p_Placed != nullptr)
+		p_Placed->clear();
+	std::string l_Problem;
 	{
 		std::ofstream l_File(l_Temp, std::ios::binary | std::ios::trunc);
 		if (!l_File)
 			return IoResult::failure("Cannot create " + pathToUtf8(l_Temp));
-		const auto l_Write = [&](const uint8_t* p_Data, const size_t p_Size) { l_File.write(reinterpret_cast<const char*>(p_Data), static_cast<std::streamsize>(p_Size)); };
-		l_Write(p_Board.head.data(), p_Board.head.size());
+		const auto l_Write = [&](const void* p_Data, const size_t p_Size)
+		{
+			l_File.write(static_cast<const char*>(p_Data), static_cast<std::streamsize>(p_Size));
+			return static_cast<bool>(l_File);
+		};
+		bool l_Good = l_Write(p_Board.head.data(), p_Board.head.size());
 		for (const BigAssetRef& l_Ref : p_Board.big)
 		{
+			if (!l_Good)
+				break;
 			// One chunk per big asset: header fields first, then the file itself (the checksum covers both)
 			Writer l_Fields;
 			l_Fields.u64(l_Ref.id);
@@ -857,60 +971,322 @@ IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitB
 			l_Fields.string(l_Ref.name);
 			l_Fields.u64(l_Ref.size);
 			const std::vector<uint8_t> l_Prefix = l_Fields.take();
-			uint32_t l_Crc = crcUpdate(0xFFFFFFFFu, l_Prefix.data(), l_Prefix.size());
-			l_Crc = ~crcUpdate(l_Crc, l_Ref.data, l_Ref.size);
 			const uint64_t l_Length = l_Prefix.size() + l_Ref.size;
 			const uint32_t l_Tag = TAG_ABIG;
-			l_Write(reinterpret_cast<const uint8_t*>(&l_Tag), sizeof(l_Tag));
-			l_Write(reinterpret_cast<const uint8_t*>(&l_Length), sizeof(l_Length));
-			l_Write(reinterpret_cast<const uint8_t*>(&l_Crc), sizeof(l_Crc));
-			l_Write(l_Prefix.data(), l_Prefix.size());
-			l_Write(l_Ref.data, l_Ref.size);
+			const uint32_t l_NoCrc = 0;
+			const std::streamoff l_HeaderAt = static_cast<std::streamoff>(l_File.tellp());
+			l_Good = l_Write(&l_Tag, sizeof(l_Tag)) && l_Write(&l_Length, sizeof(l_Length)) && l_Write(&l_NoCrc, sizeof(l_NoCrc)) && l_Write(l_Prefix.data(), l_Prefix.size());
+			if (!l_Good)
+				break;
+			const uint64_t l_PayloadAt = static_cast<uint64_t>(l_File.tellp());
+			uint32_t l_Crc = crcUpdate(0xFFFFFFFFu, l_Prefix.data(), l_Prefix.size());
+			bool l_Cancelled = false;
+			const auto l_Piece = [&](const uint8_t* p_Data, const size_t p_Size)
+			{
+				if (p_Progress != nullptr && p_Progress->cancel.load())
+				{
+					l_Cancelled = true;
+					return false;
+				}
+				l_Crc = crcUpdate(l_Crc, p_Data, p_Size);
+				if (!l_Write(p_Data, p_Size))
+					return false;
+				if (p_Progress != nullptr)
+					p_Progress->written.fetch_add(p_Size);
+				return true;
+			};
+			if (l_Ref.source)
+			{
+				l_Good = streamBytes(*l_Ref.source, 0, l_Ref.size, l_Piece);
+			}
+			else
+			{
+				constexpr uint64_t BLOCK = uint64_t{ 1 } << 20;
+				for (uint64_t l_At = 0; l_Good && l_At < l_Ref.size; l_At += BLOCK)
+					l_Good = l_Piece(l_Ref.data + l_At, static_cast<size_t>(std::min<uint64_t>(BLOCK, l_Ref.size - l_At)));
+			}
+			if (!l_Good)
+			{
+				l_Problem = l_Cancelled ? "The save was cancelled."
+					: (l_File ? "A picture or video (" + l_Ref.name + ") could not be read: was its file moved, or its drive removed?" : std::string());
+				break;
+			}
+			// Now that the checksum is known, go back and fill it in
+			l_Crc = ~l_Crc;
+			l_File.seekp(l_HeaderAt + static_cast<std::streamoff>(sizeof(l_Tag) + sizeof(l_Length)));
+			l_Good = l_Write(&l_Crc, sizeof(l_Crc));
+			l_File.seekp(0, std::ios::end);
+			if (!l_Good)
+				break;
+			if (p_Placed != nullptr)
+				p_Placed->push_back(PlacedAsset{ .id = l_Ref.id, .offset = l_PayloadAt, .size = l_Ref.size });
 		}
-		l_Write(p_Board.tail.data(), p_Board.tail.size());
+		if (l_Good)
+			l_Good = l_Write(p_Board.tail.data(), p_Board.tail.size());
 		l_File.flush();
-		if (!l_File)
+		if (!l_Good || !l_File)
 		{
 			l_File.close();
 			std::filesystem::remove(l_Temp, l_Error);
-			return IoResult::failure("Cannot write " + pathToUtf8(p_Path) + " (disk full or no permission?)");
+			if (p_Placed != nullptr)
+				p_Placed->clear();
+			return IoResult::failure(l_Problem.empty() ? "Cannot write " + pathToUtf8(p_Path) + " (disk full or no permission?)" : l_Problem);
 		}
 	}
-	std::filesystem::rename(l_Temp, p_Path, l_Error);
-	if (l_Error)
+	return replaceFile(l_Temp, p_Path);
+}
+
+// ------------------------------------------------------------------------------------------------ loading
+
+namespace
+{
+struct LoadState
+{
+	std::optional<ParsedMeta> meta;
+	std::optional<std::array<double, 3>> view;
+	std::vector<std::unique_ptr<Object>> objects;
+	std::vector<ImageAsset> assets;
+	std::vector<FontAsset> fonts;
+	std::unordered_set<ObjectId> locked;
+	std::unordered_set<AssetId> seenAssets;
+	OpenFiles open;
+	bool haveAssets = false;
+	bool haveObjects = false;
+	bool haveEnd = false;
+	uint32_t skipped = 0;
+};
+
+// Checks the first bytes of a file: empty when fine, otherwise what is wrong
+std::string checkFileHeader(Reader& p_File)
+{
+	const std::span<const uint8_t> l_Magic = p_File.take(MAGIC.size());
+	if (!p_File.ok() || std::memcmp(l_Magic.data(), MAGIC.data(), MAGIC.size()) != 0)
+		return "This is not a Inkwell file.";
+	const uint32_t l_Version = p_File.u32();
+	if (!p_File.ok() || l_Version == 0)
+		return "The file header is damaged.";
+	if (l_Version > BOARD_FORMAT_VERSION)
+		return "This file was made by a newer version of Inkwell.";
+	return {};
+}
+
+// One chunk that is in memory. Empty when fine, otherwise what is wrong.
+std::string consumeChunk(LoadState& p_State, const uint32_t p_Tag, const std::span<const uint8_t> p_Payload)
+{
+	Reader l_Reader(p_Payload);
+	switch (p_Tag)
 	{
-		std::error_code l_Ignored;
-		std::filesystem::remove(l_Temp, l_Ignored);
-		return IoResult::failure("Cannot replace " + pathToUtf8(p_Path) + ": " + l_Error.message());
+	case TAG_META:
+	{
+		ParsedMeta l_Parsed;
+		l_Parsed.nextId = l_Reader.u64();
+		l_Parsed.objectCount = l_Reader.u64();
+		l_Parsed.sourcePath = l_Reader.string(MAX_PATH_BYTES);
+		if (!l_Reader.ok())
+			return "The file is damaged (bad header chunk).";
+		p_State.meta = std::move(l_Parsed);
+		break;
+	}
+	case TAG_VIEW:
+	{
+		const std::array<double, 3> l_Values{ l_Reader.f64(), l_Reader.f64(), l_Reader.f64() };
+		if (!l_Reader.ok() || !finite(l_Values[0]) || !finite(l_Values[1]) || !finite(l_Values[2]) || l_Values[2] <= 0.0)
+			return "The file is damaged (bad view chunk).";
+		p_State.view = l_Values;
+		break;
+	}
+	case TAG_OBJS:
+		if (p_State.haveObjects || !parseObjects(p_Payload, p_State.objects, p_State.skipped))
+			return "The file is damaged (bad object data).";
+		p_State.haveObjects = true;
+		break;
+	case TAG_ASET:
+		if (p_State.haveAssets || !parseAssets(p_Payload, p_State.assets, p_State.seenAssets))
+			return "The file is damaged (bad image data).";
+		p_State.haveAssets = true;
+		break;
+	case TAG_ABIG:
+		if (!parseOneAsset(l_Reader, p_State.assets, p_State.seenAssets))
+			return "The file is damaged (bad image data).";
+		break;
+	case TAG_AREF:
+		if (!parseRefs(p_Payload, p_State.assets, p_State.seenAssets, p_State.open))
+			return "The file is damaged (bad file references).";
+		break;
+	case TAG_FONT:
+		if (!p_State.fonts.empty() || !parseFonts(p_Payload, p_State.fonts))
+			return "The file is damaged (bad font data).";
+		break;
+	case TAG_LOCK:
+	{
+		const uint32_t l_Count = l_Reader.u32();
+		if (!l_Reader.ok() || static_cast<uint64_t>(l_Count) * sizeof(uint64_t) > l_Reader.remaining())
+			return "The file is damaged (bad lock data).";
+		for (uint32_t i = 0; i < l_Count; ++i)
+			p_State.locked.insert(l_Reader.u64());
+		break;
+	}
+	case TAG_END:
+		p_State.haveEnd = true;
+		break;
+	default:
+		break; // a chunk from a newer version
 	}
 	return {};
 }
 
+// Everything was read: checks it hangs together and only then touches the document
+LoadResult commitLoad(LoadState& p_State, Document& p_Document, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
+{
+	if (!p_State.haveEnd)
+		return failure("The file is incomplete (truncated).");
+	if (!p_State.meta || !p_State.haveObjects)
+		return failure("The file is damaged (missing data).");
+	// Images whose picture is missing cannot be shown: drop them like objects of an unknown kind
+	if (!p_AllowMissingAssets)
+	{
+		std::unordered_set<AssetId> l_Known;
+		for (const ImageAsset& l_Asset : p_State.assets)
+			l_Known.insert(l_Asset.id);
+		p_State.skipped += static_cast<uint32_t>(std::erase_if(p_State.objects, [&](const std::unique_ptr<Object>& p_Object)
+		{
+			const ImageData* l_Image = p_Object->image();
+			const VideoData* l_Video = p_Object->video();
+			return (l_Image != nullptr && !l_Known.contains(l_Image->asset)) || (l_Video != nullptr && !l_Known.contains(l_Video->asset));
+		}));
+	}
+	if (p_State.meta->objectCount != p_State.objects.size() + p_State.skipped)
+		return failure("The file is damaged (object count mismatch).");
+
+	p_Document.clear();
+	if (p_State.meta->nextId > 0)
+		p_Document.reserveId(p_State.meta->nextId - 1);
+	for (ImageAsset& l_Asset : p_State.assets)
+		p_Document.insertAsset(std::move(l_Asset));
+	for (FontAsset& l_Font : p_State.fonts)
+		p_Document.setFontAsset(std::move(l_Font));
+	for (std::unique_ptr<Object>& l_Object : p_State.objects)
+	{
+		l_Object->locked = p_State.locked.contains(l_Object->id);
+		p_Document.insert(std::move(l_Object));
+	}
+
+	p_Meta = BoardMeta{};
+	p_Meta.sourcePath = std::move(p_State.meta->sourcePath);
+	if (p_State.view)
+	{
+		p_Meta.viewCenter = DVec2{ (*p_State.view)[0], (*p_State.view)[1] };
+		p_Meta.viewZoom = (*p_State.view)[2];
+	}
+	LoadResult l_Result{ .ok = true, .skippedObjects = p_State.skipped };
+	l_Result.missingFiles = std::move(p_State.open.missing);
+	return l_Result;
+}
+
+// Reads exact pieces of a file at a moving position
+class FileCursor
+{
+public:
+	FileCursor(const ByteSource& p_File, const uint64_t p_Start, const uint64_t p_End) : m_File(p_File), m_At(p_Start), m_End(p_End) {}
+
+	[[nodiscard]] uint64_t position() const { return m_At; }
+	[[nodiscard]] uint64_t remaining() const { return m_End - m_At; }
+	bool get(void* p_Target, const size_t p_Size)
+	{
+		if (p_Size > remaining() || m_File.read(m_At, p_Target, p_Size) != p_Size)
+			return false;
+		m_At += p_Size;
+		return true;
+	}
+	template <typename T>
+	bool get(T& p_Value)
+	{
+		return get(&p_Value, sizeof(T));
+	}
+	bool skip(const uint64_t p_Size)
+	{
+		if (p_Size > remaining())
+			return false;
+		m_At += p_Size;
+		return true;
+	}
+
+private:
+	const ByteSource& m_File;
+	uint64_t m_At;
+	uint64_t m_End;
+};
+
+// An asset chunk too big to read at once (an old file with videos inside the one ASET chunk): the big files stay where
+// they are. Empty when fine.
+std::string streamAssetList(const std::shared_ptr<const ByteSource>& p_File, const uint64_t p_Start, const uint64_t p_End, LoadState& p_State)
+{
+	static const char* const DAMAGED = "The file is damaged (bad image data).";
+	FileCursor l_Cursor(*p_File, p_Start, p_End);
+	uint32_t l_Count = 0;
+	if (!l_Cursor.get(l_Count))
+		return DAMAGED;
+	for (uint32_t i = 0; i < l_Count; ++i)
+	{
+		ImageAsset l_Asset;
+		uint32_t l_NameSize = 0;
+		uint64_t l_Size = 0;
+		if (!l_Cursor.get(l_Asset.id) || !l_Cursor.get(l_Asset.width) || !l_Cursor.get(l_Asset.height) || !l_Cursor.get(l_NameSize) || l_NameSize > MAX_NAME_BYTES)
+			return DAMAGED;
+		l_Asset.name.resize(l_NameSize);
+		if (!l_Cursor.get(l_Asset.name.data(), l_NameSize) || !l_Cursor.get(l_Size))
+			return DAMAGED;
+		if (l_Size > MAX_ASSET_BYTES || l_Size > l_Cursor.remaining() || l_Asset.id == INVALID_ASSET_ID || !p_State.seenAssets.insert(l_Asset.id).second)
+			return DAMAGED;
+		if (l_Size >= LARGE_ASSET_BYTES)
+		{
+			l_Asset.stream = std::make_shared<RangeSource>(p_File, l_Cursor.position(), l_Size);
+			l_Cursor.skip(l_Size);
+		}
+		else
+		{
+			l_Asset.bytes.resize(static_cast<size_t>(l_Size));
+			if (!l_Cursor.get(l_Asset.bytes.data(), l_Asset.bytes.size()))
+				return DAMAGED;
+		}
+		p_State.assets.push_back(std::move(l_Asset));
+	}
+	return {};
+}
+
+// One big asset chunk whose file stays where it is. Empty when fine.
+std::string streamBigAsset(const std::shared_ptr<const ByteSource>& p_File, const uint64_t p_Start, const uint64_t p_Length, LoadState& p_State)
+{
+	static const char* const DAMAGED = "The file is damaged (bad image data).";
+	std::vector<uint8_t> l_Prefix(static_cast<size_t>(std::min<uint64_t>(p_Length, MAX_ASSET_PREFIX_BYTES)));
+	if (p_File->read(p_Start, l_Prefix.data(), l_Prefix.size()) != l_Prefix.size())
+		return DAMAGED;
+	Reader l_Reader(l_Prefix);
+	ImageAsset l_Asset;
+	l_Asset.id = l_Reader.u64();
+	l_Asset.width = l_Reader.u32();
+	l_Asset.height = l_Reader.u32();
+	l_Asset.name = l_Reader.string(MAX_NAME_BYTES);
+	const uint64_t l_Size = l_Reader.u64();
+	if (!l_Reader.ok())
+		return DAMAGED;
+	const uint64_t l_PrefixBytes = l_Prefix.size() - l_Reader.remaining();
+	if (l_Size > MAX_ASSET_BYTES || l_PrefixBytes + l_Size != p_Length || l_Asset.id == INVALID_ASSET_ID || !p_State.seenAssets.insert(l_Asset.id).second)
+		return DAMAGED;
+	l_Asset.stream = std::make_shared<RangeSource>(p_File, p_Start + l_PrefixBytes, l_Size);
+	p_State.assets.push_back(std::move(l_Asset));
+	return {};
+}
+} // namespace
+
 LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_Document, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
 {
 	Reader l_File(p_Bytes);
-	const std::span<const uint8_t> l_Magic = l_File.take(MAGIC.size());
-	if (!l_File.ok() || std::memcmp(l_Magic.data(), MAGIC.data(), MAGIC.size()) != 0)
-		return failure("This is not a Inkwell file.");
-	const uint32_t l_Version = l_File.u32();
-	if (!l_File.ok() || l_Version == 0)
-		return failure("The file header is damaged.");
-	if (l_Version > BOARD_FORMAT_VERSION)
-		return failure("This file was made by a newer version of Inkwell.");
+	if (std::string l_Problem = checkFileHeader(l_File); !l_Problem.empty())
+		return failure(std::move(l_Problem));
 
-	std::optional<ParsedMeta> l_ParsedMeta;
-	std::optional<std::array<double, 3>> l_View;
-	std::vector<std::unique_ptr<Object>> l_Objects;
-	std::vector<ImageAsset> l_Assets;
-	std::vector<FontAsset> l_Fonts;
-	std::unordered_set<ObjectId> l_Locked;
-	std::unordered_set<AssetId> l_SeenAssets;
-	bool l_HaveAssets = false;
-	bool l_HaveObjects = false;
-	bool l_HaveEnd = false;
-	uint32_t l_Skipped = 0;
-
-	while (l_File.remaining() > 0 && !l_HaveEnd)
+	LoadState l_State;
+	while (l_File.remaining() > 0 && !l_State.haveEnd)
 	{
 		const uint32_t l_Tag = l_File.u32();
 		const uint64_t l_Length = l_File.u64();
@@ -920,105 +1296,73 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 		const std::span<const uint8_t> l_Payload = l_File.take(static_cast<size_t>(l_Length));
 		if (crc32(l_Payload) != l_ExpectedCrc)
 			return failure("The file is damaged (checksum mismatch).");
-
-		Reader l_Reader(l_Payload);
-		switch (l_Tag)
-		{
-		case TAG_META:
-		{
-			ParsedMeta l_Parsed;
-			l_Parsed.nextId = l_Reader.u64();
-			l_Parsed.objectCount = l_Reader.u64();
-			l_Parsed.sourcePath = l_Reader.string(MAX_PATH_BYTES);
-			if (!l_Reader.ok())
-				return failure("The file is damaged (bad header chunk).");
-			l_ParsedMeta = std::move(l_Parsed);
-			break;
-		}
-		case TAG_VIEW:
-		{
-			const std::array<double, 3> l_Values{ l_Reader.f64(), l_Reader.f64(), l_Reader.f64() };
-			if (!l_Reader.ok() || !finite(l_Values[0]) || !finite(l_Values[1]) || !finite(l_Values[2]) || l_Values[2] <= 0.0)
-				return failure("The file is damaged (bad view chunk).");
-			l_View = l_Values;
-			break;
-		}
-		case TAG_OBJS:
-			if (l_HaveObjects || !parseObjects(l_Payload, l_Objects, l_Skipped))
-				return failure("The file is damaged (bad object data).");
-			l_HaveObjects = true;
-			break;
-		case TAG_ASET:
-			if (l_HaveAssets || !parseAssets(l_Payload, l_Assets, l_SeenAssets))
-				return failure("The file is damaged (bad image data).");
-			l_HaveAssets = true;
-			break;
-		case TAG_ABIG:
-			if (!parseOneAsset(l_Reader, l_Assets, l_SeenAssets))
-				return failure("The file is damaged (bad image data).");
-			break;
-		case TAG_FONT:
-			if (!l_Fonts.empty() || !parseFonts(l_Payload, l_Fonts))
-				return failure("The file is damaged (bad font data).");
-			break;
-		case TAG_LOCK:
-		{
-			const uint32_t l_Count = l_Reader.u32();
-			if (!l_Reader.ok() || static_cast<uint64_t>(l_Count) * sizeof(uint64_t) > l_Reader.remaining())
-				return failure("The file is damaged (bad lock data).");
-			for (uint32_t i = 0; i < l_Count; ++i)
-				l_Locked.insert(l_Reader.u64());
-			break;
-		}
-		case TAG_END:
-			l_HaveEnd = true;
-			break;
-		default:
-			break; // a chunk from a newer version
-		}
+		if (std::string l_Problem = consumeChunk(l_State, l_Tag, l_Payload); !l_Problem.empty())
+			return failure(std::move(l_Problem));
 	}
+	return commitLoad(l_State, p_Document, p_Meta, p_AllowMissingAssets);
+}
 
-	if (!l_HaveEnd)
-		return failure("The file is incomplete (truncated).");
-	if (!l_ParsedMeta || !l_HaveObjects)
-		return failure("The file is damaged (missing data).");
-	// Images whose picture is missing cannot be shown: drop them like objects of an unknown kind
-	if (!p_AllowMissingAssets)
+LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Document& p_Document, BoardMeta& p_Meta)
+{
+	const uint64_t l_Total = p_File->size();
+	std::array<uint8_t, 12> l_Head{};
+	if (l_Total < l_Head.size() || p_File->read(0, l_Head.data(), l_Head.size()) != l_Head.size())
+		return failure("This is not a Inkwell file.");
+	Reader l_HeadReader(l_Head);
+	if (std::string l_Problem = checkFileHeader(l_HeadReader); !l_Problem.empty())
+		return failure(std::move(l_Problem));
+
+	LoadState l_State;
+	uint64_t l_At = l_Head.size();
+	while (l_At < l_Total && !l_State.haveEnd)
 	{
-		std::unordered_set<AssetId> l_Known;
-		for (const ImageAsset& l_Asset : l_Assets)
-			l_Known.insert(l_Asset.id);
-		l_Skipped += static_cast<uint32_t>(std::erase_if(l_Objects, [&](const std::unique_ptr<Object>& p_Object)
+		std::array<uint8_t, CHUNK_HEADER_BYTES> l_ChunkHead{};
+		if (p_File->read(l_At, l_ChunkHead.data(), l_ChunkHead.size()) != l_ChunkHead.size())
+			return failure("The file is incomplete (truncated).");
+		uint32_t l_Tag = 0;
+		uint64_t l_Length = 0;
+		uint32_t l_ExpectedCrc = 0;
+		std::memcpy(&l_Tag, l_ChunkHead.data(), 4);
+		std::memcpy(&l_Length, l_ChunkHead.data() + 4, 8);
+		std::memcpy(&l_ExpectedCrc, l_ChunkHead.data() + 12, 4);
+		l_At += CHUNK_HEADER_BYTES;
+		if (l_Length > l_Total - l_At)
+			return failure("The file is incomplete (truncated).");
+
+		// Big files are not read: they are used from where they are (and not checksummed, which would read all of them)
+		if (l_Tag == TAG_ABIG && l_Length >= LARGE_ASSET_BYTES)
 		{
-			const ImageData* l_Image = p_Object->image();
-			const VideoData* l_Video = p_Object->video();
-			return (l_Image != nullptr && !l_Known.contains(l_Image->asset)) || (l_Video != nullptr && !l_Known.contains(l_Video->asset));
-		}));
+			if (std::string l_Problem = streamBigAsset(p_File, l_At, l_Length, l_State); !l_Problem.empty())
+				return failure(std::move(l_Problem));
+		}
+		else if (l_Tag == TAG_ASET && l_Length > MAX_RESIDENT_CHUNK / 32 && !l_State.haveAssets)
+		{
+			if (std::string l_Problem = streamAssetList(p_File, l_At, l_At + l_Length, l_State); !l_Problem.empty())
+				return failure(std::move(l_Problem));
+			l_State.haveAssets = true;
+		}
+		else
+		{
+			if (l_Length > MAX_RESIDENT_CHUNK)
+				return failure("The file is damaged (a chunk is too large).");
+			std::vector<uint8_t> l_Payload;
+			try
+			{
+				l_Payload.resize(static_cast<size_t>(l_Length));
+			}
+			catch (const std::bad_alloc&)
+			{
+				return failure("There is not enough memory to open this file.");
+			}
+			if (p_File->read(l_At, l_Payload.data(), l_Payload.size()) != l_Payload.size())
+				return failure("The file is incomplete (truncated).");
+			if (crc32(l_Payload) != l_ExpectedCrc)
+				return failure("The file is damaged (checksum mismatch).");
+			if (std::string l_Problem = consumeChunk(l_State, l_Tag, l_Payload); !l_Problem.empty())
+				return failure(std::move(l_Problem));
+		}
+		l_At += l_Length;
 	}
-	if (l_ParsedMeta->objectCount != l_Objects.size() + l_Skipped)
-		return failure("The file is damaged (object count mismatch).");
-
-	// Everything checked: only now touch the document
-	p_Document.clear();
-	if (l_ParsedMeta->nextId > 0)
-		p_Document.reserveId(l_ParsedMeta->nextId - 1);
-	for (ImageAsset& l_Asset : l_Assets)
-		p_Document.insertAsset(std::move(l_Asset));
-	for (FontAsset& l_Font : l_Fonts)
-		p_Document.setFontAsset(std::move(l_Font));
-	for (std::unique_ptr<Object>& l_Object : l_Objects)
-	{
-		l_Object->locked = l_Locked.contains(l_Object->id);
-		p_Document.insert(std::move(l_Object));
-	}
-
-	p_Meta = BoardMeta{};
-	p_Meta.sourcePath = std::move(l_ParsedMeta->sourcePath);
-	if (l_View)
-	{
-		p_Meta.viewCenter = DVec2{ (*l_View)[0], (*l_View)[1] };
-		p_Meta.viewZoom = (*l_View)[2];
-	}
-	return LoadResult{ .ok = true, .skippedObjects = l_Skipped };
+	return commitLoad(l_State, p_Document, p_Meta, false);
 }
 } // namespace wb

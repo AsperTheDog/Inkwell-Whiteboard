@@ -24,6 +24,7 @@ module wb.app;
 import wb.doc.object;
 import wb.editor;
 import wb.image.codec;
+import wb.io.blob;
 import wb.io.file;
 import wb.math;
 import wb.net.collab;
@@ -95,7 +96,7 @@ constexpr size_t LOG_LINES = 7;
 // session's worker thread.
 constexpr uint32_t PREVIEW_SIDE = 64;
 
-std::optional<AssetPreview> makeAssetPreview(const std::span<const uint8_t> p_Bytes)
+std::optional<AssetPreview> makeAssetPreview(const std::shared_ptr<const ByteSource>& p_Source)
 {
 	std::vector<uint8_t> l_Pixels;
 	uint32_t l_Width = 0;
@@ -104,7 +105,16 @@ std::optional<AssetPreview> makeAssetPreview(const std::span<const uint8_t> p_By
 	image::DecodeLimits l_Limits;
 	l_Limits.maxDimension = 8192;
 	l_Limits.maxBytes = 256ull * 1024 * 1024;
-	if (std::optional<image::Decoded> l_Image = image::decode(p_Bytes, l_Limits, l_Error); l_Image && !l_Image->frames.empty())
+	// A big file is most likely a video: it is not read into memory just to find out that it is no picture
+	const bool l_BigVideo = p_Source->size() > LARGE_ASSET_BYTES && video::probe(*p_Source).has_value();
+	std::optional<image::Decoded> l_Image;
+	if (!l_BigVideo)
+	{
+		const std::vector<uint8_t> l_Bytes = readAllBytes(*p_Source, l_Limits.maxBytes);
+		if (!l_Bytes.empty())
+			l_Image = image::decode(l_Bytes, l_Limits, l_Error);
+	}
+	if (l_Image && !l_Image->frames.empty())
 	{
 		l_Width = l_Image->width;
 		l_Height = l_Image->height;
@@ -114,7 +124,7 @@ std::optional<AssetPreview> makeAssetPreview(const std::span<const uint8_t> p_By
 	{
 		video::Player::Options l_Options;
 		l_Options.maxDimension = 2 * PREVIEW_SIDE;
-		std::unique_ptr<video::Player> l_Player = video::Player::open(std::make_shared<const std::vector<uint8_t>>(p_Bytes.begin(), p_Bytes.end()), l_Options, l_Error);
+		std::unique_ptr<video::Player> l_Player = video::Player::open(p_Source, l_Options, l_Error);
 		if (!l_Player)
 			return std::nullopt;
 		std::shared_ptr<const video::Frame> l_Frame;
@@ -219,6 +229,8 @@ void App::initCollab()
 		SDL_PushEvent(&l_Event);
 	};
 	m_Collab = std::make_unique<net::CollabSession>(m_Editor.document(), std::move(l_Hooks));
+	if (!m_PrefDir.empty())
+		m_Collab->setCacheDirectory(m_PrefDir / "cache"); // big files that arrive are kept here while they are played
 }
 
 void App::pollCollab()

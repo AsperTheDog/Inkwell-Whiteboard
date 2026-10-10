@@ -29,6 +29,7 @@ import wb.doc.commands;
 import wb.doc.edit;
 import wb.doc.history;
 import wb.doc.selection;
+import wb.io.blob;
 import wb.io.serializer;
 import wb.view.camera;
 import wb.brush.stroke_builder;
@@ -175,6 +176,7 @@ public:
 	ObjectId insertText(std::string p_Text, DVec2 p_WorldCenter);
 	// Measures every text object again (fonts that were not available when the board was made may have arrived)
 	void remeasureText();
+	void finishLoading(const BoardMeta& p_Meta);
 
 	// Changes whenever something is copied or cut inside the app (the system clipboard may hold something newer)
 	[[nodiscard]] uint64_t clipSerial() const { return m_ClipSerial; }
@@ -186,11 +188,13 @@ public:
 	// clear the undo history.
 	[[nodiscard]] std::vector<uint8_t> saveBoard(const std::string& p_SourcePath);
 	// For a background write: big files are referenced, not copied (see serializeBoardSplit)
-	[[nodiscard]] SplitBoard saveBoardSplit(const std::string& p_SourcePath, size_t p_BigAssetBytes);
+	[[nodiscard]] SplitBoard saveBoardSplit(const std::string& p_SourcePath, const SplitOptions& p_Options);
 	// A collaboration snapshot: the board without its big pictures and videos (they are streamed afterwards)
 	[[nodiscard]] std::vector<uint8_t> saveBoardShell(size_t p_InlineAssetBytes);
 	// p_AllowMissingAssets keeps pictures and videos whose file is not in the data (collaboration)
 	[[nodiscard]] LoadResult loadBoard(std::span<const uint8_t> p_Bytes, BoardMeta& p_Meta, bool p_AllowMissingAssets = false);
+	// A board file opened in place: its big pictures and videos stay in the file and are read from there
+	[[nodiscard]] LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, BoardMeta& p_Meta);
 	void newBoard();
 
 	void undo();

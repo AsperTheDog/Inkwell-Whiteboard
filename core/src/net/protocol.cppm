@@ -38,7 +38,7 @@ inline constexpr int CURSOR_INTERVAL_MS = 33;
 inline constexpr size_t ASSET_CHUNK = 64u << 10;
 // Files up to this size ride inside the board snapshot; bigger ones are streamed afterwards
 inline constexpr size_t SNAPSHOT_INLINE_ASSET_BYTES = 256u << 10;
-inline constexpr uint64_t MAX_ASSET_BYTES = uint64_t{ 2 } << 30;
+inline constexpr uint64_t MAX_ASSET_BYTES = uint64_t{ 64 } << 30;
 inline constexpr size_t MAX_ASSET_NAME_BYTES = 512;
 // Thumbnails are raw RGBA, at most this many pixels on a side
 inline constexpr uint32_t MAX_PREVIEW_SIDE = 96;

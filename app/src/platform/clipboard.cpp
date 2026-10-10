@@ -38,10 +38,30 @@ bool readFile(const std::filesystem::path& p_Path, const uint64_t p_MaxBytes, st
 	return static_cast<bool>(l_File);
 }
 
+// Files bigger than this are not read here: they may be videos, which are played from where they are
+constexpr uint64_t KEPT_IN_PLACE_BYTES = 16ull << 20;
+
 std::string fileName(const std::filesystem::path& p_Path)
 {
 	const std::u8string l_Name = p_Path.filename().u8string();
 	return std::string(l_Name.begin(), l_Name.end());
+}
+
+bool filePicture(const std::filesystem::path& p_Path, const uint64_t p_MaxBytes, ClipboardPicture& p_Picture)
+{
+	std::error_code l_Error;
+	if (!std::filesystem::is_regular_file(p_Path, l_Error))
+		return false;
+	const uintmax_t l_Size = std::filesystem::file_size(p_Path, l_Error);
+	if (l_Error || l_Size == 0)
+		return false;
+	p_Picture.name = fileName(p_Path);
+	if (l_Size > KEPT_IN_PLACE_BYTES)
+	{
+		p_Picture.path = p_Path;
+		return true;
+	}
+	return readFile(p_Path, p_MaxBytes, p_Picture.bytes);
 }
 
 // "file:///home/me/a%20b.png" -> path
@@ -162,11 +182,8 @@ std::vector<ClipboardPicture> readClipboardPictures(const uint64_t p_MaxBytes)
 					std::wstring l_Path(DragQueryFileW(l_Drop, i, nullptr, 0), L'\0');
 					DragQueryFileW(l_Drop, i, l_Path.data(), static_cast<UINT>(l_Path.size() + 1));
 					ClipboardPicture l_Picture;
-					if (readFile(std::filesystem::path(l_Path), p_MaxBytes, l_Picture.bytes))
-					{
-						l_Picture.name = fileName(std::filesystem::path(l_Path));
+					if (filePicture(std::filesystem::path(l_Path), p_MaxBytes, l_Picture))
 						l_Result.push_back(std::move(l_Picture));
-					}
 				}
 			}
 		}
@@ -208,11 +225,8 @@ std::vector<ClipboardPicture> readClipboardPictures(const uint64_t p_MaxBytes)
 				l_End = l_Text.size();
 			const std::filesystem::path l_Path = pathFromUri(l_Text.substr(l_Pos, l_End - l_Pos));
 			ClipboardPicture l_Picture;
-			if (!l_Path.empty() && readFile(l_Path, p_MaxBytes, l_Picture.bytes))
-			{
-				l_Picture.name = fileName(l_Path);
+			if (!l_Path.empty() && filePicture(l_Path, p_MaxBytes, l_Picture))
 				l_Result.push_back(std::move(l_Picture));
-			}
 			l_Pos = l_End + 1;
 		}
 	}

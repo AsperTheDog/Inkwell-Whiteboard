@@ -26,6 +26,9 @@ struct IoResult
 // Writes p_Bytes to a temporary sibling file and renames it over p_Path, so a crash or a full disk never leaves a
 // half-written file behind. Missing parent directories are created.
 [[nodiscard]] IoResult writeFileAtomic(const std::filesystem::path& p_Path, std::span<const uint8_t> p_Bytes);
+// Renames p_From over p_To. Where the system allows it (Windows 10+ on NTFS, POSIX) this works even while p_To is open
+// somewhere in this program, which keeps reading the old content.
+[[nodiscard]] IoResult replaceFile(const std::filesystem::path& p_From, const std::filesystem::path& p_To);
 // Reads the whole file; refuses files larger than p_MaxBytes
 [[nodiscard]] IoResult readFile(const std::filesystem::path& p_Path, std::vector<uint8_t>& p_Bytes, uint64_t p_MaxBytes = 4ull << 30);
 // Deletes the file if it exists; never throws

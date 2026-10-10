@@ -22,6 +22,8 @@ module;
 
 module wb.video.media;
 
+import wb.io.blob;
+
 namespace wb::video
 {
 namespace
@@ -38,13 +40,33 @@ constexpr double LATE_FRAME_SECONDS = 0.12;  // pictures this far behind the clo
 constexpr auto WAIT_SLICE = std::chrono::milliseconds(15);
 constexpr const char* FORMAT_WHITELIST = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,flv,mpegts,mpeg,ogg,asf,wav,mp3,aac,ogv,m4v";
 
-// ------------------------------------------------------------------------------------------- memory input
+// ------------------------------------------------------------------------------------------- input
 
-// A demuxer's view of the shared file bytes
+// Bytes that belong to somebody else, for the probe
+class SpanSource final : public ByteSource
+{
+public:
+	explicit SpanSource(const std::span<const uint8_t> p_Data) : m_Data(p_Data) {}
+	[[nodiscard]] uint64_t size() const override { return m_Data.size(); }
+	size_t read(const uint64_t p_Offset, void* p_Target, size_t p_Count, const std::atomic<bool>*) const override
+	{
+		if (p_Offset >= m_Data.size())
+			return 0;
+		p_Count = static_cast<size_t>(std::min<uint64_t>(p_Count, m_Data.size() - p_Offset));
+		std::memcpy(p_Target, m_Data.data() + p_Offset, p_Count);
+		return p_Count;
+	}
+
+private:
+	std::span<const uint8_t> m_Data;
+};
+
+// A demuxer's view of the file: it reads the source in pieces, so nothing needs to fit in memory
 struct Input
 {
-	Blob keep; // holds the bytes alive when they belong to the input
-	std::span<const uint8_t> data;
+	Source keep; // holds the source alive when it belongs to the input
+	const ByteSource* source = nullptr;
+	const std::atomic<bool>* cancel = nullptr; // turns true when the player goes away or gives up
 	int64_t position = 0;
 	AVFormatContext* format = nullptr;
 	AVIOContext* io = nullptr;
@@ -60,19 +82,31 @@ struct Input
 	static int readPacket(void* p_Opaque, uint8_t* p_Buffer, const int p_Size)
 	{
 		Input* l_Self = static_cast<Input*>(p_Opaque);
-		const int64_t l_Remaining = static_cast<int64_t>(l_Self->data.size()) - l_Self->position;
+		const int64_t l_Remaining = static_cast<int64_t>(l_Self->source->size()) - l_Self->position;
 		if (l_Remaining <= 0)
 			return AVERROR_EOF;
-		const int l_Count = static_cast<int>(std::min<int64_t>(l_Remaining, p_Size));
-		std::memcpy(p_Buffer, l_Self->data.data() + l_Self->position, static_cast<size_t>(l_Count));
-		l_Self->position += l_Count;
-		return l_Count;
+		const int l_Want = static_cast<int>(std::min<int64_t>(l_Remaining, p_Size));
+		const size_t l_Got = l_Self->source->read(static_cast<uint64_t>(l_Self->position), p_Buffer, static_cast<size_t>(l_Want), l_Self->cancel);
+		if (l_Got == 0)
+			return l_Self->cancelled() ? AVERROR_EXIT : AVERROR(EIO); // bytes that were promised but cannot be had
+		l_Self->position += static_cast<int64_t>(l_Got);
+		return static_cast<int>(l_Got);
+	}
+
+	[[nodiscard]] bool cancelled() const
+	{
+		return cancel != nullptr && cancel->load();
+	}
+
+	static int interrupt(void* p_Opaque)
+	{
+		return static_cast<Input*>(p_Opaque)->cancelled() ? 1 : 0;
 	}
 
 	static int64_t seekPacket(void* p_Opaque, int64_t p_Offset, int p_Whence)
 	{
 		Input* l_Self = static_cast<Input*>(p_Opaque);
-		const int64_t l_Size = static_cast<int64_t>(l_Self->data.size());
+		const int64_t l_Size = static_cast<int64_t>(l_Self->source->size());
 		p_Whence &= ~AVSEEK_FORCE;
 		if (p_Whence == AVSEEK_SIZE)
 			return l_Size;
@@ -91,17 +125,19 @@ struct Input
 		return l_Target;
 	}
 
-	bool open(Blob p_Blob, std::string& p_Error)
+	bool open(Source p_Source, const std::atomic<bool>* p_Cancel, std::string& p_Error)
 	{
-		keep = std::move(p_Blob);
-		return open(std::span<const uint8_t>(*keep), p_Error);
+		keep = std::move(p_Source);
+		return open(*keep, p_Cancel, p_Error);
 	}
 
-	bool open(const std::span<const uint8_t> p_Data, std::string& p_Error)
+	bool open(const ByteSource& p_Source, const std::atomic<bool>* p_Cancel, std::string& p_Error)
 	{
-		data = p_Data;
+		source = &p_Source;
+		cancel = p_Cancel;
 		position = 0;
-		constexpr int BUFFER_BYTES = 1 << 16;
+		// Reading from a disk goes better in big pieces
+		const int BUFFER_BYTES = p_Source.path().empty() ? (1 << 16) : (1 << 18);
 		format = avformat_alloc_context();
 		uint8_t* l_Buffer = static_cast<uint8_t*>(av_malloc(BUFFER_BYTES));
 		if (format == nullptr || l_Buffer == nullptr)
@@ -119,6 +155,8 @@ struct Input
 		}
 		format->pb = io;
 		format->flags |= AVFMT_FLAG_CUSTOM_IO;
+		format->interrupt_callback.callback = &Input::interrupt;
+		format->interrupt_callback.opaque = this;
 
 		AVDictionary* l_Options = nullptr;
 		av_dict_set(&l_Options, "format_whitelist", FORMAT_WHITELIST, 0);
@@ -298,9 +336,16 @@ std::optional<VideoInfo> probe(const std::span<const uint8_t> p_Bytes)
 {
 	if (p_Bytes.size() < 16)
 		return std::nullopt;
+	return probe(SpanSource(p_Bytes));
+}
+
+std::optional<VideoInfo> probe(const ByteSource& p_Source)
+{
+	if (p_Source.size() < 16)
+		return std::nullopt;
 	Input l_Input;
 	std::string l_Error;
-	if (!l_Input.open(p_Bytes, l_Error))
+	if (!l_Input.open(p_Source, nullptr, l_Error))
 		return std::nullopt;
 	const int l_Video = pickVideoStream(l_Input.format);
 	if (l_Video < 0)
@@ -321,7 +366,8 @@ std::optional<VideoInfo> probe(const std::span<const uint8_t> p_Bytes)
 
 struct Player::Impl
 {
-	Blob blob;
+	Source blob;
+	std::shared_ptr<std::atomic<bool>> abort = std::make_shared<std::atomic<bool>>(false); // set when the player is destroyed
 	Options options;
 	VideoInfo info;
 
@@ -385,6 +431,7 @@ struct Player::Impl
 
 Player::Impl::~Impl()
 {
+	abort->store(true); // a decoder thread stuck waiting for a download must let go
 	{
 		std::lock_guard l_Lock(m);
 		quit = true;
@@ -654,7 +701,7 @@ void Player::Impl::audioLoop()
 {
 	Input l_Input;
 	std::string l_Error;
-	if (!l_Input.open(blob, l_Error))
+	if (!l_Input.open(blob, abort.get(), l_Error))
 	{
 		audioActive.store(false);
 		return;
@@ -834,9 +881,9 @@ Player::Player() : m_Impl(std::make_unique<Impl>())
 
 Player::~Player() = default;
 
-std::unique_ptr<Player> Player::open(Blob p_Data, const Options& p_Options, std::string& p_Error)
+std::unique_ptr<Player> Player::open(Source p_Data, const Options& p_Options, std::string& p_Error)
 {
-	if (!p_Data || p_Data->empty())
+	if (!p_Data || p_Data->size() == 0)
 	{
 		p_Error = "The video is empty.";
 		return nullptr;
@@ -844,11 +891,13 @@ std::unique_ptr<Player> Player::open(Blob p_Data, const Options& p_Options, std:
 	std::unique_ptr<Player> l_Player(new Player);
 	Impl& l_Impl = *l_Player->m_Impl;
 	l_Impl.blob = std::move(p_Data);
+	if (p_Options.cancel)
+		l_Impl.abort = p_Options.cancel;
 	l_Impl.options = p_Options;
 	l_Impl.looping.store(p_Options.loop);
 
 	l_Impl.videoInput = std::make_unique<Input>();
-	if (!l_Impl.videoInput->open(l_Impl.blob, p_Error))
+	if (!l_Impl.videoInput->open(l_Impl.blob, l_Impl.abort.get(), p_Error))
 		return nullptr;
 	AVFormatContext* l_Format = l_Impl.videoInput->format;
 	l_Impl.videoIndex = pickVideoStream(l_Format);

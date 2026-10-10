@@ -198,7 +198,8 @@ void App::buildSelectionBar()
 
 	if (l_CanSaveFile)
 	{
-		const bool l_Here = m_Editor.document().findAsset(l_MediaAsset) != nullptr;
+		const ImageAsset* l_HereAsset = m_Editor.document().findAsset(l_MediaAsset);
+		const bool l_Here = l_HereAsset != nullptr && l_HereAsset->complete();
 		if (m_Ui.iconButton("selbar.savefile", l_Next(), ui::Icon::SaveAs, false, l_Here, l_Here ? "Save this file to your computer" : "Still arriving: it can be saved when it has finished"))
 			showSaveMediaDialog(l_MediaAsset);
 	}

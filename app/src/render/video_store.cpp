@@ -53,7 +53,17 @@ void VideoStore::init(const gfx::GraphicsContext& p_Context, ImageStore& p_Image
 
 void VideoStore::destroy(const gfx::GraphicsContext& p_Context)
 {
-	// Open jobs keep running to their end; they only touch their own data
+	// Open jobs keep running to their end; they only touch their own data. One that waits for a download is told to stop.
+	for (auto& [l_Id, l_Entry] : m_Entries)
+	{
+		if (l_Entry.job)
+			l_Entry.job->cancel->store(true);
+	}
+	for (Entry& l_Entry : m_Retired)
+	{
+		if (l_Entry.job)
+			l_Entry.job->cancel->store(true);
+	}
 	for (int l_Wait = 0; l_Wait < 20000 && m_ActiveThreads->load() > 0; ++l_Wait)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
@@ -87,21 +97,23 @@ void VideoStore::startOpen(Entry& p_Entry, const Document& p_Document)
 		p_Entry.error = "The video is missing from the board.";
 		return;
 	}
-	// Videos of one asset (and a video that scrolls out of view and back) share one copy of the file
-	video::Blob l_Blob = m_Blobs[p_Entry.asset].lock();
-	if (!l_Blob)
+	// Videos of one asset (and a video that scrolls out of view and back) share one source. A big video is never copied
+	// into memory: it is read from its file while it plays.
+	video::Source l_Source = m_Sources[p_Entry.asset].lock();
+	if (!l_Source)
 	{
-		l_Blob = std::make_shared<const std::vector<uint8_t>>(l_Asset->bytes);
-		m_Blobs[p_Entry.asset] = l_Blob;
+		l_Source = l_Asset->source();
+		m_Sources[p_Entry.asset] = l_Source;
 	}
 	p_Entry.job = std::make_shared<OpenJob>();
 	m_ActiveThreads->fetch_add(1);
 	video::Player::Options l_Options;
 	l_Options.maxDimension = m_MaxDimension;
-	std::thread([l_Job = p_Entry.job, l_Active = m_ActiveThreads, l_Blob, l_Options]
+	l_Options.cancel = p_Entry.job->cancel;
+	std::thread([l_Job = p_Entry.job, l_Active = m_ActiveThreads, l_Source, l_Options]
 	{
 		std::string l_Error;
-		l_Job->player = video::Player::open(l_Blob, l_Options, l_Error);
+		l_Job->player = video::Player::open(l_Source, l_Options, l_Error);
 		l_Job->error = std::move(l_Error);
 		l_Job->done.store(true, std::memory_order_release);
 		l_Active->fetch_sub(1);
