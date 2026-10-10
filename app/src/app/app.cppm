@@ -374,6 +374,9 @@ private:
 	bool m_VideoVolumeDrag = false;
 	bool m_VideoVolumeOpenLast = false;
 	ui::Rect2 m_VideoVolumeHit{};
+	ui::Rect2 m_VideoTracksRect{};  // the menu of sound tracks and subtitles over the bar (empty when closed)
+	bool m_VideoTracksPinned = false; // opened by a click, stays until the viewer goes away
+	bool m_VideoTracksOpenLast = false;
 	VideoData m_VideoVolumeBefore{};
 	uint64_t m_LastVideoWakeNs = 0;
 

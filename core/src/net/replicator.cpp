@@ -46,7 +46,7 @@ ApplyResult Replicator::applyRemote(const Op& p_Op)
 
 namespace
 {
-// A video as everybody shares it: loop, sound and volume are each person's own, so they do not travel
+// A video as everybody shares it: loop, sound, volume and the tracks watched are each person's own, so they do not travel
 std::vector<uint8_t> encodeShared(const Object& p_Object)
 {
 	if (p_Object.video() == nullptr)
@@ -56,6 +56,8 @@ std::vector<uint8_t> encodeShared(const Object& p_Object)
 	l_Video.loop = false;
 	l_Video.muted = true;
 	l_Video.volume = 1.f;
+	l_Video.audioTrack = -1;
+	l_Video.subtitleTrack = -1;
 	return encodeObject(l_Copy);
 }
 } // namespace

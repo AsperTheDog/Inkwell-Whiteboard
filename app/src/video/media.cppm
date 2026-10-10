@@ -22,6 +22,14 @@ export namespace wb::video
 // memory, or while it is still being downloaded: the decoder then waits for the bytes it needs).
 using Source = std::shared_ptr<const ByteSource>;
 
+// A sound track or a subtitle track of the file, as it describes itself
+struct TrackInfo
+{
+	std::string language; // "eng", "spa"... as the file says; may be empty
+	std::string title;
+	std::string codec;
+};
+
 struct VideoInfo
 {
 	uint32_t width = 0;    // pixels as shown: pixel aspect ratio and rotation applied
@@ -29,6 +37,9 @@ struct VideoInfo
 	double duration = 0.0; // seconds; 0 when the container does not say
 	double fps = 0.0;
 	bool hasAudio = false;
+	std::vector<TrackInfo> audioTracks;
+	int defaultAudioTrack = 0;                // the one the file prefers
+	std::vector<TrackInfo> subtitleTracks;    // only the ones made of text; picture subtitles (DVD, Blu-ray) are not shown
 };
 
 // Looks at the container and the first video stream without decoding a picture. Nothing when it is no video.
@@ -52,6 +63,8 @@ public:
 		uint32_t maxDimension = 1920; // longer side of the decoded pictures; bigger videos are scaled down
 		bool loop = false;
 		float volume = 0.f; // sound gain, 0 = silent
+		int audioTrack = -1;    // position among info().audioTracks; -1 or out of range: the file's own choice
+		int subtitleTrack = -1; // position among info().subtitleTracks; -1: none
 		// Set by the owner to give up on a player that is still opening (it may be waiting for a download)
 		std::shared_ptr<std::atomic<bool>> cancel;
 	};
@@ -70,6 +83,13 @@ public:
 	void seek(double p_Seconds);
 	void setLoop(bool p_Loop);
 	void setVolume(float p_Gain);
+	// Another sound track from the current place on, and subtitles from the next line on. Picture and clock go on.
+	void setAudioTrack(int p_Track);
+	void setSubtitleTrack(int p_Track);
+	[[nodiscard]] int audioTrack() const;    // the one that plays
+	[[nodiscard]] int subtitleTrack() const; // -1: none
+	// The subtitle line to show at the current position (empty: none). Lines are separated by '\n'.
+	[[nodiscard]] std::string subtitle() const;
 
 	[[nodiscard]] bool playing() const;
 	[[nodiscard]] bool ended() const; // stopped at the end of the video

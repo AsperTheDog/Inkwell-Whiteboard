@@ -109,6 +109,8 @@ void VideoStore::startOpen(Entry& p_Entry, const Document& p_Document)
 	m_ActiveThreads->fetch_add(1);
 	video::Player::Options l_Options;
 	l_Options.maxDimension = m_MaxDimension;
+	l_Options.audioTrack = p_Entry.audioTrack;
+	l_Options.subtitleTrack = p_Entry.subtitleTrack;
 	l_Options.cancel = p_Entry.job->cancel;
 	std::thread([l_Job = p_Entry.job, l_Active = m_ActiveThreads, l_Source, l_Options]
 	{
@@ -374,6 +376,8 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 		m_Images->dropPreview(p_Video.asset);
 		Entry l_Entry;
 		l_Entry.asset = p_Video.asset;
+		l_Entry.audioTrack = p_Video.audioTrack;
+		l_Entry.subtitleTrack = p_Video.subtitleTrack;
 		l_It = m_Entries.emplace(p_Id, std::move(l_Entry)).first;
 		startOpen(l_It->second, p_Document);
 	}
@@ -382,8 +386,12 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 	l_Entry.seenTime = std::chrono::steady_clock::now();
 	l_Entry.loop = p_Video.loop;
 	l_Entry.gain = p_Video.muted ? 0.f : p_Video.volume * p_Video.volume;
+	l_Entry.audioTrack = p_Video.audioTrack;
+	l_Entry.subtitleTrack = p_Video.subtitleTrack;
 	if (l_Entry.state == Entry::State::Ready)
 	{
+		l_Entry.player->setAudioTrack(p_Video.audioTrack);
+		l_Entry.player->setSubtitleTrack(p_Video.subtitleTrack);
 		l_Entry.player->setLoop(p_Video.loop);
 		l_Entry.player->setVolume(l_Entry.gain);
 		if (l_Entry.shown >= 0)
@@ -393,6 +401,18 @@ VideoLookup VideoStore::lookup(const Document& p_Document, const ObjectId p_Id, 
 		}
 	}
 	return l_Result;
+}
+
+const video::VideoInfo* VideoStore::info(const ObjectId p_Id) const
+{
+	const auto l_It = m_Entries.find(p_Id);
+	return l_It != m_Entries.end() && l_It->second.state == Entry::State::Ready ? &l_It->second.info : nullptr;
+}
+
+std::string VideoStore::subtitle(const ObjectId p_Id) const
+{
+	const auto l_It = m_Entries.find(p_Id);
+	return l_It != m_Entries.end() && l_It->second.state == Entry::State::Ready ? l_It->second.player->subtitle() : std::string();
 }
 
 VideoStatus VideoStore::status(const ObjectId p_Id) const
@@ -416,6 +436,8 @@ VideoStatus VideoStore::status(const ObjectId p_Id) const
 		l_Status.hasAudio = l_Entry.info.hasAudio;
 		l_Status.audioWorks = l_Entry.player->audioWorks();
 		l_Status.buffering = l_Entry.player->buffering();
+		l_Status.audioTrack = l_Entry.player->audioTrack();
+		l_Status.subtitleTrack = l_Entry.player->subtitleTrack();
 	}
 	return l_Status;
 }

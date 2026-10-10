@@ -223,6 +223,8 @@ ApplyResult applyOp(Document& p_Document, const Op& p_Op)
 			l_Object->video()->loop = l_Old->loop;
 			l_Object->video()->muted = l_Old->muted;
 			l_Object->video()->volume = l_Old->volume;
+			l_Object->video()->audioTrack = l_Old->audioTrack;
+			l_Object->video()->subtitleTrack = l_Old->subtitleTrack;
 		}
 		p_Document.modify(l_Id, [&](Object& p_Target)
 		{

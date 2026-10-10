@@ -101,6 +101,9 @@ struct VideoData
 	bool loop = false;
 	bool muted = true;
 	float volume = 1.f; // 0..1 on the volume slider; the sound plays at volume squared
+	// Which sound track and which subtitles each person watches with (like loop and volume, their own business)
+	int8_t audioTrack = -1;    // position among the file's sound tracks; -1: the file's own choice
+	int8_t subtitleTrack = -1; // position among its text subtitle tracks; -1: none
 
 	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
 

@@ -465,10 +465,12 @@ TEST(Collab, VideoPlaybackIsSharedButLoopAndVolumeAreNot)
 	EXPECT_TRUE(l_Ana.session->takeVideoEvents().empty()); // nobody is told about their own
 
 	// Bo likes it quiet and not looping: that does not reach anybody
-	l_Bo.doc.modify(l_Video, [&](wb::Object& p_Object) { *p_Object.video() = wb::VideoData{ .asset = l_Asset, .size = { 40.f, 30.f }, .loop = false, .muted = true, .volume = 0.9f }; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
+	l_Bo.doc.modify(l_Video, [&](wb::Object& p_Object) { *p_Object.video() = wb::VideoData{ .asset = l_Asset, .size = { 40.f, 30.f }, .loop = false, .muted = true, .volume = 0.9f, .audioTrack = 1, .subtitleTrack = 0 }; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
 	pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [] { return false; }, 400);
 	EXPECT_TRUE(l_Host.doc.find(l_Video)->video()->loop);
 	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->volume, 0.3f);
+	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->audioTrack, -1); // which tracks somebody watches is their own
+	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->subtitleTrack, -1);
 	EXPECT_TRUE(l_Ana.doc.find(l_Video)->video()->loop);
 
 	// A real change from the host (the size) reaches Bo, who keeps his own sound settings
@@ -477,6 +479,8 @@ TEST(Collab, VideoPlaybackIsSharedButLoopAndVolumeAreNot)
 	EXPECT_FALSE(l_Bo.doc.find(l_Video)->video()->loop);
 	EXPECT_TRUE(l_Bo.doc.find(l_Video)->video()->muted);
 	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->volume, 0.9f);
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->audioTrack, 1);
+	EXPECT_EQ(l_Bo.doc.find(l_Video)->video()->subtitleTrack, 0);
 
 	// Somebody joining finds it playing, a little further on
 	Node l_Cy;

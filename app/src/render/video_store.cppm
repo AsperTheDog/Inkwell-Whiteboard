@@ -37,6 +37,8 @@ struct VideoStatus
 	bool ended = false;
 	bool hasAudio = false;
 	bool audioWorks = false;
+	int audioTrack = 0;       // the sound track that plays
+	int subtitleTrack = -1;   // the subtitle track shown, -1: none
 	bool buffering = false; // the picture shown is behind: a seek or a slow file is being waited for
 	double position = 0.0;
 	double duration = 0.0;
@@ -64,6 +66,10 @@ public:
 
 	[[nodiscard]] VideoStatus status(ObjectId p_Id) const;
 	// Work with players that may not exist yet: the request is kept and applied when the video has opened
+	// What the file says about itself (tracks), for a video that is open; null otherwise
+	[[nodiscard]] const video::VideoInfo* info(ObjectId p_Id) const;
+	// The subtitle line at this video's playhead (empty: none)
+	[[nodiscard]] std::string subtitle(ObjectId p_Id) const;
 	void setPlaying(ObjectId p_Id, bool p_Playing);
 	void seek(ObjectId p_Id, double p_Seconds);
 	// Somebody else played, paused or moved this video: put it where they have it. A video that has not been on screen yet
@@ -118,6 +124,8 @@ private:
 		std::optional<double> wantSeek;
 		bool loop = false;
 		float gain = 0.f;
+		int audioTrack = -1;
+		int subtitleTrack = -1;
 		uint64_t seenTick = 0;
 		std::chrono::steady_clock::time_point seenTime{};
 		double resumeAt = 0.0;

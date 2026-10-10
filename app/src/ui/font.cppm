@@ -111,6 +111,7 @@ enum class Icon : uint32_t
 	Line = 0xE521,
 	Arrow = 0xE497,
 	Diamond = 0xE2D1,
+	Captions = 0xE3A7,
 };
 
 // Text and Icons are the interface's own faces; addFace() hands out more (the font picker shows each family in itself)

@@ -36,6 +36,7 @@ constexpr int AUDIO_CHANNELS = 2;
 constexpr double AUDIO_BYTES_PER_SECOND = static_cast<double>(AUDIO_RATE) * AUDIO_CHANNELS * sizeof(float);
 constexpr double AUDIO_QUEUE_PLAYING = 0.45; // seconds of sound kept ready on the device
 constexpr double AUDIO_QUEUE_PAUSED = 0.12;
+constexpr double SUBTITLE_LOOKBACK_SECONDS = 6.0;
 constexpr double LATE_FRAME_SECONDS = 0.12;  // pictures this far behind the clock are not worth converting
 constexpr auto WAIT_SLICE = std::chrono::milliseconds(15);
 constexpr const char* FORMAT_WHITELIST = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,flv,mpegts,mpeg,ogg,asf,wav,mp3,aac,ogv,m4v";
@@ -199,6 +200,109 @@ int pickVideoStream(const AVFormatContext* p_Format)
 int pickAudioStream(const AVFormatContext* p_Format, const int p_VideoIndex)
 {
 	return av_find_best_stream(const_cast<AVFormatContext*>(p_Format), AVMEDIA_TYPE_AUDIO, -1, p_VideoIndex, nullptr, 0);
+}
+
+// ---- tracks
+
+std::vector<int> streamsOfType(const AVFormatContext* p_Format, const AVMediaType p_Type)
+{
+	std::vector<int> l_Streams;
+	for (unsigned i = 0; i < p_Format->nb_streams; ++i)
+	{
+		if (p_Format->streams[i]->codecpar->codec_type == p_Type && (p_Format->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC) == 0)
+			l_Streams.push_back(static_cast<int>(i));
+	}
+	return l_Streams;
+}
+
+// Subtitles made of text (SRT, ASS, WebVTT, mov_text...): the ones that can be drawn as text. Picture subtitles are left out.
+std::vector<int> textSubtitleStreams(const AVFormatContext* p_Format)
+{
+	std::vector<int> l_Streams;
+	for (const int l_Index : streamsOfType(p_Format, AVMEDIA_TYPE_SUBTITLE))
+	{
+		const AVCodecDescriptor* l_Descriptor = avcodec_descriptor_get(p_Format->streams[l_Index]->codecpar->codec_id);
+		if (l_Descriptor != nullptr && (l_Descriptor->props & AV_CODEC_PROP_TEXT_SUB) != 0)
+			l_Streams.push_back(l_Index);
+	}
+	return l_Streams;
+}
+
+TrackInfo describeTrack(const AVStream* p_Stream)
+{
+	TrackInfo l_Info;
+	if (const AVDictionaryEntry* l_Language = av_dict_get(p_Stream->metadata, "language", nullptr, 0))
+		l_Info.language = l_Language->value;
+	if (const AVDictionaryEntry* l_Title = av_dict_get(p_Stream->metadata, "title", nullptr, 0))
+		l_Info.title = l_Title->value;
+	if (const char* l_Name = avcodec_get_name(p_Stream->codecpar->codec_id))
+		l_Info.codec = l_Name;
+	return l_Info;
+}
+
+// The words of an ASS dialogue line: styling and positioning codes dropped, line breaks kept
+std::string plainFromAss(std::string_view p_Line)
+{
+	// A packet reads "ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text"; a whole line "Dialogue: Layer,Start,End,..."
+	size_t l_Commas = 8;
+	if (p_Line.starts_with("Dialogue:"))
+	{
+		p_Line.remove_prefix(9);
+		l_Commas = 9;
+	}
+	size_t l_Pos = 0;
+	for (size_t i = 0; i < l_Commas; ++i)
+	{
+		l_Pos = p_Line.find(',', l_Pos);
+		if (l_Pos == std::string_view::npos)
+			return {};
+		++l_Pos;
+	}
+	const std::string_view l_Body = p_Line.substr(l_Pos);
+	std::string l_Text;
+	for (size_t i = 0; i < l_Body.size();)
+	{
+		const char l_Char = l_Body[i];
+		if (l_Char == '{')
+		{
+			const size_t l_End = l_Body.find('}', i);
+			if (l_End == std::string_view::npos)
+				break;
+			i = l_End + 1;
+			continue;
+		}
+		if (l_Char == '\\' && i + 1 < l_Body.size())
+		{
+			const char l_Next = l_Body[i + 1];
+			if (l_Next == 'N' || l_Next == 'n')
+			{
+				l_Text.push_back('\n');
+				i += 2;
+				continue;
+			}
+			if (l_Next == 'h')
+			{
+				l_Text.push_back(' ');
+				i += 2;
+				continue;
+			}
+		}
+		if (l_Char != '\r')
+			l_Text.push_back(l_Char);
+		++i;
+	}
+	return l_Text;
+}
+
+std::string trimmed(std::string p_Text)
+{
+	const auto l_Blank = [](const char p_Char) { return p_Char == ' ' || p_Char == '\n' || p_Char == '\t' || p_Char == '\r'; };
+	while (!p_Text.empty() && l_Blank(p_Text.back()))
+		p_Text.pop_back();
+	size_t l_Start = 0;
+	while (l_Start < p_Text.size() && l_Blank(p_Text[l_Start]))
+		++l_Start;
+	return p_Text.substr(l_Start);
 }
 
 struct Geometry
@@ -402,6 +506,20 @@ struct Player::Impl
 	std::atomic<double> audioEnd{ 0.0 };      // time of the end of the last sound handed to the device
 	std::atomic<bool> looping{ false };
 
+	// Tracks: the stream indices of the sound tracks and of the text subtitle tracks (fixed after opening), and which of
+	// them is wanted now (changed from the controlling thread, followed by the decoder threads)
+	std::vector<int> audioStreams;
+	std::vector<int> subtitleStreams;
+	std::atomic<int> audioOrdinal{ 0 };
+	std::atomic<int> subtitleOrdinal{ -1 };
+	struct Cue
+	{
+		double start = 0.0;
+		double end = 0.0;
+		std::string text;
+	};
+	std::vector<Cue> cues; // subtitle lines read so far, near the playhead (m)
+
 	// Video decoder state handed to its thread
 	std::unique_ptr<Input> videoInput;
 	AVCodecContext* videoCodec = nullptr;
@@ -535,6 +653,81 @@ void Player::Impl::videoLoop()
 	double l_LastPts = -l_FrameDuration;
 	Clock::time_point l_LastEmit = Clock::now();
 
+	// Subtitles: the chosen text track is demuxed along with the picture and turned into lines of text
+	AVCodecContext* l_SubCodec = nullptr;
+	int l_SubIndex = -1;
+	int l_SubOrdinal = -1;
+	const auto l_ApplySubtitleTrack = [&](const int p_Wanted)
+	{
+		if (l_SubCodec != nullptr)
+		{
+			avcodec_free_context(&l_SubCodec);
+			l_Format->streams[l_SubIndex]->discard = AVDISCARD_ALL;
+		}
+		l_SubIndex = -1;
+		l_SubOrdinal = p_Wanted;
+		{
+			std::lock_guard l_Lock(m);
+			cues.clear();
+		}
+		if (p_Wanted < 0 || p_Wanted >= static_cast<int>(subtitleStreams.size()))
+			return;
+		const int l_Index = subtitleStreams[static_cast<size_t>(p_Wanted)];
+		if (openDecoder(l_Format->streams[l_Index], false, l_SubCodec))
+		{
+			l_SubIndex = l_Index;
+			l_Format->streams[l_SubIndex]->discard = AVDISCARD_DEFAULT;
+		}
+	};
+	const auto l_DecodeSubtitle = [&](const AVPacket* p_Packet)
+	{
+		AVSubtitle l_Subtitle{};
+		int l_Got = 0;
+		if (avcodec_decode_subtitle2(l_SubCodec, &l_Subtitle, &l_Got, const_cast<AVPacket*>(p_Packet)) < 0 || l_Got == 0)
+			return;
+		std::string l_Text;
+		for (unsigned i = 0; i < l_Subtitle.num_rects; ++i)
+		{
+			const AVSubtitleRect* l_Rect = l_Subtitle.rects[i];
+			std::string l_Line;
+			if (l_Rect->type == SUBTITLE_ASS && l_Rect->ass != nullptr)
+				l_Line = trimmed(plainFromAss(l_Rect->ass));
+			else if (l_Rect->type == SUBTITLE_TEXT && l_Rect->text != nullptr)
+				l_Line = trimmed(l_Rect->text);
+			if (l_Line.empty())
+				continue;
+			if (!l_Text.empty())
+				l_Text.push_back('\n');
+			l_Text += l_Line;
+		}
+		const double l_SubBase = av_q2d(l_Format->streams[l_SubIndex]->time_base);
+		double l_Pts = -1.0;
+		if (p_Packet->pts != AV_NOPTS_VALUE)
+			l_Pts = static_cast<double>(p_Packet->pts) * l_SubBase - startTime;
+		else if (l_Subtitle.pts != AV_NOPTS_VALUE)
+			l_Pts = static_cast<double>(l_Subtitle.pts) / AV_TIME_BASE - startTime;
+		if (!l_Text.empty() && l_Pts >= 0.0)
+		{
+			const double l_Start = l_Pts + static_cast<double>(l_Subtitle.start_display_time) / 1000.0;
+			double l_End = l_Start + 4.0;
+			if (l_Subtitle.end_display_time != 0 && l_Subtitle.end_display_time != UINT32_MAX)
+				l_End = l_Pts + static_cast<double>(l_Subtitle.end_display_time) / 1000.0;
+			else if (p_Packet->duration > 0)
+				l_End = l_Pts + static_cast<double>(p_Packet->duration) * l_SubBase;
+			if (l_End <= l_Start)
+				l_End = l_Start + 3.0;
+			const double l_Now = position();
+			std::lock_guard l_Lock(m);
+			if (cues.size() > 400)
+				std::erase_if(cues, [&](const Cue& p_Cue) { return p_Cue.end < l_Now - 30.0; });
+			const bool l_Known = std::ranges::any_of(cues, [&](const Cue& p_Cue) { return p_Cue.start == l_Start && p_Cue.text == l_Text; }); // read again after a seek
+			if (!l_Known && cues.size() <= 4000)
+				cues.push_back(Cue{ .start = l_Start, .end = l_End, .text = std::move(l_Text) });
+		}
+		avsubtitle_free(&l_Subtitle);
+	};
+	l_ApplySubtitleTrack(subtitleOrdinal.load());
+
 	const auto l_Emit = [&](const AVFrame* p_Source, const double p_Pts, const bool p_Force)
 	{
 		if (!p_Force && l_DiscardBefore < 0.0)
@@ -624,12 +817,20 @@ void Player::Impl::videoLoop()
 			}
 		}
 
+		if (const int l_WantedSubtitles = subtitleOrdinal.load(); l_WantedSubtitles != l_SubOrdinal)
+			l_ApplySubtitleTrack(l_WantedSubtitles);
+
 		if (l_Seek)
 		{
-			const int64_t l_Ts = av_rescale_q(static_cast<int64_t>(std::llround((l_SeekTarget + containerStart(l_Format)) * AV_TIME_BASE)), AVRational{ 1, AV_TIME_BASE }, l_Stream->time_base);
+			// With subtitles on, start reading a little before the target: a line that began just before it is still showing,
+			// and it is only found where it begins. (The pictures before the target are decoded and dropped.)
+			const double l_ReadFrom = std::max(l_SeekTarget - (l_SubCodec != nullptr ? SUBTITLE_LOOKBACK_SECONDS : 0.0), 0.0);
+			const int64_t l_Ts = av_rescale_q(static_cast<int64_t>(std::llround((l_ReadFrom + containerStart(l_Format)) * AV_TIME_BASE)), AVRational{ 1, AV_TIME_BASE }, l_Stream->time_base);
 			if (av_seek_frame(l_Format, videoIndex, l_Ts, AVSEEK_FLAG_BACKWARD) < 0)
 				av_seek_frame(l_Format, videoIndex, l_Ts, AVSEEK_FLAG_ANY);
 			avcodec_flush_buffers(videoCodec);
+			if (l_SubCodec != nullptr)
+				avcodec_flush_buffers(l_SubCodec);
 			av_frame_unref(l_Candidate);
 			l_HaveCandidate = false;
 			l_Draining = false;
@@ -650,6 +851,8 @@ void Player::Impl::videoLoop()
 			{
 				if (l_Packet->stream_index == videoIndex)
 					avcodec_send_packet(videoCodec, l_Packet); // the output is always taken before the next packet
+				else if (l_SubCodec != nullptr && l_Packet->stream_index == l_SubIndex)
+					l_DecodeSubtitle(l_Packet);
 				av_packet_unref(l_Packet);
 			}
 		}
@@ -691,6 +894,7 @@ void Player::Impl::videoLoop()
 		}
 	}
 
+	avcodec_free_context(&l_SubCodec);
 	sws_freeContext(l_Sws);
 	av_frame_free(&l_Candidate);
 	av_frame_free(&l_Frame);
@@ -709,7 +913,8 @@ void Player::Impl::audioLoop()
 		audioActive.store(false);
 		return;
 	}
-	const int l_Index = pickAudioStream(l_Input.format, -1);
+	int l_Ordinal = audioOrdinal.load();
+	int l_Index = l_Ordinal >= 0 && l_Ordinal < static_cast<int>(audioStreams.size()) ? audioStreams[static_cast<size_t>(l_Ordinal)] : -1;
 	AVCodecContext* l_Codec = nullptr;
 	if (l_Index < 0 || !openDecoder(l_Input.format->streams[l_Index], false, l_Codec))
 	{
@@ -719,7 +924,7 @@ void Player::Impl::audioLoop()
 	discardOtherStreams(l_Input.format, l_Index);
 	AVFormatContext* l_Format = l_Input.format;
 	const AVStream* l_Stream = l_Format->streams[l_Index];
-	const double l_TimeBase = av_q2d(l_Stream->time_base);
+	double l_TimeBase = av_q2d(l_Stream->time_base);
 
 	AVPacket* l_Packet = av_packet_alloc();
 	AVFrame* l_Frame = av_frame_alloc();
@@ -795,6 +1000,26 @@ void Player::Impl::audioLoop()
 			{
 				l_Handled = seekSerial;
 				l_Target = seekTarget;
+				l_Seek = true;
+			}
+		}
+
+		// Another sound track was asked for: the same place in the other stream, with no break in the picture
+		if (const int l_Wanted = audioOrdinal.load(); l_Wanted != l_Ordinal && l_Wanted >= 0 && l_Wanted < static_cast<int>(audioStreams.size()))
+		{
+			l_Ordinal = l_Wanted;
+			const int l_NewIndex = audioStreams[static_cast<size_t>(l_Wanted)];
+			AVCodecContext* l_NewCodec = nullptr;
+			if (l_NewIndex != l_Index && openDecoder(l_Format->streams[l_NewIndex], false, l_NewCodec))
+			{
+				avcodec_free_context(&l_Codec);
+				l_Codec = l_NewCodec;
+				l_Format->streams[l_Index]->discard = AVDISCARD_ALL;
+				l_Index = l_NewIndex;
+				l_Format->streams[l_Index]->discard = AVDISCARD_DEFAULT;
+				l_Stream = l_Format->streams[l_Index];
+				l_TimeBase = av_q2d(l_Stream->time_base);
+				l_Target = position();
 				l_Seek = true;
 			}
 		}
@@ -924,7 +1149,21 @@ std::unique_ptr<Player> Player::open(Source p_Data, const Options& p_Options, st
 	l_Impl.info.duration = l_Impl.totalDuration;
 	const AVRational l_Rate = av_guess_frame_rate(l_Format, const_cast<AVStream*>(l_Stream), nullptr);
 	l_Impl.info.fps = l_Rate.den > 0 ? av_q2d(l_Rate) : 0.0;
-	l_Impl.hasAudioStream = pickAudioStream(l_Format, l_Impl.videoIndex) >= 0;
+	l_Impl.audioStreams = streamsOfType(l_Format, AVMEDIA_TYPE_AUDIO);
+	l_Impl.subtitleStreams = textSubtitleStreams(l_Format);
+	for (const int l_Index : l_Impl.audioStreams)
+		l_Impl.info.audioTracks.push_back(describeTrack(l_Format->streams[l_Index]));
+	for (const int l_Index : l_Impl.subtitleStreams)
+		l_Impl.info.subtitleTracks.push_back(describeTrack(l_Format->streams[l_Index]));
+	if (const int l_Best = pickAudioStream(l_Format, l_Impl.videoIndex); l_Best >= 0)
+	{
+		const auto l_At = std::ranges::find(l_Impl.audioStreams, l_Best);
+		l_Impl.info.defaultAudioTrack = l_At != l_Impl.audioStreams.end() ? static_cast<int>(l_At - l_Impl.audioStreams.begin()) : 0;
+	}
+	const int l_AudioCount = static_cast<int>(l_Impl.audioStreams.size());
+	l_Impl.audioOrdinal.store(p_Options.audioTrack >= 0 && p_Options.audioTrack < l_AudioCount ? p_Options.audioTrack : l_Impl.info.defaultAudioTrack);
+	l_Impl.subtitleOrdinal.store(p_Options.subtitleTrack >= 0 && p_Options.subtitleTrack < static_cast<int>(l_Impl.subtitleStreams.size()) ? p_Options.subtitleTrack : -1);
+	l_Impl.hasAudioStream = l_AudioCount > 0;
 	l_Impl.info.hasAudio = l_Impl.hasAudioStream;
 
 	if (l_Impl.hasAudioStream && SDL_InitSubSystem(SDL_INIT_AUDIO))
@@ -1019,6 +1258,54 @@ void Player::setVolume(const float p_Gain)
 {
 	if (m_Impl->audioStream != nullptr)
 		SDL_SetAudioStreamGain(m_Impl->audioStream, std::clamp(p_Gain, 0.f, 1.f));
+}
+
+void Player::setAudioTrack(int p_Track)
+{
+	Impl& l_Impl = *m_Impl;
+	if (p_Track < 0 || p_Track >= static_cast<int>(l_Impl.audioStreams.size()))
+		p_Track = l_Impl.info.defaultAudioTrack;
+	if (l_Impl.audioOrdinal.exchange(p_Track) != p_Track)
+		l_Impl.cv.notify_all();
+}
+
+void Player::setSubtitleTrack(int p_Track)
+{
+	Impl& l_Impl = *m_Impl;
+	if (p_Track < 0 || p_Track >= static_cast<int>(l_Impl.subtitleStreams.size()))
+		p_Track = -1;
+	if (l_Impl.subtitleOrdinal.exchange(p_Track) != p_Track)
+		l_Impl.cv.notify_all();
+}
+
+int Player::audioTrack() const
+{
+	return m_Impl->audioOrdinal.load();
+}
+
+int Player::subtitleTrack() const
+{
+	return m_Impl->subtitleOrdinal.load();
+}
+
+std::string Player::subtitle() const
+{
+	Impl& l_Impl = *m_Impl;
+	if (l_Impl.subtitleOrdinal.load() < 0)
+		return {};
+	const double l_Position = l_Impl.position();
+	std::string l_Text;
+	std::lock_guard l_Lock(l_Impl.m);
+	for (const Impl::Cue& l_Cue : l_Impl.cues)
+	{
+		if (l_Cue.start <= l_Position && l_Position < l_Cue.end && l_Text.find(l_Cue.text) == std::string::npos)
+		{
+			if (!l_Text.empty())
+				l_Text.push_back('\n');
+			l_Text += l_Cue.text;
+		}
+	}
+	return l_Text;
 }
 
 bool Player::playing() const

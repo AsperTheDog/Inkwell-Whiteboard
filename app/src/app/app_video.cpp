@@ -36,6 +36,7 @@ import wb.ui.context;
 import wb.ui.draw;
 import wb.ui.font;
 import wb.ui.theme;
+import wb.video.media;
 import wb.view.camera;
 
 namespace wb
@@ -49,6 +50,15 @@ constexpr float BAR_MARGIN = 10.f;        // between the bar and the video's edg
 constexpr float BUTTON_SIZE = 32.f;
 constexpr float MIN_VIEWER_WIDTH = 150.f; // narrower than this on screen (points): only the badge
 constexpr double SEEK_SLOP_SECONDS = 0.02;
+
+// "Commentary (eng)", or "Track 2" for one that says nothing about itself
+std::string trackLabel(const video::TrackInfo& p_Track, const size_t p_Index)
+{
+	std::string l_Label = !p_Track.title.empty() ? p_Track.title : "Track " + std::to_string(p_Index + 1);
+	if (!p_Track.language.empty() && p_Track.language != "und")
+		l_Label += " (" + p_Track.language + ")";
+	return l_Label;
+}
 
 std::string formatTime(const double p_Seconds)
 {
@@ -140,7 +150,7 @@ void App::buildVideoViewer()
 	}
 	else if (!l_Quiet)
 	{
-		if (m_VideoHot != INVALID_OBJECT_ID && l_HavePointer && (m_VideoBarRect.contains(l_Pointer) || m_VideoVolumeRect.contains(l_Pointer)))
+		if (m_VideoHot != INVALID_OBJECT_ID && l_HavePointer && (m_VideoBarRect.contains(l_Pointer) || m_VideoVolumeRect.contains(l_Pointer) || m_VideoTracksRect.contains(l_Pointer)))
 		{
 			l_Hot = m_VideoHot; // on the bar itself
 		}
@@ -182,10 +192,13 @@ void App::buildVideoViewer()
 
 	if (l_Hot != m_VideoHot)
 	{
+		if (m_VideoHot != INVALID_OBJECT_ID)
+			m_VideoTracksPinned = false; // the menu stays with the video it was opened for
 		m_VideoHot = l_Hot;
 		m_Ui.setAnim(ui::Context::id("video.show"), 0.f);
 		m_VideoBarRect = Rect2{};
 		m_VideoVolumeRect = Rect2{};
+		m_VideoTracksRect = Rect2{};
 	}
 	if (m_VideoScrub != INVALID_OBJECT_ID && l_Hot != m_VideoScrub)
 		m_VideoScrub = INVALID_OBJECT_ID;
@@ -218,6 +231,49 @@ void App::buildVideoViewer()
 	}
 	if (l_AnyBuffering)
 		requestRedraw(2); // the arc turns
+
+	// ---- subtitles, at the bottom of the picture (above the bar while the bar is there)
+	for (const ObjectId l_Id : l_Visible)
+	{
+		const Object* l_Object = m_Editor.document().find(l_Id);
+		const VideoData* l_Video = l_Object != nullptr ? l_Object->video() : nullptr;
+		if (l_Video == nullptr || l_Video->subtitleTrack < 0)
+			continue;
+		const std::string l_Text = l_Videos.subtitle(l_Id);
+		if (l_Text.empty())
+			continue;
+		const std::optional<VideoOnScreen> l_Screen = videoOnScreen(*l_Object, *l_Video, l_Camera);
+		if (!l_Screen || l_Screen->box.width() < m_Ui.px(120.f))
+			continue;
+		std::vector<std::string> l_Lines;
+		for (size_t l_Start = 0; l_Start <= l_Text.size();)
+		{
+			const size_t l_End = l_Text.find('\n', l_Start);
+			l_Lines.push_back(l_Text.substr(l_Start, l_End == std::string::npos ? std::string::npos : l_End - l_Start));
+			if (l_End == std::string::npos)
+				break;
+			l_Start = l_End + 1;
+		}
+		float l_Px = std::clamp(l_Screen->box.height() * 0.05f, m_Ui.px(11.f), m_Ui.px(34.f));
+		float l_Widest = 0.f;
+		for (const std::string& l_Line : l_Lines)
+			l_Widest = std::max(l_Widest, m_Ui.font().measure(l_Line, static_cast<int>(l_Px)));
+		const float l_Room = l_Screen->box.width() * 0.92f;
+		if (l_Widest > l_Room)
+			l_Px = std::max(l_Px * l_Room / l_Widest, m_Ui.px(9.f)); // a long line gets smaller rather than leaving the picture
+		const int l_Size = static_cast<int>(l_Px);
+		const float l_LineHeight = l_Px * 1.35f;
+		float l_Y = l_Screen->box.max.y - std::max(m_Ui.px(14.f), l_Screen->box.height() * 0.06f) - (l_Id == l_Hot ? m_Ui.px(BAR_HEIGHT + BAR_MARGIN) : 0.f);
+		for (auto l_It = l_Lines.rbegin(); l_It != l_Lines.rend(); ++l_It)
+		{
+			const std::string l_Fitted = m_Ui.font().fit(*l_It, l_Size, l_Room);
+			const float l_Width = m_Ui.font().measure(l_Fitted, l_Size) + l_Px * 0.9f;
+			const Rect2 l_Chip = Rect2::fromCenter(Vec2{ l_Screen->box.center().x, l_Y - l_LineHeight * 0.5f }, Vec2{ l_Width, l_LineHeight });
+			l_Draw.rect(l_Chip, l_Px * 0.3f, Color{ 0.f, 0.f, 0.f, 0.62f });
+			l_Draw.text(l_Chip.center(), l_Fitted, l_Size, Color{ 1.f, 1.f, 1.f, 1.f }, ui::TextAlign::Center);
+			l_Y -= l_LineHeight + m_Ui.px(2.f);
+		}
+	}
 
 	// ---- paused videos wear a badge; videos that cannot play say so
 	for (const ObjectId l_Id : l_Visible)
@@ -255,6 +311,7 @@ void App::buildVideoViewer()
 	}
 
 	// ---- the viewer
+	m_VideoTracksRect = Rect2{}; // set again below while its menu is open
 	if (l_Hot == INVALID_OBJECT_ID)
 	{
 		m_VideoBarRect = Rect2{};
@@ -348,6 +405,11 @@ void App::buildVideoViewer()
 		l_RightEdge -= l_Button + l_Gap;
 	const Rect2 l_LoopRect = Rect2::fromPosSize(Vec2{ l_RightEdge - l_Button, l_ButtonY }, Vec2{ l_Button });
 	if (l_ShowLoop)
+		l_RightEdge -= l_Button + l_Gap;
+	const video::VideoInfo* l_Info = l_Videos.info(l_Hot);
+	const bool l_ShowTracks = l_Info != nullptr && (l_Info->audioTracks.size() > 1 || !l_Info->subtitleTracks.empty()) && l_Available >= m_Ui.px(250.f);
+	const Rect2 l_TracksRect = Rect2::fromPosSize(Vec2{ l_RightEdge - l_Button, l_ButtonY }, Vec2{ l_Button });
+	if (l_ShowTracks)
 		l_RightEdge -= l_Button + l_Gap;
 
 	if (l_ShowTime)
@@ -477,6 +539,91 @@ void App::buildVideoViewer()
 			l_Draw.circle(Vec2{ l_KnobX, l_Y }, l_Knob, Color{ 1.f, 1.f, 1.f, 1.f });
 			l_Draw.ring(Vec2{ l_KnobX, l_Y }, l_Knob, l_Theme.accent, m_Ui.px(1.75f));
 		}
+	}
+
+	// ---- sound tracks and subtitles: a menu over the button (it opens under the pointer, or stays open after a click)
+	if (l_ShowTracks)
+	{
+		if (m_Ui.iconButton("video.tracks", l_TracksRect, ui::Icon::Captions, l_Video->subtitleTrack >= 0 || m_VideoTracksPinned, true, "Sound tracks and subtitles"))
+			m_VideoTracksPinned = !m_VideoTracksPinned;
+		const bool l_Open = m_VideoTracksPinned || l_TracksRect.contains(l_Pointer) || (m_VideoTracksOpenLast && m_VideoTracksRect.contains(l_Pointer));
+		m_VideoTracksOpenLast = l_Open;
+		if (l_Open)
+		{
+			const bool l_Sounds = l_Info->audioTracks.size() > 1;
+			const size_t l_SubCount = l_Info->subtitleTracks.size();
+			const float l_Header = m_Ui.px(26.f);
+			const float l_Row = m_Ui.px(30.f);
+			const float l_PanelWidth = m_Ui.px(250.f);
+			float l_PanelHeight = m_Ui.px(12.f);
+			if (l_Sounds)
+				l_PanelHeight += l_Header + l_Row * static_cast<float>(l_Info->audioTracks.size());
+			if (l_SubCount > 0)
+				l_PanelHeight += l_Header + l_Row * static_cast<float>(l_SubCount + 1);
+			Rect2 l_Panel = Rect2::fromPosSize(Vec2{ std::clamp(l_TracksRect.max.x - l_PanelWidth + m_Ui.px(16.f), m_Ui.px(8.f), std::max(l_Viewport.x - l_PanelWidth - m_Ui.px(8.f), m_Ui.px(8.f))), l_Bar.min.y - m_Ui.px(8.f) - l_PanelHeight }, Vec2{ l_PanelWidth, l_PanelHeight });
+			if (l_Panel.min.y < m_Ui.px(8.f))
+				l_Panel = l_Panel.translated(Vec2{ 0.f, l_Bar.max.y + m_Ui.px(8.f) - l_Panel.min.y });
+			// Reaches across the gap down to the button, so the pointer can travel to the menu
+			const bool l_Above = l_Panel.min.y < l_Bar.min.y;
+			m_VideoTracksRect = Rect2{ Vec2{ l_Panel.min.x, l_Above ? l_Panel.min.y : l_Bar.min.y }, Vec2{ l_Panel.max.x, l_Above ? l_Bar.max.y : l_Panel.max.y } };
+			m_Ui.panel(l_Panel, m_Ui.px(14.f));
+
+			float l_Y = l_Panel.min.y + m_Ui.px(6.f);
+			const int l_HeaderPx = m_Ui.fontPx(11.5f);
+			const int l_RowPx = m_Ui.fontPx(13.f);
+			const float l_TextMax = l_PanelWidth - m_Ui.px(52.f);
+			// One line of the menu: a check mark when it is the one in use; true when it was clicked
+			const auto l_Item = [&](const std::string& p_Key, const std::string& p_Label, const bool p_Selected)
+			{
+				const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_Panel.min.x + m_Ui.px(6.f), l_Y }, Vec2{ l_PanelWidth - m_Ui.px(12.f), l_Row });
+				const ui::Interaction l_State = m_Ui.interact(ui::Context::id(p_Key), l_Rect);
+				if (l_State.hovered)
+					l_Draw.rect(l_Rect, m_Ui.px(8.f), ui::withAlpha(l_Theme.accent, 0.16f));
+				if (p_Selected)
+					l_Draw.icon(ui::Icon::Check, Vec2{ l_Rect.min.x + m_Ui.px(16.f), l_Rect.center().y }, m_Ui.fontPx(15.f), l_Theme.accent);
+				l_Draw.text(Vec2{ l_Rect.min.x + m_Ui.px(34.f), l_Rect.center().y }, m_Ui.font().fit(p_Label, l_RowPx, l_TextMax), l_RowPx, l_Theme.text);
+				l_Y += l_Row;
+				return l_State.clicked;
+			};
+			const auto l_Title = [&](const char* p_Text)
+			{
+				l_Draw.text(Vec2{ l_Panel.min.x + m_Ui.px(16.f), l_Y + l_Header * 0.55f }, p_Text, l_HeaderPx, l_Theme.textMuted);
+				l_Y += l_Header;
+			};
+			if (l_Sounds)
+			{
+				l_Title("Sound");
+				for (size_t i = 0; i < l_Info->audioTracks.size(); ++i)
+				{
+					if (l_Item("video.track.a" + std::to_string(i), trackLabel(l_Info->audioTracks[i], i), static_cast<size_t>(l_Status.audioTrack) == i))
+					{
+						m_Editor.editVideo(l_Hot, "Sound track", [i](VideoData& p_Data) { p_Data.audioTrack = static_cast<int8_t>(i); return true; });
+						m_VideoTracksPinned = false;
+					}
+				}
+			}
+			if (l_SubCount > 0)
+			{
+				l_Title("Subtitles");
+				if (l_Item("video.track.s-1", "Off", l_Video->subtitleTrack < 0))
+				{
+					m_Editor.editVideo(l_Hot, "Subtitles off", [](VideoData& p_Data) { p_Data.subtitleTrack = -1; return true; });
+					m_VideoTracksPinned = false;
+				}
+				for (size_t i = 0; i < l_SubCount; ++i)
+				{
+					if (l_Item("video.track.s" + std::to_string(i), trackLabel(l_Info->subtitleTracks[i], i), l_Video->subtitleTrack == static_cast<int8_t>(i)))
+					{
+						m_Editor.editVideo(l_Hot, "Subtitles", [i](VideoData& p_Data) { p_Data.subtitleTrack = static_cast<int8_t>(i); return true; });
+						m_VideoTracksPinned = false;
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		m_VideoTracksOpenLast = false;
 	}
 }
 } // namespace wb

@@ -1210,8 +1210,11 @@ void App::driveSmokeTest()
 				openTextPopup(false);
 			}
 		}
-		else if (l_Ui == "video" || l_Ui == "videovolume")
+		else if (l_Ui == "video" || l_Ui == "videovolume" || l_Ui == "videotracks")
 		{
+			m_VideoTracksPinned = l_Ui == "videotracks"; // the menu of sound tracks and subtitles stays open
+			m_VideoHot = s_SmokeVideo;
+			m_Editor.document().modify(s_SmokeVideo, [](Object& p_Object) { p_Object.video()->subtitleTrack = 0; }, ObjectChange::Style);
 			// The pointer rests on the video, so its viewer shows; turned and selected, the selection bar lands on it too
 			m_Editor.setTool(tools::ToolKind::Select);
 			m_Editor.document().modify(s_SmokeVideo, [&](Object& p_Object)

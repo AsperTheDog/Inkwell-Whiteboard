@@ -62,7 +62,7 @@ enum class ObjectType : uint8_t
 };
 
 constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
-constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float);
+constexpr size_t VIDEO_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float) + 2;
 constexpr size_t MAX_NAME_BYTES = 1024;
 constexpr size_t MAX_TEXT_BYTES = 64u << 20;
 constexpr uint64_t MAX_FONT_BYTES = 1ull << 28;
@@ -376,6 +376,8 @@ void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Vid
 	p_Writer.u8(p_Video.loop ? 1 : 0);
 	p_Writer.u8(p_Video.muted ? 1 : 0);
 	p_Writer.f32(p_Video.volume);
+	p_Writer.u8(static_cast<uint8_t>(p_Video.audioTrack));
+	p_Writer.u8(static_cast<uint8_t>(p_Video.subtitleTrack));
 }
 
 bool readVideo(Reader& p_Reader, Object& p_Object)
@@ -394,6 +396,11 @@ bool readVideo(Reader& p_Reader, Object& p_Object)
 		if (!finite(l_Video.volume))
 			return false;
 		l_Video.volume = std::clamp(l_Video.volume, 0.f, 1.f);
+	}
+	if (p_Reader.remaining() >= 2) // boards saved before sound tracks and subtitles end here
+	{
+		l_Video.audioTrack = static_cast<int8_t>(std::max<int>(-1, static_cast<int8_t>(p_Reader.u8())));
+		l_Video.subtitleTrack = static_cast<int8_t>(std::max<int>(-1, static_cast<int8_t>(p_Reader.u8())));
 	}
 	if (!p_Reader.ok() || l_Video.asset == INVALID_ASSET_ID || !finite(l_Video.size.x) || !finite(l_Video.size.y) || l_Video.size.x <= 0.f || l_Video.size.y <= 0.f)
 		return false;

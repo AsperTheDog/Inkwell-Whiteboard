@@ -84,6 +84,51 @@ int videoSelfTest(const std::string& p_Path)
 	l_Player->play();
 	l_Poll(0.8);
 	spdlog::info("looped: playing {}, position {:.3f}", l_Player->playing(), l_Player->position());
+
+	// Sound tracks and subtitles, when the file has some
+	const wb::video::VideoInfo& l_Tracks = l_Player->info();
+	spdlog::info("tracks: {} sound (default {}), {} subtitle", l_Tracks.audioTracks.size(), l_Tracks.defaultAudioTrack, l_Tracks.subtitleTracks.size());
+	for (const wb::video::TrackInfo& l_Track : l_Tracks.audioTracks)
+		spdlog::info("  sound: '{}' '{}' {}", l_Track.language, l_Track.title, l_Track.codec);
+	for (const wb::video::TrackInfo& l_Track : l_Tracks.subtitleTracks)
+		spdlog::info("  subtitles: '{}' '{}' {}", l_Track.language, l_Track.title, l_Track.codec);
+	if (!l_Tracks.subtitleTracks.empty() || l_Tracks.audioTracks.size() > 1)
+	{
+		wb::video::Player::Options l_Options;
+		l_Options.subtitleTrack = l_Tracks.subtitleTracks.empty() ? -1 : 0;
+		auto l_Second = wb::video::Player::open(l_Blob, l_Options, l_Error);
+		if (!l_Second)
+		{
+			spdlog::error("reopen failed: {}", l_Error);
+			return 1;
+		}
+		l_Second->play();
+		std::string l_Shown = "<none>";
+		bool l_Switched = false;
+		const auto l_From = std::chrono::steady_clock::now();
+		while (std::chrono::steady_clock::now() - l_From < std::chrono::milliseconds(3300))
+		{
+			l_Second->tick();
+			(void)l_Second->currentFrame();
+			if (std::string l_Now = l_Second->subtitle(); l_Now != l_Shown && (!l_Now.empty() || l_Shown != "<none>"))
+			{
+				l_Shown = l_Now;
+				std::replace(l_Now.begin(), l_Now.end(), '\n', '|');
+				spdlog::info("t={:.2f} subtitle: '{}'", l_Second->position(), l_Now);
+			}
+			if (!l_Switched && l_Second->position() > 1.0 && l_Tracks.audioTracks.size() > 1)
+			{
+				l_Switched = true;
+				spdlog::info("switching sound from track {} at {:.3f}", l_Second->audioTrack(), l_Second->position());
+				l_Second->setAudioTrack(1);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(4));
+		}
+		spdlog::info("end: sound track {}, position {:.3f}, subtitle track {}", l_Second->audioTrack(), l_Second->position(), l_Second->subtitleTrack());
+		l_Second->setSubtitleTrack(-1);
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		spdlog::info("subtitles off: '{}'", l_Second->subtitle());
+	}
 	return 0;
 }
 

@@ -59,7 +59,7 @@ TEST(Video, SurvivesSavingAndLoading)
 	wb::Document l_Doc;
 	const wb::AssetId l_Asset = addFile(l_Doc, 9);
 	const wb::ObjectId l_Id = addVideo(l_Doc, l_Asset, { 5.0, 6.0 });
-	l_Doc.modify(l_Id, [](wb::Object& p_Object) { p_Object.video()->loop = true; p_Object.video()->muted = false; });
+	l_Doc.modify(l_Id, [](wb::Object& p_Object) { p_Object.video()->loop = true; p_Object.video()->muted = false; p_Object.video()->audioTrack = 2; p_Object.video()->subtitleTrack = 1; });
 	const std::vector<uint8_t> l_Bytes = wb::serializeBoard(l_Doc, {});
 
 	wb::Document l_Loaded;
@@ -70,6 +70,8 @@ TEST(Video, SurvivesSavingAndLoading)
 	ASSERT_NE(l_Back->video(), nullptr);
 	EXPECT_TRUE(l_Back->video()->loop);
 	EXPECT_FALSE(l_Back->video()->muted);
+	EXPECT_EQ(l_Back->video()->audioTrack, 2);
+	EXPECT_EQ(l_Back->video()->subtitleTrack, 1);
 	const wb::ImageAsset* l_File = l_Loaded.findAsset(l_Back->video()->asset);
 	ASSERT_NE(l_File, nullptr);
 	EXPECT_EQ(l_File->bytes, l_Doc.findAsset(l_Asset)->bytes);
