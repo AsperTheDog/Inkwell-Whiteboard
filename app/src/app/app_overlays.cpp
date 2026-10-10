@@ -227,6 +227,7 @@ void App::buildAssetSpinners()
 			// The others cannot get this file: a button to send it again
 			const bool l_Wide = l_Short > 150.f * l_Scale;
 			const ui::Rect2 l_Button = ui::Rect2::fromCenter(l_Center, Vec2{ (l_Wide ? 168.f : 84.f) * l_Scale, 32.f * l_Scale });
+			m_Ui.beginPanel(l_Button); // the board underneath must not take the click
 			if (m_Ui.button("asset.resend." + std::to_string(l_Object.id), l_Button, l_Wide ? "Re-send for the others" : "Re-send", ui::ButtonStyle::Primary))
 				m_Collab->reupload(l_Asset);
 			continue;

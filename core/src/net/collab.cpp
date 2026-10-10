@@ -1710,8 +1710,18 @@ void CollabSession::resolveLocalMedia()
 		return;
 	if (m_Role == Role::Client)
 	{
-		if (!m_Peers.empty())
-			wantAssets(m_Peers.begin()->second, l_Objects); // an undo can bring back a picture we gave up on
+		if (m_Peers.empty())
+			return;
+		// A picture of ours that the host was not able to get, put on the board again (dragged in once more, or an undo):
+		// that is a new try, no button needed
+		for (const ObjectId l_Object : l_Objects)
+		{
+			const Object* l_Found = m_Document.find(l_Object);
+			const AssetId l_Asset = l_Found == nullptr ? INVALID_ASSET_ID : (l_Found->image() != nullptr ? l_Found->image()->asset : (l_Found->video() != nullptr ? l_Found->video()->asset : INVALID_ASSET_ID));
+			if (l_Asset != INVALID_ASSET_ID && m_Reuploadable.contains(l_Asset))
+				reupload(l_Asset);
+		}
+		wantAssets(m_Peers.begin()->second, l_Objects); // an undo can bring back a picture we gave up on
 		return;
 	}
 	for (const ObjectId l_Object : l_Objects)

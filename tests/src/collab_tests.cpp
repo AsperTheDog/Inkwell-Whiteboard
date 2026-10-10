@@ -944,6 +944,44 @@ TEST(Collab, ADeletedAndRestoredUnfinishedPictureWaitsForItsOwnerToResend)
 	EXPECT_FALSE(l_Ana.session->assetReuploadable(l_Asset));
 }
 
+// The file could not be sent and shows the re-send button; deleting it and dragging the same file in again is a fresh
+// start: it is sent, and no button comes back
+TEST(Collab, DraggingTheSameFileInAgainStartsFresh)
+{
+	Node l_Host;
+	Node l_Ana;
+	Node l_Bo;
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return joinedAndOnline(l_Ana) && joinedAndOnline(l_Bo); }));
+
+	const std::vector<uint8_t> l_Bytes = noise(24u << 20, 11);
+	const wb::ObjectId l_Id = addPicture(l_Ana.doc, l_Bytes, "photo.jpg");
+	const wb::AssetId l_Asset = l_Ana.doc.find(l_Id)->image()->asset;
+	std::unique_ptr<wb::Object> l_Taken;
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] {
+		if (l_Host.doc.find(l_Id) == nullptr || l_Host.session->assetProgress().files == 0)
+			return false;
+		l_Taken = std::move(l_Host.doc.take(l_Id).object);
+		return true;
+	}));
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.session->assetProgress().files == 0 && l_Bo.doc.find(l_Id) == nullptr; }));
+	l_Host.doc.insert(std::move(l_Taken));
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Ana.session->assetReuploadable(l_Asset) && l_Bo.session->assetStalled(l_Asset); }));
+
+	// Ana deletes the object and drags the same file in once more
+	(void)l_Ana.doc.take(l_Id);
+	const wb::ObjectId l_Again = addPicture(l_Ana.doc, l_Bytes, "photo.jpg");
+	ASSERT_EQ(l_Ana.doc.find(l_Again)->image()->asset, l_Asset); // the same file, found by its content
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return hasWhole(l_Host.doc, l_Asset) && hasWhole(l_Bo.doc, l_Asset); }, 40000));
+	EXPECT_FALSE(l_Ana.session->assetReuploadable(l_Asset));
+	EXPECT_FALSE(l_Host.session->assetStalled(l_Asset));
+	EXPECT_FALSE(l_Bo.session->assetStalled(l_Asset));
+	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->load(), l_Bytes);
+}
+
 // The owner deletes their own unfinished picture and undoes: the file is sent again without any button
 TEST(Collab, TheOwnersOwnUndoRestartsTheTransfer)
 {
