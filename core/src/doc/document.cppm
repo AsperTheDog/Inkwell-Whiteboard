@@ -35,6 +35,7 @@ inline constexpr uint32_t Transform = 1u << 0;
 inline constexpr uint32_t Geometry = 1u << 1; // payload shape (stroke points, image size, text...)
 inline constexpr uint32_t Style = 1u << 2;    // color, size and other appearance
 inline constexpr uint32_t Lock = 1u << 3;     // locked / unlocked
+inline constexpr uint32_t Group = 1u << 4;    // joined or left a group (not part of All: only grouping commands touch it)
 inline constexpr uint32_t All = Transform | Geometry | Style | Lock;
 } // namespace ObjectChange
 

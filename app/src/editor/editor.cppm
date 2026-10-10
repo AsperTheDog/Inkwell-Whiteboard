@@ -123,6 +123,14 @@ public:
 	[[nodiscard]] LockState selectionLockState() const;
 	void setSelectionLocked(bool p_Locked);
 	void toggleSelectionLock();
+	// Grouping: the selected objects become one that is selected, moved, copied and deleted as a whole (one undo step).
+	// canGroupSelection() is true for two or more unlocked objects that are not already one group; the selection is
+	// "grouped" when it contains a group.
+	[[nodiscard]] bool canGroupSelection() const;
+	[[nodiscard]] bool selectionHasGroup() const;
+	void groupSelection();
+	void ungroupSelection();
+	void toggleSelectionGroup();
 	// Makes the selected objects upright again (one undo step)
 	void resetSelectionTransform();
 	[[nodiscard]] bool selectionIsTilted() const;
@@ -145,6 +153,29 @@ public:
 	void editVideo(ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
 	void editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
+	// ---- cropping. Shows the whole picture with the hidden part darkened; dragging the frame's handles (or the frame
+	// itself) chooses what is shown. Each drag is one undo step, and the file is never changed, so a crop can always be
+	// widened again. Enter / Escape, or a click outside the picture, ends it.
+	struct CropView
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		Affine2 transform{};  // picture-local -> world
+		Rect full{};          // the whole picture, in picture-local space
+		Rect shown{};         // the frame, same space (follows the pointer while dragging)
+		int hovered = -1;     // handle under the pointer, or being dragged (see cropHandle*)
+		bool dragging = false;
+	};
+	// The 8 handles go clockwise from the top left corner; 8 is the inside of the frame (it moves)
+	static constexpr int CROP_HANDLE_COUNT = 8;
+	static constexpr int CROP_HANDLE_MOVE = 8;
+	bool beginCrop(ObjectId p_Id);
+	bool beginCropSelected();
+	void endCrop();
+	[[nodiscard]] bool cropping() const { return m_CropId != INVALID_OBJECT_ID; }
+	[[nodiscard]] std::optional<CropView> cropView() const;
+	// Where a handle is, in picture-local space
+	[[nodiscard]] static DVec2 cropHandlePoint(const Rect& p_Shown, int p_Handle);
+
 	// ---- text
 	[[nodiscard]] text::TextSystem& textSystem() { return m_TextSystem; }
 	[[nodiscard]] tools::TextState& textState() { return m_TextState; }
@@ -254,6 +285,9 @@ private:
 	void embedFonts();
 	ObjectId insertMedia(ImageAsset p_Asset, DVec2 p_WorldCenter, bool p_Video);
 	void applyTextStyleScaled(const std::function<void(TextData&, double)>& p_Edit);
+	// Pointer events while cropping; true when the crop took the event
+	bool handleCropPointer(const platform::PointerEvent& p_Event, DVec2 p_World);
+	[[nodiscard]] int cropHandleAt(const Object& p_Object, const Rect& p_Shown, DVec2 p_Screen) const;
 
 	Document m_Document;
 	History m_History;
@@ -296,6 +330,14 @@ private:
 	DVec2 m_LastPasteCenter{ 0.0 };
 	int m_PasteRepeat = 0;
 	uint64_t m_LastNudgeNs = 0;
+
+	// Cropping
+	ObjectId m_CropId = INVALID_OBJECT_ID;
+	int m_CropHover = -1;
+	int m_CropDrag = -1;  // handle being dragged, -1 when none
+	Rect m_CropShown{};   // the frame while dragging
+	DVec2 m_CropGrab{ 0.0 }; // moving the frame: where in the picture the pointer took hold
+	Rect m_CropStart{};
 
 	// Panning
 	bool m_SpaceHeld = false;

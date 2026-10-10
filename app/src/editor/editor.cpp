@@ -57,6 +57,13 @@ bool isPanButton(const platform::PointerButton p_Button)
 {
 	return p_Button == platform::PointerButton::Secondary || p_Button == platform::PointerButton::Middle;
 }
+
+// Crop handles, clockwise from the top left corner: which edges each one moves (-1 left / top, 1 right / bottom)
+constexpr int CROP_HANDLE_X[8]{ -1, 0, 1, 1, 1, 0, -1, -1 };
+constexpr int CROP_HANDLE_Y[8]{ -1, -1, -1, 0, 1, 1, 1, 0 };
+constexpr int CROP_HANDLE_PRIORITY[8]{ 0, 2, 4, 6, 1, 3, 5, 7 }; // corners win when handles are close together
+constexpr double CROP_GRAB_POINTS = 10.0;
+constexpr double CROP_MIN_FRACTION = 0.02; // of the whole picture
 } // namespace
 
 Editor::Editor()
@@ -136,6 +143,7 @@ void Editor::setTool(const tools::ToolKind p_Kind)
 
 void Editor::setDeviceTool(const platform::PointerDevice p_Device, const tools::ToolKind p_Kind)
 {
+	endCrop();
 	if (p_Kind != tools::ToolKind::Text)
 		m_TextSession.end();
 	m_DeviceTools[static_cast<size_t>(p_Device)] = p_Kind;
@@ -189,13 +197,28 @@ std::optional<EraserCursor> Editor::brushCursor() const
 
 bool Editor::isBusy() const
 {
-	return m_RulerDrag != RulerDrag::None || m_Panning || m_SwallowPointer || m_TextSession.dragging() || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
+	return m_RulerDrag != RulerDrag::None || m_Panning || m_SwallowPointer || m_CropDrag >= 0 || m_TextSession.dragging() || (m_ActiveTool != nullptr && m_ActiveTool->isBusy());
 }
 
 tools::CursorKind Editor::cursor() const
 {
 	if (m_Panning || m_SpaceHeld)
 		return tools::CursorKind::Move;
+	if (cropping())
+	{
+		const int l_Handle = m_CropDrag >= 0 ? m_CropDrag : m_CropHover;
+		if (l_Handle == CROP_HANDLE_MOVE)
+			return tools::CursorKind::Move;
+		if (l_Handle >= 0)
+		{
+			if (CROP_HANDLE_X[l_Handle] == 0)
+				return tools::CursorKind::ResizeNS;
+			if (CROP_HANDLE_Y[l_Handle] == 0)
+				return tools::CursorKind::ResizeEW;
+			return CROP_HANDLE_X[l_Handle] == CROP_HANDLE_Y[l_Handle] ? tools::CursorKind::ResizeNWSE : tools::CursorKind::ResizeNESW;
+		}
+		return tools::CursorKind::Default;
+	}
 	return m_ActiveTool != nullptr ? m_ActiveTool->cursor() : tools::CursorKind::Default;
 }
 
@@ -281,6 +304,8 @@ void Editor::handlePointer(const platform::PointerEvent& p_Event)
 		return;
 	if (m_TextSession.active() && m_TextSession.pointer(p_Event, l_World))
 		return;
+	if (cropping() && handleCropPointer(p_Event, l_World))
+		return;
 
 	if (m_ActiveTool != nullptr && !l_ToolBusy && p_Event.phase == platform::PointerPhase::Down && p_Event.button == platform::PointerButton::Primary)
 	{
@@ -307,6 +332,13 @@ void Editor::handlePointer(const platform::PointerEvent& p_Event)
 		if (l_Kind == tools::ToolKind::Select && l_Double && l_HitText)
 		{
 			m_TextSession.beginExisting(l_Hit, l_World);
+			m_SwallowPointer = true;
+			m_SwallowDevice = p_Event.device;
+			m_LastClickNs = 0;
+			return;
+		}
+		if (l_Kind == tools::ToolKind::Select && l_Double && l_HitObject != nullptr && l_HitObject->image() != nullptr && beginCrop(l_Hit))
+		{
 			m_SwallowPointer = true;
 			m_SwallowDevice = p_Event.device;
 			m_LastClickNs = 0;
@@ -359,6 +391,15 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 	// While typing, the keys belong to the text
 	if (m_TextSession.active())
 		return m_TextSession.key(p_Event);
+
+	if (cropping() && (l_Key == SDLK_RETURN || l_Key == SDLK_KP_ENTER || l_Key == SDLK_ESCAPE))
+	{
+		if (m_CropDrag >= 0)
+			m_CropDrag = -1; // Escape in the middle of a drag drops it; the crop stays as it was
+		else
+			endCrop();
+		return true;
+	}
 
 	if (l_Key == SDLK_SPACE)
 	{
@@ -429,6 +470,15 @@ bool Editor::handleKeyDown(const SDL_KeyboardEvent& p_Event)
 		case SDLK_L:
 			if (!p_Event.repeat)
 				toggleSelectionLock();
+			return l_Handled();
+		case SDLK_G:
+			if (!p_Event.repeat)
+			{
+				if (l_Shift)
+					ungroupSelection();
+				else
+					groupSelection();
+			}
 			return l_Handled();
 		case SDLK_RIGHTBRACKET:
 			if (!p_Event.repeat)
@@ -624,6 +674,54 @@ void Editor::toggleSelectionLock()
 	setSelectionLocked(selectionLockState() == LockState::None);
 }
 
+bool Editor::selectionHasGroup() const
+{
+	return std::ranges::any_of(m_Selection.ids(), [&](const ObjectId p_Id)
+	{
+		const Object* l_Object = m_Document.find(p_Id);
+		return l_Object != nullptr && l_Object->group != INVALID_OBJECT_ID;
+	});
+}
+
+bool Editor::canGroupSelection() const
+{
+	ObjectId l_Shared = INVALID_OBJECT_ID;
+	size_t l_Count = 0;
+	bool l_Mixed = false;
+	for (const ObjectId l_Id : m_Selection.ids())
+	{
+		const Object* l_Object = m_Document.find(l_Id);
+		if (l_Object == nullptr || l_Object->locked)
+			continue;
+		l_Mixed |= ++l_Count > 1 && l_Object->group != l_Shared;
+		l_Shared = l_Object->group;
+	}
+	// Two or more objects, unless they are all in the one same group already
+	return l_Count >= 2 && (l_Mixed || l_Shared == INVALID_OBJECT_ID);
+}
+
+void Editor::groupSelection()
+{
+	if (isBusy() || m_Selection.size() < 2)
+		return;
+	groupObjects(m_Document, m_History, m_Selection.orderedIds());
+}
+
+void Editor::ungroupSelection()
+{
+	if (isBusy() || m_Selection.empty())
+		return;
+	ungroupObjects(m_Document, m_History, m_Selection.orderedIds());
+}
+
+void Editor::toggleSelectionGroup()
+{
+	if (canGroupSelection())
+		groupSelection();
+	else
+		ungroupSelection();
+}
+
 void Editor::duplicateSelection()
 {
 	if (isBusy() || m_Selection.empty())
@@ -681,7 +779,7 @@ void Editor::recolorSelection(const Color p_Color)
 {
 	if (m_TextSession.active())
 	{
-		applyTextStyle([&](TextData& p_Data) { p_Data.color = Color{ p_Color.r, p_Color.g, p_Color.b, p_Data.color.a }; });
+		m_TextSession.applyColor(p_Color);
 		return;
 	}
 	if (isBusy() || m_Selection.empty())
@@ -1023,8 +1121,167 @@ bool Editor::handleRulerPointer(const platform::PointerEvent& p_Event, const DVe
 	return false;
 }
 
+// ------------------------------------------------------------------------------------------------ cropping
+
+DVec2 Editor::cropHandlePoint(const Rect& p_Shown, const int p_Handle)
+{
+	const DVec2 l_Half = p_Shown.size() * 0.5;
+	return p_Shown.center() + DVec2{ CROP_HANDLE_X[p_Handle] * l_Half.x, CROP_HANDLE_Y[p_Handle] * l_Half.y };
+}
+
+bool Editor::beginCrop(const ObjectId p_Id)
+{
+	const Object* l_Object = m_Document.find(p_Id);
+	if (l_Object == nullptr || l_Object->image() == nullptr || l_Object->locked || !l_Object->transform.isInvertible() || isBusy())
+		return false;
+	m_TextSession.end();
+	const ObjectId l_Only[]{ p_Id };
+	m_Selection.set(l_Only);
+	m_CropId = p_Id;
+	m_CropHover = -1;
+	m_CropDrag = -1;
+	return true;
+}
+
+bool Editor::beginCropSelected()
+{
+	if (m_Selection.size() != 1)
+		return false;
+	return beginCrop(m_Selection.orderedIds().front());
+}
+
+void Editor::endCrop()
+{
+	m_CropId = INVALID_OBJECT_ID;
+	m_CropHover = -1;
+	m_CropDrag = -1;
+}
+
+std::optional<Editor::CropView> Editor::cropView() const
+{
+	const Object* l_Object = cropping() ? m_Document.find(m_CropId) : nullptr;
+	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
+	if (l_Image == nullptr)
+		return std::nullopt;
+	return CropView{
+		.id = m_CropId,
+		.transform = l_Object->transform,
+		.full = l_Image->fullLocalBounds(),
+		.shown = m_CropDrag >= 0 ? m_CropShown : l_Image->localBounds(),
+		.hovered = m_CropDrag >= 0 ? m_CropDrag : m_CropHover,
+		.dragging = m_CropDrag >= 0,
+	};
+}
+
+int Editor::cropHandleAt(const Object& p_Object, const Rect& p_Shown, const DVec2 p_Screen) const
+{
+	const Affine2 l_ToScreen = m_Camera.worldToScreenTransform() * p_Object.transform;
+	const double l_Reach = CROP_GRAB_POINTS * m_Camera.pixelScale();
+	int l_Best = -1;
+	double l_BestDistance = l_Reach;
+	for (const int l_Handle : CROP_HANDLE_PRIORITY)
+	{
+		const double l_Distance = glm::length(l_ToScreen.apply(cropHandlePoint(p_Shown, l_Handle)) - p_Screen);
+		if (l_Distance < l_BestDistance)
+		{
+			l_Best = l_Handle;
+			l_BestDistance = l_Distance;
+		}
+	}
+	if (l_Best < 0 && l_ToScreen.isInvertible() && p_Shown.contains(l_ToScreen.inverse().apply(p_Screen)))
+		return CROP_HANDLE_MOVE;
+	return l_Best;
+}
+
+bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec2 p_World)
+{
+	const Object* l_Object = m_Document.find(m_CropId);
+	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
+	if (l_Image == nullptr || l_Object->locked || !l_Object->transform.isInvertible())
+	{
+		endCrop();
+		return false;
+	}
+	const Rect l_Full = l_Image->fullLocalBounds();
+	const DVec2 l_FullSize = l_Full.size();
+	const DVec2 l_Screen{ p_Event.position };
+	const DVec2 l_Local = l_Object->transform.inverse().apply(p_World);
+	using Phase = platform::PointerPhase;
+
+	if (m_CropDrag >= 0)
+	{
+		if (p_Event.phase == Phase::Move)
+		{
+			const DVec2 l_Target = l_Local - m_CropGrab; // where the grabbed point of the frame should be
+			Rect l_Frame = m_CropStart;
+			if (m_CropDrag == CROP_HANDLE_MOVE)
+			{
+				const DVec2 l_Size = m_CropStart.size();
+				const DVec2 l_Min = glm::clamp(l_Target, l_Full.min, l_Full.max - l_Size);
+				l_Frame = Rect::fromPoints(l_Min, l_Min + l_Size);
+			}
+			else
+			{
+				const DVec2 l_MinSize = l_FullSize * CROP_MIN_FRACTION;
+				const int l_X = CROP_HANDLE_X[m_CropDrag];
+				const int l_Y = CROP_HANDLE_Y[m_CropDrag];
+				// An edge stops a little short of the opposite one (or where it already is, for a frame that is thinner already)
+				const auto l_Limit = [](const double p_Value, const double p_Low, const double p_High) { return std::clamp(p_Value, p_Low, std::max(p_Low, p_High)); };
+				if (l_X < 0)
+					l_Frame.min.x = l_Limit(l_Target.x, l_Full.min.x, l_Frame.max.x - l_MinSize.x);
+				else if (l_X > 0)
+					l_Frame.max.x = std::min(l_Full.max.x, std::max(l_Target.x, l_Frame.min.x + std::min(l_MinSize.x, l_Frame.size().x)));
+				if (l_Y < 0)
+					l_Frame.min.y = l_Limit(l_Target.y, l_Full.min.y, l_Frame.max.y - l_MinSize.y);
+				else if (l_Y > 0)
+					l_Frame.max.y = std::min(l_Full.max.y, std::max(l_Target.y, l_Frame.min.y + std::min(l_MinSize.y, l_Frame.size().y)));
+			}
+			m_CropShown = l_Frame;
+		}
+		else if (p_Event.phase == Phase::Up || p_Event.phase == Phase::Cancel)
+		{
+			const Rect l_Frame = m_CropShown;
+			m_CropDrag = -1;
+			if (p_Event.phase == Phase::Up)
+			{
+				const DVec2 l_Min = (l_Frame.min - l_Full.min) / l_FullSize;
+				const DVec2 l_Max = (l_Frame.max - l_Full.min) / l_FullSize;
+				cropImage(m_Document, m_History, m_CropId, Vec2{ l_Min }, Vec2{ l_Max });
+			}
+		}
+		return true;
+	}
+
+	if (p_Event.phase == Phase::Move)
+	{
+		m_CropHover = cropHandleAt(*l_Object, l_Image->localBounds(), l_Screen);
+		return true;
+	}
+	if (p_Event.phase == Phase::Down && p_Event.button == platform::PointerButton::Primary)
+	{
+		const Rect l_Shown = l_Image->localBounds();
+		const int l_Handle = cropHandleAt(*l_Object, l_Shown, l_Screen);
+		if (l_Handle >= 0)
+		{
+			m_CropDrag = l_Handle;
+			m_CropStart = l_Shown;
+			m_CropShown = l_Shown;
+			m_CropGrab = l_Local - (l_Handle == CROP_HANDLE_MOVE ? l_Shown.min : cropHandlePoint(l_Shown, l_Handle));
+			return true;
+		}
+		if (l_Full.contains(l_Local))
+			return true; // the darkened part: nothing to take hold of
+		endCrop();
+		return false;
+	}
+	return false;
+}
+
 bool Editor::update(const double p_DeltaSeconds)
 {
+	// Cropping lasts as long as its picture is the selection (undoing the picture away, selecting something else...)
+	if (cropping() && (m_Document.find(m_CropId) == nullptr || m_Selection.size() != 1 || !m_Selection.contains(m_CropId)))
+		endCrop();
 	const bool l_Camera = updateCamera(p_DeltaSeconds);
 	const bool l_Laser = m_Laser->update(SDL_GetTicksNS());
 	return l_Camera || l_Laser;
@@ -1124,7 +1381,10 @@ std::optional<Editor::CurrentText> Editor::currentText() const
 	if (m_TextSession.active())
 	{
 		const Object* l_Object = m_Document.find(m_TextSession.object());
-		return CurrentText{ .data = m_TextSession.data(), .scale = l_Object != nullptr ? l_Object->transform.uniformScale() : 1.0 };
+		CurrentText l_Current{ .data = m_TextSession.data(), .scale = l_Object != nullptr ? l_Object->transform.uniformScale() : 1.0 };
+		if (const std::optional<Color> l_Selected = m_TextSession.selectionColor()) // the colour controls show the selected letters
+			l_Current.data.color = *l_Selected;
+		return l_Current;
 	}
 	for (const ObjectId l_Id : m_Selection.orderedIds())
 	{

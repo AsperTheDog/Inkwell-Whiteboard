@@ -49,6 +49,7 @@ constexpr uint32_t TAG_OBJS = tag("OBJS");
 constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_FONT = tag("FONT");
 constexpr uint32_t TAG_LOCK = tag("LOCK"); // ids of the locked objects
+constexpr uint32_t TAG_GRUP = tag("GRUP"); // (object id, group id) of every grouped object
 constexpr uint32_t TAG_ABIG = tag("ABIG"); // one big asset, written by a background save
 constexpr uint32_t TAG_AREF = tag("AREF"); // big assets that stay in a file of their own (recovery files)
 constexpr uint32_t TAG_END = tag("END ");
@@ -61,7 +62,7 @@ enum class ObjectType : uint8_t
 	Video = 4,
 };
 
-constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t);
+constexpr size_t IMAGE_BODY_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 1 + sizeof(uint32_t) + 4 * sizeof(float);
 constexpr size_t VIDEO_BODY_BASE_BYTES = 6 * sizeof(double) + sizeof(uint64_t) + 2 * sizeof(float) + 2 + sizeof(float) + 2;
 
 size_t videoBodyBytes(const VideoData& p_Video)
@@ -354,6 +355,10 @@ void writeImage(Writer& p_Writer, const Object& p_Object, const ImageData& p_Ima
 	p_Writer.f32(p_Image.size.y);
 	p_Writer.u8(p_Image.playing ? 1 : 0);
 	p_Writer.u32(p_Image.frame);
+	p_Writer.f32(p_Image.cropMin.x);
+	p_Writer.f32(p_Image.cropMin.y);
+	p_Writer.f32(p_Image.cropMax.x);
+	p_Writer.f32(p_Image.cropMax.y);
 }
 
 bool readImage(Reader& p_Reader, Object& p_Object)
@@ -366,6 +371,18 @@ bool readImage(Reader& p_Reader, Object& p_Object)
 	l_Image.size.y = p_Reader.f32();
 	l_Image.playing = p_Reader.u8() != 0;
 	l_Image.frame = p_Reader.u32();
+	if (p_Reader.remaining() >= 4 * sizeof(float)) // boards saved before cropping end here
+	{
+		l_Image.cropMin.x = p_Reader.f32();
+		l_Image.cropMin.y = p_Reader.f32();
+		l_Image.cropMax.x = p_Reader.f32();
+		l_Image.cropMax.y = p_Reader.f32();
+		const bool l_Valid = finite(l_Image.cropMin.x) && finite(l_Image.cropMin.y) && finite(l_Image.cropMax.x) && finite(l_Image.cropMax.y)
+			&& l_Image.cropMin.x >= 0.f && l_Image.cropMin.y >= 0.f && l_Image.cropMax.x <= 1.f && l_Image.cropMax.y <= 1.f
+			&& l_Image.cropMin.x < l_Image.cropMax.x && l_Image.cropMin.y < l_Image.cropMax.y;
+		if (!l_Valid)
+			return false;
+	}
 	if (!p_Reader.ok() || l_Image.asset == INVALID_ASSET_ID || !finite(l_Image.size.x) || !finite(l_Image.size.y) || l_Image.size.x <= 0.f || l_Image.size.y <= 0.f)
 		return false;
 	p_Object.payload = l_Image;
@@ -437,9 +454,11 @@ bool readVideo(Reader& p_Reader, Object& p_Object)
 	return true;
 }
 
+constexpr size_t TEXT_SPAN_BYTES = 2 * sizeof(uint32_t) + 3 * sizeof(float);
+
 size_t textBodyBytes(const TextData& p_Text)
 {
-	return TRANSFORM_BYTES + 4 + p_Text.family.size() + 1 + sizeof(float) + 4 * sizeof(float) + 1 + sizeof(float) + 2 * sizeof(float) + 4 + p_Text.text.size();
+	return TRANSFORM_BYTES + 4 + p_Text.family.size() + 1 + sizeof(float) + 4 * sizeof(float) + 1 + sizeof(float) + 2 * sizeof(float) + 4 + p_Text.text.size() + (p_Text.spans.empty() ? 0 : 4 + p_Text.spans.size() * TEXT_SPAN_BYTES);
 }
 
 void writeText(Writer& p_Writer, const Object& p_Object, const TextData& p_Text)
@@ -460,6 +479,18 @@ void writeText(Writer& p_Writer, const Object& p_Object, const TextData& p_Text)
 	p_Writer.f32(p_Text.size.x);
 	p_Writer.f32(p_Text.size.y);
 	p_Writer.string(p_Text.text);
+	if (!p_Text.spans.empty()) // after the text, so boards saved before letters could have colours still read the same
+	{
+		p_Writer.u32(static_cast<uint32_t>(p_Text.spans.size()));
+		for (const ColorSpan& l_Span : p_Text.spans)
+		{
+			p_Writer.u32(l_Span.begin);
+			p_Writer.u32(l_Span.end);
+			p_Writer.f32(l_Span.color.r);
+			p_Writer.f32(l_Span.color.g);
+			p_Writer.f32(l_Span.color.b);
+		}
+	}
 }
 
 bool readText(Reader& p_Reader, Object& p_Object)
@@ -476,10 +507,28 @@ bool readText(Reader& p_Reader, Object& p_Object)
 	l_Text.size.x = p_Reader.f32();
 	l_Text.size.y = p_Reader.f32();
 	l_Text.text = p_Reader.string(MAX_TEXT_BYTES);
+	if (p_Reader.ok() && p_Reader.remaining() >= sizeof(uint32_t)) // boards saved before coloured letters end here
+	{
+		const uint32_t l_Count = p_Reader.u32();
+		if (!p_Reader.ok() || static_cast<uint64_t>(l_Count) * TEXT_SPAN_BYTES > p_Reader.remaining())
+			return false;
+		l_Text.spans.reserve(l_Count);
+		for (uint32_t i = 0; i < l_Count; ++i)
+		{
+			ColorSpan l_Span;
+			l_Span.begin = p_Reader.u32();
+			l_Span.end = p_Reader.u32();
+			l_Span.color = Color{ p_Reader.f32(), p_Reader.f32(), p_Reader.f32(), 1.f };
+			if (!finite(l_Span.color.r) || !finite(l_Span.color.g) || !finite(l_Span.color.b))
+				return false;
+			l_Text.spans.push_back(l_Span);
+		}
+	}
 	if (!p_Reader.ok() || l_Align > static_cast<uint8_t>(TextAlign::Right) || !finite(l_Text.fontSize) || l_Text.fontSize <= 0.f || !finite(l_Text.wrapWidth) || l_Text.wrapWidth < 0.f ||
 	    !finite(l_Text.size.x) || !finite(l_Text.size.y) || l_Text.size.x <= 0.f || l_Text.size.y <= 0.f || !finite(l_Text.color.r) || !finite(l_Text.color.g) || !finite(l_Text.color.b) || !finite(l_Text.color.a))
 		return false;
 	l_Text.style &= TextStyle::Bold | TextStyle::Italic;
+	normalizeSpans(l_Text.spans, l_Text.text.size(), l_Text.color); // spans from a damaged file cannot point outside the text
 	l_Text.align = static_cast<TextAlign>(l_Align);
 	p_Object.payload = std::move(l_Text);
 	return true;
@@ -923,6 +972,24 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 		}
 		l_Writer.endChunk();
 	}
+
+	uint32_t l_GroupedCount = 0;
+	for (const Object* l_Object : l_Objects)
+		l_GroupedCount += l_Object->group != INVALID_OBJECT_ID ? 1u : 0u;
+	if (l_GroupedCount > 0)
+	{
+		l_Writer.beginChunk(TAG_GRUP);
+		l_Writer.u32(l_GroupedCount);
+		for (const Object* l_Object : l_Objects)
+		{
+			if (l_Object->group != INVALID_OBJECT_ID)
+			{
+				l_Writer.u64(l_Object->id);
+				l_Writer.u64(l_Object->group);
+			}
+		}
+		l_Writer.endChunk();
+	}
 	return l_Writer.take();
 }
 
@@ -1084,6 +1151,7 @@ struct LoadState
 	std::vector<ImageAsset> assets;
 	std::vector<FontAsset> fonts;
 	std::unordered_set<ObjectId> locked;
+	std::unordered_map<ObjectId, ObjectId> groups; // object -> group
 	std::unordered_set<AssetId> seenAssets;
 	OpenFiles open;
 	bool haveAssets = false;
@@ -1162,6 +1230,18 @@ std::string consumeChunk(LoadState& p_State, const uint32_t p_Tag, const std::sp
 			p_State.locked.insert(l_Reader.u64());
 		break;
 	}
+	case TAG_GRUP:
+	{
+		const uint32_t l_Count = l_Reader.u32();
+		if (!l_Reader.ok() || static_cast<uint64_t>(l_Count) * 2 * sizeof(uint64_t) > l_Reader.remaining())
+			return "The file is damaged (bad group data).";
+		for (uint32_t i = 0; i < l_Count; ++i)
+		{
+			const ObjectId l_Id = l_Reader.u64();
+			p_State.groups[l_Id] = l_Reader.u64();
+		}
+		break;
+	}
 	case TAG_END:
 		p_State.haveEnd = true;
 		break;
@@ -1204,6 +1284,8 @@ LoadResult commitLoad(LoadState& p_State, Document& p_Document, BoardMeta& p_Met
 	for (std::unique_ptr<Object>& l_Object : p_State.objects)
 	{
 		l_Object->locked = p_State.locked.contains(l_Object->id);
+		if (const auto l_Group = p_State.groups.find(l_Object->id); l_Group != p_State.groups.end())
+			l_Object->group = l_Group->second;
 		p_Document.insert(std::move(l_Object));
 	}
 

@@ -1,4 +1,4 @@
-// Image file decoding (PNG, JPEG, BMP, GIF... through stb_image) and recompression. Pure CPU, no Vulkan, safe to call
+// Image file decoding (PNG, JPEG, BMP, GIF... through stb_image, WebP through FFmpeg) and recompression. Pure CPU, no Vulkan, safe to call
 // from worker threads.
 module;
 #include <cstddef>
@@ -16,7 +16,8 @@ struct ImageInfo
 {
 	uint32_t width = 0;
 	uint32_t height = 0;
-	bool gif = false; // may be animated
+	bool gif = false;  // may be animated
+	bool webp = false; // decoded by FFmpeg instead of stb_image (and animated when `gif` is set too)
 };
 
 // Reads the header only. Nullopt for anything that is not a supported picture.

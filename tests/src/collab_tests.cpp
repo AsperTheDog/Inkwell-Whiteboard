@@ -432,7 +432,7 @@ TEST(Collab, LinesBeingDrawnAreSeenByEveryoneAndGoAwayWhenFinished)
 }
 
 // Play/pause and the playhead are shared; loop, mute and volume stay with each person
-TEST(Collab, VideoPlaybackIsSharedButLoopAndVolumeAreNot)
+TEST(Collab, VideoPlaybackAndLoopAreSharedButVolumeIsNot)
 {
 	Node l_Host;
 	Node l_Ana;
@@ -464,14 +464,12 @@ TEST(Collab, VideoPlaybackIsSharedButLoopAndVolumeAreNot)
 	EXPECT_EQ(l_HostEvents.back().position, 12.5);
 	EXPECT_TRUE(l_Ana.session->takeVideoEvents().empty()); // nobody is told about their own
 
-	// Bo likes it quiet and not looping: that does not reach anybody
+	// Bo likes it quiet and not looping: the loop switch reaches everybody, the sound settings do not
 	l_Bo.doc.modify(l_Video, [&](wb::Object& p_Object) { *p_Object.video() = wb::VideoData{ .asset = l_Asset, .size = { 40.f, 30.f }, .loop = false, .muted = true, .volume = 0.9f, .audioTrack = 1, .subtitleTrack = 0 }; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
-	pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [] { return false; }, 400);
-	EXPECT_TRUE(l_Host.doc.find(l_Video)->video()->loop);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return !l_Host.doc.find(l_Video)->video()->loop && !l_Ana.doc.find(l_Video)->video()->loop; }));
 	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->volume, 0.3f);
 	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->audioTrack, -1); // which tracks somebody watches is their own
 	EXPECT_EQ(l_Host.doc.find(l_Video)->video()->subtitleTrack, -1);
-	EXPECT_TRUE(l_Ana.doc.find(l_Video)->video()->loop);
 
 	// A real change from the host (the size) reaches Bo, who keeps his own sound settings
 	l_Host.doc.modify(l_Video, [&](wb::Object& p_Object) { p_Object.video()->size = { 80.f, 60.f }; }, wb::ObjectChange::Geometry);
@@ -940,53 +938,8 @@ TEST(Collab, UndoAfterDeletingPicturesDependsOnTheirFile)
 	EXPECT_NE(l_Doc.findAsset(l_DoneAsset), nullptr);
 }
 
-// Somebody else deletes a picture that is still being sent, then undoes: it comes back as a placeholder, the file is
-// stalled for everyone, and its owner can send it again
-TEST(Collab, ADeletedAndRestoredUnfinishedPictureWaitsForItsOwnerToResend)
-{
-	Node l_Host;
-	Node l_Ana;
-	Node l_Bo;
-	std::string l_Error;
-	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
-	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
-	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return joinedAndOnline(l_Ana) && joinedAndOnline(l_Bo); }));
-
-	const std::vector<uint8_t> l_Bytes = noise(24u << 20, 9);
-	const wb::ObjectId l_Id = addPicture(l_Ana.doc, l_Bytes, "photo.jpg");
-	const wb::AssetId l_Asset = l_Ana.doc.find(l_Id)->image()->asset;
-
-	// The host deletes it while the file is on its way (this is what a delete does), and the transfer is cancelled
-	std::unique_ptr<wb::Object> l_Taken;
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] {
-		if (l_Host.doc.find(l_Id) == nullptr || l_Host.session->assetProgress().files == 0)
-			return false;
-		l_Taken = std::move(l_Host.doc.take(l_Id).object);
-		return true;
-	}));
-	ASSERT_NE(l_Taken, nullptr);
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.session->assetProgress().files == 0 && l_Bo.doc.find(l_Id) == nullptr; }));
-
-	// The undo: the object is back, but nobody is sending its file
-	l_Host.doc.insert(std::move(l_Taken));
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.session->assetStalled(l_Asset) && l_Bo.session->assetStalled(l_Asset) && l_Ana.session->assetReuploadable(l_Asset) && l_Bo.doc.find(l_Id) != nullptr; }));
-	EXPECT_EQ(l_Host.doc.findAsset(l_Asset), nullptr);
-	EXPECT_EQ(l_Bo.session->assetProgress().files, 0u); // nobody spins forever
-	EXPECT_EQ(l_Ana.session->assetOwnerName(l_Asset), "Ana");
-
-	// Ana presses the button: everybody gets it
-	l_Ana.session->reupload(l_Asset);
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return hasWhole(l_Host.doc, l_Asset) && hasWhole(l_Bo.doc, l_Asset); }, 30000));
-	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->load(), l_Bytes);
-	EXPECT_EQ(l_Bo.doc.findAsset(l_Asset)->load(), l_Bytes);
-	EXPECT_FALSE(l_Host.session->assetStalled(l_Asset));
-	EXPECT_FALSE(l_Bo.session->assetStalled(l_Asset));
-	EXPECT_FALSE(l_Ana.session->assetReuploadable(l_Asset));
-}
-
-// The file could not be sent and shows the re-send button; deleting it and dragging the same file in again is a fresh
-// start: it is sent, and no button comes back
+// A file nobody is sending is stalled; deleting its object and dragging the same file in again is a fresh start: it is
+// sent from the beginning
 TEST(Collab, DraggingTheSameFileInAgainStartsFresh)
 {
 	Node l_Host;
@@ -1010,20 +963,19 @@ TEST(Collab, DraggingTheSameFileInAgainStartsFresh)
 	}));
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.session->assetProgress().files == 0 && l_Bo.doc.find(l_Id) == nullptr; }));
 	l_Host.doc.insert(std::move(l_Taken));
-	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Ana.session->assetReuploadable(l_Asset) && l_Bo.session->assetStalled(l_Asset); }));
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.session->assetStalled(l_Asset) && l_Bo.session->assetStalled(l_Asset); }));
 
 	// Ana deletes the object and drags the same file in once more
 	(void)l_Ana.doc.take(l_Id);
 	const wb::ObjectId l_Again = addPicture(l_Ana.doc, l_Bytes, "photo.jpg");
 	ASSERT_EQ(l_Ana.doc.find(l_Again)->image()->asset, l_Asset); // the same file, found by its content
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return hasWhole(l_Host.doc, l_Asset) && hasWhole(l_Bo.doc, l_Asset); }, 40000));
-	EXPECT_FALSE(l_Ana.session->assetReuploadable(l_Asset));
 	EXPECT_FALSE(l_Host.session->assetStalled(l_Asset));
 	EXPECT_FALSE(l_Bo.session->assetStalled(l_Asset));
 	EXPECT_EQ(l_Host.doc.findAsset(l_Asset)->load(), l_Bytes);
 }
 
-// The owner deletes their own unfinished picture and undoes: the file is sent again without any button
+// The owner deletes their own unfinished picture and undoes: the file is sent again from the beginning
 TEST(Collab, TheOwnersOwnUndoRestartsTheTransfer)
 {
 	Node l_Host;

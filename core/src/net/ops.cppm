@@ -47,6 +47,12 @@ struct LockOp
 	ObjectId id = INVALID_OBJECT_ID;
 	bool locked = false;
 };
+// The object joins a group, or leaves its group (INVALID_OBJECT_ID)
+struct GroupOp
+{
+	ObjectId id = INVALID_OBJECT_ID;
+	ObjectId group = INVALID_OBJECT_ID;
+};
 // The whole stacking order, back to front
 struct OrderOp
 {
@@ -57,7 +63,7 @@ struct ClearOp
 {
 };
 
-using Op = std::variant<AddOp, RemoveOp, TransformOp, UpdateOp, LockOp, OrderOp, ClearOp>;
+using Op = std::variant<AddOp, RemoveOp, TransformOp, UpdateOp, LockOp, OrderOp, ClearOp, GroupOp>;
 
 void encodeOp(ByteWriter& p_Writer, const Op& p_Op);
 // False when the data is malformed

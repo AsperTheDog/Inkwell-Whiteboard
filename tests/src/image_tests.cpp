@@ -196,6 +196,61 @@ TEST(ImageEdit, PlaybackEditsAreUndoable)
 	EXPECT_EQ(l_Doc.find(l_Image)->image()->frame, 0u);
 }
 
+TEST(ImageCrop, ShownPartStaysPutAndCanBeWidenedAgain)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::AssetId l_Asset = l_Doc.addAsset(makeAsset(1));
+	const wb::ObjectId l_Image = addImage(l_Doc, l_Asset, { 100.0, 50.0 }, { 200.f, 100.f }); // covers x 0..200, y 0..100
+
+	// Keep the right half
+	ASSERT_TRUE(wb::cropImage(l_Doc, l_History, l_Image, { 0.5f, 0.f }, { 1.f, 1.f }));
+	const wb::Object* l_Object = l_Doc.find(l_Image);
+	EXPECT_FLOAT_EQ(l_Object->image()->size.x, 100.f);
+	EXPECT_FLOAT_EQ(l_Object->image()->size.y, 100.f);
+	EXPECT_NEAR(l_Object->worldBounds().min.x, 100.0, 1e-4);
+	EXPECT_NEAR(l_Object->worldBounds().max.x, 200.0, 1e-4);
+	EXPECT_NEAR(l_Object->worldBounds().min.y, 0.0, 1e-4);
+	EXPECT_NEAR(l_Object->image()->fullLocalBounds().size().x, 200.0, 1e-4);
+
+	// Uncrop on the left by half of what is hidden: the picture keeps its scale and place
+	ASSERT_TRUE(wb::cropImage(l_Doc, l_History, l_Image, { 0.25f, 0.f }, { 1.f, 1.f }));
+	l_Object = l_Doc.find(l_Image);
+	EXPECT_NEAR(l_Object->worldBounds().min.x, 50.0, 1e-4);
+	EXPECT_NEAR(l_Object->worldBounds().max.x, 200.0, 1e-4);
+
+	// The same crop again adds no undo step
+	const size_t l_Steps = l_History.undoCount();
+	EXPECT_FALSE(wb::cropImage(l_Doc, l_History, l_Image, { 0.25f, 0.f }, { 1.f, 1.f }));
+	EXPECT_EQ(l_History.undoCount(), l_Steps);
+
+	l_History.undo(l_Doc);
+	l_History.undo(l_Doc);
+	l_Object = l_Doc.find(l_Image);
+	EXPECT_FALSE(l_Object->image()->cropped());
+	EXPECT_NEAR(l_Object->worldBounds().min.x, 0.0, 1e-4);
+	EXPECT_NEAR(l_Object->worldBounds().max.x, 200.0, 1e-4);
+}
+
+TEST(ImageCrop, SurvivesSaveAndLoad)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::AssetId l_Asset = l_Doc.addAsset(makeAsset(3, 200));
+	const wb::ObjectId l_Image = addImage(l_Doc, l_Asset, { 0.0, 0.0 }, { 80.f, 40.f });
+	ASSERT_TRUE(wb::cropImage(l_Doc, l_History, l_Image, { 0.1f, 0.2f }, { 0.9f, 0.7f }));
+
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	const wb::LoadResult l_Result = wb::deserializeBoard(wb::serializeBoard(l_Doc, wb::BoardMeta{}), l_Loaded, l_Meta);
+	ASSERT_TRUE(l_Result.ok) << l_Result.error;
+	const wb::ImageData* l_Back = l_Loaded.find(l_Image)->image();
+	ASSERT_NE(l_Back, nullptr);
+	EXPECT_EQ(*l_Back, *l_Doc.find(l_Image)->image());
+	EXPECT_FLOAT_EQ(l_Back->cropMin.y, 0.2f);
+	EXPECT_FLOAT_EQ(l_Back->cropMax.x, 0.9f);
+}
+
 TEST(ImageEdit, PasteIntoAnotherBoardBringsTheAssetAlong)
 {
 	wb::Document l_Source;

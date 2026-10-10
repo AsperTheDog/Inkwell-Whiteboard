@@ -268,7 +268,9 @@ void App::buildCanvasOverlays()
 	if (l_Overlay.lasso.size() >= 2)
 		l_Draw.polyline(l_Overlay.lasso, 1.8f * l_Scale, l_Accent, true);
 
-	if (l_Overlay.visible)
+	buildCropOverlay();
+
+	if (l_Overlay.visible && !m_Editor.cropping())
 	{
 		for (const auto& [l_Min, l_Max] : l_Overlay.objectBoxes)
 			l_Draw.outline(Rect2{ l_Min, l_Max }, 1.5f * l_Scale, ui::withAlpha(l_Accent, 0.5f), 1.f * l_Scale);

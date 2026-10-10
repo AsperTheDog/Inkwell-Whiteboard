@@ -119,15 +119,9 @@ public:
 		uint64_t expected = 0;  // size of those that have started
 	};
 	[[nodiscard]] AssetProgress assetProgress() const;
-	// A file nobody is sending (its object was deleted mid-transfer and then brought back by someone else's undo). The
-	// pictures wait as placeholders; whoever has the file gets the chance to send it again.
-	[[nodiscard]] bool assetStalled(AssetId p_Id) const { return m_Stalled.contains(p_Id); }      // we lack it
-	[[nodiscard]] bool assetReuploadable(AssetId p_Id) const { return m_Reuploadable.contains(p_Id); } // we have it, the others cannot get it
-	[[nodiscard]] bool hasAssetNotices() const { return !m_Stalled.empty() || !m_Reuploadable.empty(); }
-	// Offers the file to the host again so everyone can have it
-	void reupload(AssetId p_Id);
-	// Who made the file (empty when they are gone)
-	[[nodiscard]] std::string assetOwnerName(AssetId p_Id) const;
+	// A file nobody is sending. The pictures wait as placeholders until it is added to the board again.
+	[[nodiscard]] bool assetStalled(AssetId p_Id) const { return m_Stalled.contains(p_Id); }
+	[[nodiscard]] bool hasAssetNotices() const { return !m_Stalled.empty(); }
 	// How much of one file has arrived, 0..1; negative when that file is not being received
 	[[nodiscard]] double assetFraction(AssetId p_Id) const;
 	// Bumps whenever a picture or video finishes arriving (the board has to be redrawn)
@@ -176,7 +170,7 @@ public:
 	// Bumps whenever somebody's line changes or ends
 	[[nodiscard]] uint64_t strokesRevision() const { return m_StrokesRevision; }
 
-	// ---- video playback: play/pause and the playhead are shared, loop and sound are each person's own
+	// ---- video playback: play/pause and the playhead are shared (loop travels with the object), sound is each person's own
 	// This user pressed play/pause or moved the playhead of video p_Id
 	void sendVideoState(ObjectId p_Id, bool p_Playing, double p_Position);
 	struct VideoEvent
@@ -306,7 +300,6 @@ private:
 	// Host: nobody can supply this file now. Everyone is told; the owner may offer it again.
 	void stallAsset(AssetId p_Id);
 	void assetStalledReceived(Peer& p_Peer, const Frame& p_Frame);
-	void assetOffered(Peer& p_Peer, const Frame& p_Frame);
 	// Objects brought back or changed here (an undo) whose file is missing: ask for it or note that it is stalled
 	void resolveLocalMedia();
 	[[nodiscard]] Peer* peerOfSlot(uint16_t p_Slot);
@@ -390,7 +383,6 @@ private:
 	uint64_t m_AssetsRevision = 0;
 	uint64_t m_PrunedRevision = 0; // document revision at the last pruneDownloads
 	std::unordered_set<AssetId> m_Stalled;
-	std::unordered_set<AssetId> m_Reuploadable;
 	std::vector<ObjectId> m_LocalMedia; // objects added or changed here since the last tick
 
 	std::unordered_map<uint16_t, RemoteCursor> m_Cursors;

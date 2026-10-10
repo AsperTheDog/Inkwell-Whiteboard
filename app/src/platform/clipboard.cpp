@@ -162,7 +162,7 @@ bool clipboardMayHavePictures()
 	if (IsClipboardFormatAvailable(CF_HDROP) || IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5) || IsClipboardFormatAvailable(RegisterClipboardFormatW(L"PNG")))
 		return true;
 #endif
-	return SDL_HasClipboardData("image/png") || SDL_HasClipboardData("image/jpeg") || SDL_HasClipboardData("image/bmp") || SDL_HasClipboardData("image/gif") || SDL_HasClipboardData("text/uri-list");
+	return SDL_HasClipboardData("image/png") || SDL_HasClipboardData("image/jpeg") || SDL_HasClipboardData("image/bmp") || SDL_HasClipboardData("image/gif") || SDL_HasClipboardData("image/webp") || SDL_HasClipboardData("text/uri-list");
 }
 
 std::vector<ClipboardPicture> readClipboardPictures(const uint64_t p_MaxBytes)
@@ -232,7 +232,7 @@ std::vector<ClipboardPicture> readClipboardPictures(const uint64_t p_MaxBytes)
 	}
 	if (l_Result.empty())
 	{
-		for (const char* l_Mime : { "image/png", "image/gif", "image/jpeg", "image/bmp" })
+		for (const char* l_Mime : { "image/png", "image/gif", "image/webp", "image/jpeg", "image/bmp" })
 		{
 			ClipboardPicture l_Picture;
 			l_Picture.name = "Pasted picture";

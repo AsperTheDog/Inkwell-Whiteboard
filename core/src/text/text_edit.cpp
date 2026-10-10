@@ -9,6 +9,8 @@ module;
 
 module wb.text.edit;
 
+import wb.math;
+import wb.doc.object;
 import wb.text.utf8;
 
 namespace wb::text
@@ -18,8 +20,11 @@ namespace
 constexpr size_t MAX_UNDO = 256;
 } // namespace
 
-TextEditor::TextEditor(std::string p_Text) : m_Text(sanitize(p_Text))
+TextEditor::TextEditor(std::string p_Text, std::vector<ColorSpan> p_Spans) : m_Text(sanitize(p_Text)), m_Spans(std::move(p_Spans))
 {
+	// The spans belong to the text as given; if cleaning it changed its length they no longer line up
+	if (m_Text.size() != p_Text.size())
+		m_Spans.clear();
 	m_Caret = m_Anchor = m_Text.size();
 }
 
@@ -28,7 +33,7 @@ void TextEditor::remember(const Kind p_Kind)
 	// Consecutive typing (or deleting) is one undo step
 	if (p_Kind != Kind::Other && p_Kind == m_LastKind)
 		return;
-	m_Undo.push_back(Snapshot{ m_Text, m_Caret, m_Anchor });
+	m_Undo.push_back(snapshot());
 	if (m_Undo.size() > MAX_UNDO)
 		m_Undo.erase(m_Undo.begin());
 	m_Redo.clear();
@@ -43,10 +48,40 @@ void TextEditor::changed()
 void TextEditor::restore(const Snapshot& p_Snapshot)
 {
 	m_Text = p_Snapshot.text;
+	m_Spans = p_Snapshot.spans;
 	m_Caret = std::min(p_Snapshot.caret, m_Text.size());
 	m_Anchor = std::min(p_Snapshot.anchor, m_Text.size());
 	m_Composition.clear();
 	m_LastKind = Kind::None;
+	changed();
+}
+
+const ColorSpan* TextEditor::inheritedSpan(const size_t p_Position, const bool p_Replacing) const
+{
+	return p_Position > 0 && !p_Replacing ? spanAt(m_Spans, p_Position - 1) : spanAt(m_Spans, p_Position);
+}
+
+const ColorSpan* TextEditor::spanAtCaret() const
+{
+	return m_Caret < m_Text.size() ? spanAt(m_Spans, m_Caret) : inheritedSpan(m_Caret, false);
+}
+
+bool TextEditor::paintSelection(const Color& p_Color, const Color& p_Base)
+{
+	if (!hasSelection())
+		return false;
+	remember(Kind::Other);
+	m_LastKind = Kind::None;
+	paintSpans(m_Spans, selectionBegin(), selectionEnd(), p_Color, m_Text.size(), p_Base);
+	changed();
+	return true;
+}
+
+void TextEditor::clearSpans()
+{
+	if (m_Spans.empty())
+		return;
+	m_Spans.clear();
 	changed();
 }
 
@@ -60,6 +95,7 @@ bool TextEditor::insert(const std::string_view p_Text)
 	const bool l_Breaks = l_Clean.find_first_of(" \n\t") != std::string::npos || l_Clean.size() > 8;
 	remember(hasSelection() || l_Breaks ? Kind::Other : Kind::Typing);
 	const size_t l_Begin = selectionBegin();
+	editSpans(m_Spans, l_Begin, selectionEnd() - l_Begin, l_Clean.size(), inheritedSpan(l_Begin, hasSelection()));
 	m_Text.replace(l_Begin, selectionEnd() - l_Begin, l_Clean);
 	m_Caret = m_Anchor = l_Begin + l_Clean.size();
 	if (l_Breaks)
@@ -74,6 +110,7 @@ bool TextEditor::deleteSelection()
 		return false;
 	remember(Kind::Other);
 	const size_t l_Begin = selectionBegin();
+	editSpans(m_Spans, l_Begin, selectionEnd() - l_Begin, 0, nullptr);
 	m_Text.erase(l_Begin, selectionEnd() - l_Begin);
 	m_Caret = m_Anchor = l_Begin;
 	changed();
@@ -88,6 +125,7 @@ bool TextEditor::backspace(const bool p_Word)
 		return false;
 	remember(Kind::Deleting);
 	const size_t l_From = p_Word ? previousWord(m_Text, m_Caret) : previousCluster(m_Text, m_Caret);
+	editSpans(m_Spans, l_From, m_Caret - l_From, 0, nullptr);
 	m_Text.erase(l_From, m_Caret - l_From);
 	m_Caret = m_Anchor = l_From;
 	changed();
@@ -102,6 +140,7 @@ bool TextEditor::erase(const bool p_Word)
 		return false;
 	remember(Kind::Deleting);
 	const size_t l_To = p_Word ? nextWord(m_Text, m_Caret) : nextCluster(m_Text, m_Caret);
+	editSpans(m_Spans, m_Caret, l_To - m_Caret, 0, nullptr);
 	m_Text.erase(m_Caret, l_To - m_Caret);
 	changed();
 	return true;
@@ -114,6 +153,7 @@ bool TextEditor::setText(const std::string_view p_Text)
 		return false;
 	remember(Kind::Other);
 	m_Text = l_Clean;
+	m_Spans.clear();
 	m_Caret = m_Anchor = m_Text.size();
 	m_LastKind = Kind::None;
 	changed();
@@ -195,6 +235,14 @@ std::string TextEditor::displayText() const
 	return l_Text;
 }
 
+std::vector<ColorSpan> TextEditor::displaySpans() const
+{
+	std::vector<ColorSpan> l_Spans = m_Spans;
+	if (!m_Composition.empty())
+		editSpans(l_Spans, m_Caret, 0, m_Composition.size(), inheritedSpan(m_Caret, false));
+	return l_Spans;
+}
+
 size_t TextEditor::realIndex(const size_t p_DisplayByte) const
 {
 	if (m_Composition.empty() || p_DisplayByte <= m_Caret)
@@ -215,7 +263,7 @@ void TextEditor::undo()
 {
 	if (m_Undo.empty())
 		return;
-	m_Redo.push_back(Snapshot{ m_Text, m_Caret, m_Anchor });
+	m_Redo.push_back(snapshot());
 	const Snapshot l_Snapshot = std::move(m_Undo.back());
 	m_Undo.pop_back();
 	restore(l_Snapshot);
@@ -225,7 +273,7 @@ void TextEditor::redo()
 {
 	if (m_Redo.empty())
 		return;
-	m_Undo.push_back(Snapshot{ m_Text, m_Caret, m_Anchor });
+	m_Undo.push_back(snapshot());
 	const Snapshot l_Snapshot = std::move(m_Redo.back());
 	m_Redo.pop_back();
 	restore(l_Snapshot);

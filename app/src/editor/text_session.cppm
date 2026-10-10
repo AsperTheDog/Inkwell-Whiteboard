@@ -86,6 +86,10 @@ public:
 
 	// Changes the style of the text being edited (font, size, colour, alignment, wrap width...)
 	void applyStyle(const std::function<void(TextData&)>& p_Edit);
+	// Colours the selected letters; without a selection the whole text, which drops any colours of single letters
+	void applyColor(Color p_Color);
+	// The colour of the first selected letter (nullopt without a selection)
+	[[nodiscard]] std::optional<Color> selectionColor() const;
 	[[nodiscard]] const TextData& data() const { return m_Data; }
 
 	[[nodiscard]] std::optional<TextEditView> view();

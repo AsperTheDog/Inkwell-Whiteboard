@@ -50,9 +50,27 @@ std::vector<ObjectId> insertCopies(Document& p_Document, History& p_History, con
 	std::vector<std::unique_ptr<Object>> l_Copies;
 	std::vector<ObjectId> l_Ids;
 	l_Copies.reserve(p_Sources.size());
+	// A group that is copied stays a group, but a new one: the copies must not join the originals. Copies that are alone
+	// from their group (the rest was not copied) end up in none.
+	std::unordered_map<ObjectId, size_t> l_GroupSizes;
+	for (const std::unique_ptr<Object>& l_Source : p_Sources)
+		++l_GroupSizes[l_Source->group];
+	std::unordered_map<ObjectId, ObjectId> l_GroupMap;
 	for (const std::unique_ptr<Object>& l_Source : p_Sources)
 	{
 		std::unique_ptr<Object> l_Copy = cloneObject(*l_Source, p_Document.allocateId());
+		if (l_Source->group != INVALID_OBJECT_ID)
+		{
+			if (l_GroupSizes[l_Source->group] < 2)
+				l_Copy->group = INVALID_OBJECT_ID;
+			else
+			{
+				ObjectId& l_NewGroup = l_GroupMap[l_Source->group];
+				if (l_NewGroup == INVALID_OBJECT_ID)
+					l_NewGroup = p_Document.allocateId();
+				l_Copy->group = l_NewGroup;
+			}
+		}
 		l_Copy->transform = p_Shift * l_Copy->transform;
 		l_Ids.push_back(l_Copy->id);
 		l_Copies.push_back(std::move(l_Copy));
@@ -166,6 +184,37 @@ void editImages(Document& p_Document, History& p_History, const std::span<const 
 		p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), p_Name));
 }
 
+bool cropImage(Document& p_Document, History& p_History, const ObjectId p_Id, const Vec2 p_CropMin, const Vec2 p_CropMax)
+{
+	const Object* l_Object = p_Document.find(p_Id);
+	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
+	if (l_Image == nullptr || l_Object->locked)
+		return false;
+	constexpr float MIN_FRACTION = 0.005f;
+	const Vec2 l_Min = glm::clamp(p_CropMin, Vec2{ 0.f }, Vec2{ 1.f - MIN_FRACTION });
+	const Vec2 l_Max = glm::clamp(p_CropMax, l_Min + Vec2{ MIN_FRACTION }, Vec2{ 1.f });
+	if (l_Min == l_Image->cropMin && l_Max == l_Image->cropMax)
+		return false;
+
+	// The whole picture keeps its place and scale on the board; only the window onto it moves
+	const Rect l_Full = l_Image->fullLocalBounds();
+	const DVec2 l_FullSize = l_Full.size();
+	ImageData l_After = *l_Image;
+	l_After.cropMin = l_Min;
+	l_After.cropMax = l_Max;
+	l_After.size = Vec2{ (DVec2{ l_Max } - DVec2{ l_Min }) * l_FullSize };
+	const DVec2 l_Center = l_Full.min + (DVec2{ l_Min } + DVec2{ l_Max }) * 0.5 * l_FullSize;
+
+	SetImageDataCommand::Entry l_Entry{ .id = p_Id, .before = *l_Image, .after = l_After };
+	l_Entry.setTransform = true;
+	l_Entry.transformBefore = l_Object->transform;
+	l_Entry.transformAfter = l_Object->transform * Affine2::translate(l_Center);
+	std::vector<SetImageDataCommand::Entry> l_Entries;
+	l_Entries.push_back(l_Entry);
+	p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), "Crop picture"));
+	return true;
+}
+
 void editVideos(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
 {
 	std::vector<SetVideoDataCommand::Entry> l_Entries;
@@ -237,6 +286,39 @@ void lockObjects(Document& p_Document, History& p_History, const std::span<const
 	}
 	if (!l_Ids.empty())
 		p_History.execute(p_Document, std::make_unique<SetLockedCommand>(std::move(l_Ids), p_Locked, p_Locked ? "Lock" : "Unlock"));
+}
+
+ObjectId groupObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
+{
+	const std::vector<const Object*> l_Objects = editableObjects(p_Document, p_Ids);
+	if (l_Objects.size() < 2)
+		return INVALID_OBJECT_ID;
+	// Already exactly one group: nothing to do
+	const ObjectId l_First = l_Objects.front()->group;
+	if (l_First != INVALID_OBJECT_ID && std::ranges::all_of(l_Objects, [&](const Object* p_Object) { return p_Object->group == l_First; }))
+		return l_First;
+
+	const ObjectId l_Group = p_Document.allocateId();
+	std::vector<SetGroupCommand::Entry> l_Entries;
+	l_Entries.reserve(l_Objects.size());
+	for (const Object* l_Object : l_Objects)
+		l_Entries.push_back(SetGroupCommand::Entry{ .id = l_Object->id, .before = l_Object->group, .after = l_Group });
+	p_History.execute(p_Document, std::make_unique<SetGroupCommand>(std::move(l_Entries), "Group"));
+	return l_Group;
+}
+
+size_t ungroupObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)
+{
+	std::vector<SetGroupCommand::Entry> l_Entries;
+	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
+	{
+		if (l_Object->group != INVALID_OBJECT_ID)
+			l_Entries.push_back(SetGroupCommand::Entry{ .id = l_Object->id, .before = l_Object->group, .after = INVALID_OBJECT_ID });
+	}
+	const size_t l_Count = l_Entries.size();
+	if (l_Count > 0)
+		p_History.execute(p_Document, std::make_unique<SetGroupCommand>(std::move(l_Entries), "Ungroup"));
+	return l_Count;
 }
 
 void alignObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const AlignMode p_Mode)
@@ -359,11 +441,17 @@ void recolorObjects(Document& p_Document, History& p_History, const std::span<co
 	for (const Object* l_Object : editableObjects(p_Document, p_Ids))
 	{
 		const Color* l_Current = nullptr;
+		bool l_Mixed = false; // a text with letters of other colours still changes
 		if (const StrokeData* l_Stroke = l_Object->stroke())
+		{
 			l_Current = &l_Stroke->style.color;
+		}
 		else if (const TextData* l_Text = l_Object->text())
+		{
 			l_Current = &l_Text->color;
-		if (l_Current != nullptr && !(l_Current->r == p_Color.r && l_Current->g == p_Color.g && l_Current->b == p_Color.b))
+			l_Mixed = !l_Text->spans.empty();
+		}
+		if (l_Current != nullptr && (l_Mixed || !(l_Current->r == p_Color.r && l_Current->g == p_Color.g && l_Current->b == p_Color.b)))
 			l_Ids.push_back(l_Object->id);
 	}
 	if (!l_Ids.empty())

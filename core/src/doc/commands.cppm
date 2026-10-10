@@ -201,6 +201,10 @@ class SetImageDataCommand final : public Command
 		ObjectId id = INVALID_OBJECT_ID;
 		ImageData before{};
 		ImageData after{};
+		// Cropping changes how big the shown part is, so the object moves with it (the shown part stays where it is)
+		bool setTransform = false;
+		Affine2 transformBefore{};
+		Affine2 transformAfter{};
 	};
 
 	SetImageDataCommand(std::vector<Entry> p_Entries, std::string p_Name);
@@ -331,6 +335,33 @@ private:
 	std::string m_Name;
 };
 
+// Puts objects into groups, or takes them out (group INVALID_OBJECT_ID)
+class SetGroupCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		ObjectId before = INVALID_OBJECT_ID;
+		ObjectId after = INVALID_OBJECT_ID;
+	};
+
+	SetGroupCommand(std::vector<Entry> p_Entries, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
 // Recolours strokes and text (the alpha channel of each is kept)
 class SetStrokeColorCommand final : public Command
 {
@@ -349,6 +380,7 @@ public:
 private:
 	std::vector<ObjectId> m_Ids;
 	std::vector<Color> m_Old;
+	std::vector<std::vector<ColorSpan>> m_OldSpans; // per id: letters of a text that had a colour of their own
 	Color m_New{};
 	std::string m_Name;
 };

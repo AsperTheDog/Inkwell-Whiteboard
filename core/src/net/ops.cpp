@@ -30,6 +30,7 @@ enum class OpKind : uint8_t
 	Lock = 5,
 	Order = 6,
 	Clear = 7,
+	Group = 8,
 };
 
 // A decoded object record that must be a single, complete, known-kind object
@@ -87,6 +88,12 @@ void encodeOp(ByteWriter& p_Writer, const Op& p_Op)
 		p_Writer.u32(static_cast<uint32_t>(l_Order->ids.size()));
 		for (const ObjectId l_Id : l_Order->ids)
 			p_Writer.u64(l_Id);
+	}
+	else if (const auto* l_Group = std::get_if<GroupOp>(&p_Op))
+	{
+		p_Writer.u8(static_cast<uint8_t>(OpKind::Group));
+		p_Writer.u64(l_Group->id);
+		p_Writer.u64(l_Group->group);
 	}
 	else
 	{
@@ -155,6 +162,14 @@ bool decodeOp(ByteReader& p_Reader, Op& p_Op)
 	case OpKind::Clear:
 		p_Op = ClearOp{};
 		return p_Reader.ok();
+	case OpKind::Group:
+	{
+		GroupOp l_Group;
+		l_Group.id = p_Reader.u64();
+		l_Group.group = p_Reader.u64();
+		p_Op = l_Group;
+		return p_Reader.ok();
+	}
 	}
 	p_Reader.fail();
 	return false;
@@ -172,6 +187,8 @@ ObjectId opTarget(const Op& p_Op)
 		return l_Transform->id;
 	if (const auto* l_Lock = std::get_if<LockOp>(&p_Op))
 		return l_Lock->id;
+	if (const auto* l_Group = std::get_if<GroupOp>(&p_Op))
+		return l_Group->id;
 	return INVALID_OBJECT_ID;
 }
 
@@ -217,10 +234,9 @@ ApplyResult applyOp(Document& p_Document, const Op& p_Op)
 		if (l_Existing == nullptr || l_Existing->payload.index() != l_Object->payload.index())
 			return l_Result;
 		const ObjectId l_Id = l_Object->id;
-		// How each person likes a video (loop, sound) is their own business
+		// How each person likes a video's sound is their own business (loop is shared)
 		if (const VideoData* l_Old = l_Existing->video(); l_Old != nullptr && l_Object->video() != nullptr)
 		{
-			l_Object->video()->loop = l_Old->loop;
 			l_Object->video()->muted = l_Old->muted;
 			l_Object->video()->volume = l_Old->volume;
 			l_Object->video()->audioTrack = l_Old->audioTrack;
@@ -240,6 +256,14 @@ ApplyResult applyOp(Document& p_Document, const Op& p_Op)
 			return l_Result;
 		p_Document.modify(l_Lock->id, [&](Object& p_Object) { p_Object.locked = l_Lock->locked; }, ObjectChange::Lock);
 		l_Result.changed.push_back(l_Lock->id);
+		l_Result.ok = true;
+	}
+	else if (const auto* l_Group = std::get_if<GroupOp>(&p_Op))
+	{
+		if (p_Document.find(l_Group->id) == nullptr)
+			return l_Result;
+		p_Document.modify(l_Group->id, [&](Object& p_Object) { p_Object.group = l_Group->group; }, ObjectChange::Group);
+		l_Result.changed.push_back(l_Group->id);
 		l_Result.ok = true;
 	}
 	else if (const auto* l_Order = std::get_if<OrderOp>(&p_Op))

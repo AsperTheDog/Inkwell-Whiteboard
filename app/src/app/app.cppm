@@ -146,6 +146,7 @@ private:
 	void buildLaserOverlay();
 	void buildRemoteCursors();
 	void buildAssetSpinners();
+	void buildCropOverlay();
 	void buildPeopleChip(float p_RightEdge);
 	void buildTopBar();
 	void buildToolbar();

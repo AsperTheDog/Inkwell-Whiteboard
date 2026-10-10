@@ -35,6 +35,7 @@ import wb.platform.input;
 import wb.render.canvas_renderer;
 import wb.render.image_store;
 import wb.session;
+import wb.text.utf8;
 import wb.tools.tool;
 import wb.video.media;
 import wb.view.camera;
@@ -44,6 +45,7 @@ namespace wb
 namespace
 {
 constexpr double CASCADE_POINTS = 28.0; // offset between several pictures inserted together
+constexpr size_t MAX_TEXT_BYTES = 2u << 20; // a text file becomes one text block, so it has to stay editable
 constexpr uint64_t MAX_PICTURE_BYTES = 512ull << 20; // pictures are decoded in memory; videos are played from their file and have no limit
 
 std::string formatSize(const size_t p_Bytes)
@@ -54,6 +56,59 @@ std::string formatSize(const size_t p_Bytes)
 	else
 		std::snprintf(l_Buffer, sizeof(l_Buffer), "%.0f KB", static_cast<double>(p_Bytes) / 1024.0);
 	return l_Buffer;
+}
+
+// The text in a file made of text, or nothing when it is binary. UTF-8 (with or without a BOM) and UTF-16 are read as they are;
+// anything else without NUL bytes is taken to be an old 8-bit encoding and each byte is read as its Latin-1 character.
+std::optional<std::string> decodeTextFile(const std::vector<uint8_t>& p_Bytes)
+{
+	const size_t l_Size = p_Bytes.size();
+	if (l_Size >= 2 && ((p_Bytes[0] == 0xFF && p_Bytes[1] == 0xFE) || (p_Bytes[0] == 0xFE && p_Bytes[1] == 0xFF)))
+	{
+		const bool l_Little = p_Bytes[0] == 0xFF;
+		const auto l_Unit = [&](const size_t p_At) -> uint32_t { return l_Little ? (p_Bytes[p_At] | (p_Bytes[p_At + 1] << 8)) : ((p_Bytes[p_At] << 8) | p_Bytes[p_At + 1]); };
+		std::string l_Out;
+		for (size_t i = 2; i + 1 < l_Size; i += 2)
+		{
+			uint32_t l_Code = l_Unit(i);
+			if (l_Code >= 0xD800 && l_Code < 0xDC00 && i + 3 < l_Size)
+			{
+				const uint32_t l_Low = l_Unit(i + 2);
+				if (l_Low >= 0xDC00 && l_Low < 0xE000)
+				{
+					l_Code = 0x10000 + ((l_Code - 0xD800) << 10) + (l_Low - 0xDC00);
+					i += 2;
+				}
+			}
+			text::appendCodepoint(l_Out, l_Code);
+		}
+		return l_Out;
+	}
+
+	const size_t l_Skip = l_Size >= 3 && p_Bytes[0] == 0xEF && p_Bytes[1] == 0xBB && p_Bytes[2] == 0xBF ? 3 : 0;
+	if (std::find(p_Bytes.begin() + static_cast<std::ptrdiff_t>(l_Skip), p_Bytes.end(), uint8_t{ 0 }) != p_Bytes.end())
+		return std::nullopt;
+
+	bool l_Valid = true;
+	for (size_t i = l_Skip; i < l_Size && l_Valid;)
+	{
+		const uint8_t l_Lead = p_Bytes[i];
+		const size_t l_Extra = l_Lead >= 0xF0 ? 3 : l_Lead >= 0xE0 ? 2 : l_Lead >= 0xC0 ? 1 : 0;
+		if ((l_Lead >= 0x80 && l_Lead < 0xC2) || l_Lead >= 0xF8 || i + l_Extra >= l_Size + (l_Extra == 0 ? 1 : 0))
+		{
+			l_Valid = false;
+			break;
+		}
+		for (size_t k = 1; k <= l_Extra; ++k)
+			l_Valid = l_Valid && (p_Bytes[i + k] & 0xC0) == 0x80;
+		i += l_Extra + 1;
+	}
+	if (l_Valid)
+		return std::string(p_Bytes.begin() + static_cast<std::ptrdiff_t>(l_Skip), p_Bytes.end());
+	std::string l_Out;
+	for (size_t i = l_Skip; i < l_Size; ++i)
+		text::appendCodepoint(l_Out, p_Bytes[i]);
+	return l_Out;
 }
 } // namespace
 
@@ -117,6 +172,20 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 			const std::optional<video::VideoInfo> l_Video = video::probe(l_Picture.bytes);
 			if (!l_Video)
 			{
+				// Or a file made of text (.txt, .md, .cpp...), which becomes a block of text
+				std::optional<std::string> l_Content;
+				if (l_Picture.bytes.size() <= MAX_TEXT_BYTES)
+					l_Content = decodeTextFile(l_Picture.bytes);
+				if (l_Content)
+				{
+					const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
+					const ObjectId l_Id = m_Editor.insertText(std::move(*l_Content), l_Center + DVec2{ l_Shift });
+					if (l_Id != INVALID_OBJECT_ID)
+					{
+						l_Inserted.push_back(l_Id);
+						continue;
+					}
+				}
 				++l_Rejected;
 				continue;
 			}
@@ -147,7 +216,7 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 		m_Editor.selection().set(l_Inserted);
 		m_Editor.setTool(tools::ToolKind::Select); // ready to move and resize it
 		if (l_Rejected > 0)
-			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file was not a picture or video" : " files were not pictures or videos"));
+			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file could not be inserted" : " files could not be inserted"));
 		else if (l_Unreadable > 0)
 			showToast(std::to_string(l_Unreadable) + (l_Unreadable == 1 ? " file could not be read" : " files could not be read"));
 	}
@@ -157,7 +226,7 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 	}
 	else if (l_Rejected > 0)
 	{
-		showToast("That is not a picture or video Inkwell can read");
+		showToast("Inkwell can only insert pictures, videos, PDFs and text files");
 	}
 	requestRedraw();
 }
@@ -200,7 +269,7 @@ void App::showInsertPictureDialog()
 {
 	if (m_DialogKind != DialogKind::None || m_Editor.isBusy())
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures, videos and PDFs", "png;jpg;jpeg;gif;bmp;tga;psd;pdf;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
+	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures, videos and PDFs", "png;jpg;jpeg;gif;webp;bmp;tga;psd;pdf;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
 	m_DialogKind = DialogKind::Pictures;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
 }

@@ -34,6 +34,12 @@ uint64_t glyphKey(const FaceId p_Face, const uint32_t p_Glyph)
 {
 	return (static_cast<uint64_t>(p_Face) << 32) | p_Glyph;
 }
+
+uint32_t packRgb8(const Color& p_Color)
+{
+	const auto l_Channel = [](const float p_Value) { return static_cast<uint32_t>(std::clamp(p_Value, 0.f, 1.f) * 255.f + 0.5f); };
+	return l_Channel(p_Color.r) | (l_Channel(p_Color.g) << 8) | (l_Channel(p_Color.b) << 16);
+}
 } // namespace
 
 // ------------------------------------------------------------------------------------------------ atlas
@@ -193,6 +199,7 @@ const TextLayout& TextSystem::layout(const TextData& p_Data)
 	CacheEntry l_Entry;
 	l_Entry.key = p_Data;
 	l_Entry.key.color = {};
+	l_Entry.key.spans.clear();
 	l_Entry.key.size = {};
 	l_Entry.layout = layoutText(p_Data.text, l_Metrics, LayoutOptions{ .fontSize = p_Data.fontSize, .wrapWidth = p_Data.wrapWidth, .align = p_Data.align });
 	l_Entry.lastUsed = m_Frame;
@@ -233,6 +240,11 @@ bool TextSystem::buildGlyphs(const TextData& p_Data, std::vector<GpuGlyph>& p_Ou
 		l_Out.uv[3] = l_Entry->v1;
 		l_Out.baseline = l_Line.baseline - l_HalfHeight;
 		l_Out.flags = ((l_Synthetic & TextStyle::Bold) != 0 ? GLYPH_BOLD : 0u) | ((l_Synthetic & TextStyle::Italic) != 0 ? GLYPH_ITALIC : 0u);
+		if (const ColorSpan* l_Span = spanAt(p_Data.spans, l_Glyph.byteBegin))
+		{
+			l_Out.flags |= GLYPH_COLORED;
+			l_Out.color = packRgb8(l_Span->color);
+		}
 		p_Out.push_back(l_Out);
 	}
 	return l_Complete;

@@ -99,6 +99,15 @@ public:
 		m_UploadAll = p_UploadAll;
 	}
 
+	// A picture being cropped is drawn whole, darkened, with the part that will be shown in full light on top.
+	// p_Shown is that part in the picture's own (local) space.
+	void setCropPreview(const ObjectId p_Id, const Rect& p_Shown)
+	{
+		m_CropId = p_Id;
+		m_CropShown = p_Shown;
+	}
+	void clearCropPreview() { m_CropId = INVALID_OBJECT_ID; }
+
 	[[nodiscard]] const CanvasStats& stats() const { return m_Stats; }
 	// Frames must keep coming: an animated picture is on screen, or pictures are still loading
 	[[nodiscard]] bool animating() const { return m_Animating || m_Images.busy() || m_TextIncomplete || m_Videos.animating() || !m_PendingUploads.empty(); }
@@ -167,6 +176,8 @@ private:
 	uint32_t m_StrokeCount = 0;
 	std::unordered_set<ObjectId> m_PendingUploads;
 	const std::unordered_set<ObjectId>* m_ExportOnly = nullptr;
+	ObjectId m_CropId = INVALID_OBJECT_ID;
+	Rect m_CropShown{};
 	bool m_UploadAll = false;
 	std::vector<PendingFree> m_PendingFrees;
 	uint64_t m_CurrentTimeline = 0; // value the next submitted frame will signal

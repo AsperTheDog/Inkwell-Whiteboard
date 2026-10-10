@@ -466,20 +466,36 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 		// Inflate by a pixel so minimum-width strokes at the edge are not culled
 		const Rect l_Cull = l_Visible.inflated(2.0 / p_Camera.pixelsPerUnit());
 		const std::span<const Rect> l_Bounds = m_Document->boundsList();
+		const ObjectId l_CropId = m_UploadAll ? INVALID_OBJECT_ID : m_CropId; // exports show the picture as it is cropped
 		const std::span<const std::unique_ptr<Object>> l_Objects = m_Document->objects();
 		for (size_t l_Index = 0; l_Index < l_Objects.size(); ++l_Index)
 		{
-			if (!l_Bounds[l_Index].intersects(l_Cull))
-				continue;
 			const std::unique_ptr<Object>& l_Object = l_Objects[l_Index];
+			if (!l_Bounds[l_Index].intersects(l_Cull) && l_Object->id != l_CropId) // a picture being cropped also shows what is cropped away
+				continue;
 			if (m_ExportOnly != nullptr && !m_ExportOnly->contains(l_Object->id))
 				continue;
 			++l_VisibleObjects;
 			if (const ImageData* l_Image = l_Object->image())
 			{
 				const ImageLookup l_Lookup = m_Images.lookup(*m_Document, *l_Image, p_Clock);
+				const Affine2 l_LocalToScreen = l_WorldToScreen * l_Object->transform;
+				if (l_Object->id == l_CropId)
+				{
+					// The whole picture, darkened; then the part that will be shown, in full light
+					const Rect l_Full = l_Image->fullLocalBounds();
+					const DVec2 l_FullSize = l_Full.size();
+					const DVec2 l_UvMin = (m_CropShown.min - l_Full.min) / l_FullSize;
+					const DVec2 l_UvMax = (m_CropShown.max - l_Full.min) / l_FullSize;
+					m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+					m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen * Affine2::translate(l_Full.center()), .size = Vec2{ l_FullSize }, .dim = 0.35f });
+					m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+					m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen * Affine2::translate(m_CropShown.center()), .size = Vec2{ m_CropShown.size() }, .uvRect = Vec4{ l_UvMin.x, l_UvMin.y, l_UvMax.x, l_UvMax.y } });
+					m_Animating = m_Animating || l_Lookup.animatedAndPlaying;
+					continue;
+				}
 				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
-				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Image->size });
+				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen, .size = l_Image->size, .uvRect = Vec4{ l_Image->cropMin.x, l_Image->cropMin.y, l_Image->cropMax.x, l_Image->cropMax.y } });
 				m_Animating = m_Animating || l_Lookup.animatedAndPlaying;
 				continue;
 			}

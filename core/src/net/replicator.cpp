@@ -46,14 +46,13 @@ ApplyResult Replicator::applyRemote(const Op& p_Op)
 
 namespace
 {
-// A video as everybody shares it: loop, sound, volume and the tracks watched are each person's own, so they do not travel
+// A video as everybody shares it: loop is shared, but sound, volume and the tracks watched are each person's own, so they do not travel
 std::vector<uint8_t> encodeShared(const Object& p_Object)
 {
 	if (p_Object.video() == nullptr)
 		return encodeObject(p_Object);
 	Object l_Copy = p_Object;
 	VideoData& l_Video = *l_Copy.video();
-	l_Video.loop = false;
 	l_Video.muted = true;
 	l_Video.volume = 1.f;
 	l_Video.audioTrack = -1;
@@ -74,6 +73,8 @@ void Replicator::onObjectAdded(const Object& p_Object)
 	if (p_Object.video() != nullptr)
 		m_VideoSent[p_Object.id] = l_Add.object;
 	emit(std::move(l_Add));
+	if (p_Object.group != INVALID_OBJECT_ID)
+		emit(GroupOp{ .id = p_Object.id, .group = p_Object.group });
 }
 
 void Replicator::onObjectRemoved(const Object& p_Object)
@@ -92,7 +93,7 @@ void Replicator::onObjectChanged(const Object& p_Object, const uint32_t p_Change
 		bool l_Send = true;
 		if (p_Object.video() != nullptr)
 		{
-			// Changing the volume or loop is no news to the others
+			// Changing the volume or sound is no news to the others
 			std::vector<uint8_t>& l_Last = m_VideoSent[p_Object.id];
 			l_Send = l_Last != l_Bytes;
 			l_Last = l_Bytes;
@@ -104,6 +105,8 @@ void Replicator::onObjectChanged(const Object& p_Object, const uint32_t p_Change
 		emit(TransformOp{ .id = p_Object.id, .transform = p_Object.transform });
 	if ((p_Changes & ObjectChange::Lock) != 0)
 		emit(LockOp{ .id = p_Object.id, .locked = p_Object.locked });
+	if ((p_Changes & ObjectChange::Group) != 0)
+		emit(GroupOp{ .id = p_Object.id, .group = p_Object.group });
 }
 
 void Replicator::onObjectsReordered()

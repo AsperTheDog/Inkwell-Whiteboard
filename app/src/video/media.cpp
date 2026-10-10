@@ -39,6 +39,9 @@ constexpr double AUDIO_QUEUE_PLAYING = 0.45; // seconds of sound kept ready on t
 constexpr double AUDIO_QUEUE_PAUSED = 0.12;
 constexpr double SUBTITLE_LOOKBACK_SECONDS = 6.0;
 constexpr double LATE_FRAME_SECONDS = 0.12;  // pictures this far behind the clock are not worth converting
+// swscale's vector code may write past the end of the last row of a picture converted without scaling (corrupting the heap), so
+// the buffers it writes into have room to spare
+constexpr size_t SWS_WRITE_PADDING = 64;
 constexpr auto WAIT_SLICE = std::chrono::milliseconds(15);
 constexpr const char* FORMAT_WHITELIST = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,flv,mpegts,mpeg,ogg,asf,wav,mp3,aac,ogv,m4v";
 
@@ -225,6 +228,8 @@ std::vector<int> textSubtitleStreams(const AVFormatContext* p_Format)
 		const AVCodecDescriptor* l_Descriptor = avcodec_descriptor_get(p_Format->streams[l_Index]->codecpar->codec_id);
 		if (l_Descriptor != nullptr && (l_Descriptor->props & AV_CODEC_PROP_TEXT_SUB) != 0)
 			l_Streams.push_back(l_Index);
+		else
+			spdlog::info("Subtitle stream {} ({}) is not text: skipped", l_Index, l_Descriptor != nullptr ? l_Descriptor->name : "unknown codec");
 	}
 	return l_Streams;
 }
@@ -615,7 +620,7 @@ std::shared_ptr<Frame> Player::Impl::makeFrame()
 			pool->spare.pop_back();
 		}
 	}
-	l_Frame->pixels.resize(l_Bytes);
+	l_Frame->pixels.resize(l_Bytes + SWS_WRITE_PADDING);
 	return l_Frame;
 }
 
@@ -756,7 +761,7 @@ void Player::Impl::videoLoop()
 		uint8_t* l_Target = l_Out->pixels.data();
 		if (l_Turn)
 		{
-			l_Scaled.resize(l_ScaledBytes);
+			l_Scaled.resize(l_ScaledBytes + SWS_WRITE_PADDING);
 			l_Target = l_Scaled.data();
 		}
 		uint8_t* const l_Planes[4] = { l_Target, nullptr, nullptr, nullptr };

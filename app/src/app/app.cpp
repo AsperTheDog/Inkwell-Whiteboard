@@ -549,6 +549,10 @@ void App::renderFrame()
 	const std::optional<render::LiveStrokeView> l_Live = m_Editor.liveStroke();
 	if (l_Live)
 		m_LiveStrokes.push_back(*l_Live);
+	if (const std::optional<Editor::CropView> l_Crop = m_Editor.cropView())
+		m_Canvas.setCropPreview(l_Crop->id, l_Crop->shown);
+	else
+		m_Canvas.clearCropPreview();
 	const bool l_Exporting = exportReady();
 	if (l_Exporting)
 		recordExport(l_Cmd);

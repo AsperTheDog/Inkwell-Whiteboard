@@ -13,9 +13,10 @@ struct PushConstants
 	float2 translation; // local -> screen translation (pixels)
 	float2 size;        // local size of the rectangle
 	float opacity;
+	float dim;          // colour multiplier: below 1 darkens
 	float padding0;
 	float padding1;
-	float padding2;
+	float4 uvRect;      // the part of the picture shown: left, top, right, bottom
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -61,6 +62,8 @@ float4 fsMain(VSOutput input) : SV_Target
 		float4 grey = float4(0.5, 0.5, 0.55, 0.22);
 		return float4(grey.rgb * grey.a, grey.a) * coverage * pc.opacity;
 	}
-	float4 color = gImage.Sample(float3(clamp(input.uv, 0.0, 1.0), pc.layer));
+	float2 sampleUv = lerp(pc.uvRect.xy, pc.uvRect.zw, clamp(input.uv, 0.0, 1.0));
+	float4 color = gImage.Sample(float3(sampleUv, pc.layer));
+	color.rgb *= pc.dim;
 	return color * (coverage * pc.opacity);
 }

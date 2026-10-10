@@ -61,6 +61,8 @@ struct ImageDraw
 	float layer = -1.f;
 	Affine2 localToScreen{};
 	Vec2 size{ 0.f };
+	Vec4 uvRect{ 0.f, 0.f, 1.f, 1.f }; // the part of the picture the rectangle shows (left, top, right, bottom)
+	float dim = 1.f;                   // < 1 darkens the picture (the cropped-away part while cropping)
 };
 
 class ImageStore

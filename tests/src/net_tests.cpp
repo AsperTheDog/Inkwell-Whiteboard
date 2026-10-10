@@ -101,6 +101,7 @@ void expectSameBoard(const wb::Document& p_A, const wb::Document& p_B)
 		ASSERT_NE(l_Other, nullptr);
 		EXPECT_EQ(wb::encodeObject(*l_Object), wb::encodeObject(*l_Other));
 		EXPECT_EQ(l_Object->locked, l_Other->locked);
+		EXPECT_EQ(l_Object->group, l_Other->group);
 	}
 }
 } // namespace
@@ -132,6 +133,7 @@ TEST(Net, OpsSurviveTheWireFormat)
 	l_Ops.emplace_back(wb::net::TransformOp{ .id = 3, .transform = wb::Affine2::translate({ 5.0, -2.0 }) });
 	l_Ops.emplace_back(wb::net::UpdateOp{ .object = wb::encodeObject(*makeText(l_Doc, "hi")) });
 	l_Ops.emplace_back(wb::net::LockOp{ .id = 4, .locked = true });
+	l_Ops.emplace_back(wb::net::GroupOp{ .id = 4, .group = 11 });
 	l_Ops.emplace_back(wb::net::OrderOp{ .ids = { 3, 1, 2 } });
 	l_Ops.emplace_back(wb::net::ClearOp{});
 
@@ -218,9 +220,11 @@ TEST(Net, ReplicatorKeepsTwoDocumentsEqual)
 	l_Pair.b.modify(l_Id1, [](wb::Object& p_Object) { p_Object.transform = wb::Affine2::translate({ 40.0, 2.0 }); }, wb::ObjectChange::Transform);
 	l_Pair.a.modify(l_TextId, [](wb::Object& p_Object) { std::get<wb::TextData>(p_Object.payload).text = "changed"; }, wb::ObjectChange::Geometry);
 	l_Pair.a.modify(l_Id2, [](wb::Object& p_Object) { p_Object.locked = true; }, wb::ObjectChange::Lock);
+	l_Pair.a.modify(l_Id1, [](wb::Object& p_Object) { p_Object.group = 77; }, wb::ObjectChange::Group);
 	l_Pair.flush();
 	expectSameBoard(l_Pair.a, l_Pair.b);
 	EXPECT_TRUE(l_Pair.b.find(l_Id2)->locked);
+	EXPECT_EQ(l_Pair.b.find(l_Id1)->group, 77u);
 	EXPECT_EQ(std::get<wb::TextData>(l_Pair.b.find(l_TextId)->payload).text, "changed");
 
 	l_Pair.b.moveTo(l_Id1, 2);

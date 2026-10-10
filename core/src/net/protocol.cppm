@@ -63,7 +63,6 @@ enum class MsgType : uint8_t
 	AssetRequest = 9, // "send me this picture/video"
 	AssetChunk = 10,  // a piece of one, answering a request
 	AssetStalled = 13, // host -> everyone: this file cannot be had right now (its sender is not sending it)
-	AssetOffer = 14,   // client -> host: "I can send this file again"; host -> clients: "ask for it again"
 	AssetPreview = 12, // a thumbnail of a file that is about to be sent
 	Cursor = 11,      // where somebody's pointer is (about 30 times a second, only the latest matters)
 	StrokePreview = 15, // a line somebody is drawing right now, before they lift the pen
@@ -139,7 +138,7 @@ struct StrokePreviewMessage
 	uint32_t base = 0;
 	std::vector<StrokePoint> points;
 };
-// Where a video is and whether it plays. Shared by everybody; loop, mute and volume are each person's own.
+// Where a video is and whether it plays. Shared by everybody; mute and volume are each person's own (loop travels with the object).
 struct VideoStateMessage
 {
 	ObjectId id = INVALID_OBJECT_ID;

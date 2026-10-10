@@ -245,6 +245,16 @@ void App::buildMenu()
 				m_Editor.selectAll();
 				l_Close = true;
 			}
+			if (l_Row(ui::Icon::Layers, "Group", "Ctrl+G", l_Idle && m_Editor.canGroupSelection()))
+			{
+				m_Editor.groupSelection();
+				l_Close = true;
+			}
+			if (l_Row(ui::Icon::Layers, "Ungroup", "Ctrl+Shift+G", l_Idle && m_Editor.selectionHasGroup()))
+			{
+				m_Editor.ungroupSelection();
+				l_Close = true;
+			}
 			if (l_Row(ui::Icon::BringToFront, "Bring to front", "Ctrl+Shift+]", l_HasSelection))
 			{
 				m_Editor.reorderSelection(ZOrderMove::ToFront);
@@ -405,6 +415,8 @@ const std::vector<ShortcutSection>& rightSections()
 			{ "Ctrl + C / X / V", "Copy / cut / paste" },
 			{ "Ctrl + D", "Duplicate" },
 			{ "Ctrl + L", "Lock or unlock the selection" },
+			{ "Ctrl + G", "Group the selection" },
+			{ "Ctrl + Shift + G", "Ungroup" },
 			{ "Ctrl + Shift + E", "Export as PNG" },
 			{ "Ctrl + I", "Insert a picture" },
 			{ "Delete", "Delete the selection" },

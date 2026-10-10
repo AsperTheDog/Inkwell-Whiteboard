@@ -181,6 +181,66 @@ void App::buildLaserOverlay()
 	}
 }
 
+// ------------------------------------------------------------------------------------------------ cropping
+
+// The frame around the part of the picture that stays, its handles, and a hint with the button that ends cropping.
+// (The canvas itself draws the picture whole with the hidden part darkened.)
+void App::buildCropOverlay()
+{
+	const std::optional<Editor::CropView> l_View = m_Editor.cropView();
+	if (!l_View)
+		return;
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	const float l_Scale = m_Ui.scale();
+	const Color l_Accent = l_Theme.accent;
+	const Affine2 l_ToScreen = m_Editor.camera().worldToScreenTransform() * l_View->transform;
+	const auto l_Screen = [&](const DVec2 p_Local) { return Vec2{ l_ToScreen.apply(p_Local) }; };
+	const auto l_Corners = [&](const Rect& p_Rect)
+	{
+		return std::array<Vec2, 4>{ l_Screen(p_Rect.min), l_Screen(DVec2{ p_Rect.max.x, p_Rect.min.y }), l_Screen(p_Rect.max), l_Screen(DVec2{ p_Rect.min.x, p_Rect.max.y }) };
+	};
+
+	// The whole picture, so the extent of what can be brought back is clear
+	l_Draw.polyline(l_Corners(l_View->full), 1.f * l_Scale, ui::withAlpha(l_Accent, 0.45f), true);
+
+	// The frame, with thirds to help composing
+	const Rect& l_Shown = l_View->shown;
+	const std::array<Vec2, 4> l_Frame = l_Corners(l_Shown);
+	for (const double l_Third : { 1.0 / 3.0, 2.0 / 3.0 })
+	{
+		const DVec2 l_Size = l_Shown.size();
+		l_Draw.line(l_Screen(DVec2{ l_Shown.min.x + l_Size.x * l_Third, l_Shown.min.y }), l_Screen(DVec2{ l_Shown.min.x + l_Size.x * l_Third, l_Shown.max.y }), 1.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.4f });
+		l_Draw.line(l_Screen(DVec2{ l_Shown.min.x, l_Shown.min.y + l_Size.y * l_Third }), l_Screen(DVec2{ l_Shown.max.x, l_Shown.min.y + l_Size.y * l_Third }), 1.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.4f });
+	}
+	l_Draw.polyline(l_Frame, 1.5f * l_Scale, l_Accent, true);
+	for (int l_Handle = 0; l_Handle < Editor::CROP_HANDLE_COUNT; ++l_Handle)
+	{
+		const bool l_Hot = l_Handle == l_View->hovered;
+		const float l_Half = (l_Handle % 2 == 0 ? 5.5f : 4.5f) * l_Scale + (l_Hot ? 1.f * l_Scale : 0.f);
+		const ui::Rect2 l_Box = ui::Rect2::fromCenter(l_Screen(Editor::cropHandlePoint(l_Shown, l_Handle)), Vec2{ l_Half * 2.f });
+		l_Draw.shadow(l_Box, 2.5f * l_Scale, 4.f * l_Scale, Vec2{ 0.f, 1.f * l_Scale }, ui::withAlpha(l_Theme.shadow, 0.6f));
+		l_Draw.rectBorder(l_Box, 2.5f * l_Scale, l_Hot ? l_Accent : l_Theme.handleFill, l_Accent, 1.5f * l_Scale);
+	}
+
+	// Hint and Done
+	if (modalOpen())
+		return;
+	const Vec2 l_Viewport = m_Ui.viewport();
+	const std::string l_Hint = "Drag the handles or the frame to choose what is shown";
+	const int l_HintPx = m_Ui.fontPx(13.f);
+	const float l_Pad = m_Ui.px(8.f);
+	const float l_ButtonWidth = m_Ui.px(76.f);
+	const float l_Height = m_Ui.px(48.f);
+	const float l_Width = l_Pad * 2.f + m_Ui.px(14.f) + m_Ui.font().measure(l_Hint, l_HintPx) + m_Ui.px(14.f) + l_ButtonWidth;
+	const ui::Rect2 l_Pill = ui::Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, l_Viewport.y - m_Ui.px(100.f) - l_Height }, Vec2{ l_Width, l_Height });
+	m_Ui.panel(l_Pill, m_Ui.px(18.f));
+	l_Draw.text(Vec2{ l_Pill.min.x + l_Pad + m_Ui.px(14.f), l_Pill.center().y }, l_Hint, l_HintPx, l_Theme.textMuted);
+	const ui::Rect2 l_Done = ui::Rect2::fromPosSize(Vec2{ l_Pill.max.x - l_Pad - l_ButtonWidth, l_Pill.min.y + l_Pad }, Vec2{ l_ButtonWidth, l_Height - l_Pad * 2.f });
+	if (m_Ui.button("crop.done", l_Done, "Done", ui::ButtonStyle::Primary))
+		m_Editor.endCrop();
+}
+
 // ------------------------------------------------------------------------------------------------ files on their way
 
 // A turning arc and a percentage over every picture or video that is still being received
@@ -207,8 +267,7 @@ void App::buildAssetSpinners()
 			continue;
 		const double l_Fraction = m_Collab->assetFraction(l_Asset);
 		const bool l_Stalled = l_Fraction < 0.0 && m_Collab->assetStalled(l_Asset);
-		const bool l_Resend = l_Fraction < 0.0 && m_Collab->assetReuploadable(l_Asset);
-		if (l_Fraction < 0.0 && !l_Stalled && !l_Resend)
+		if (l_Fraction < 0.0 && !l_Stalled)
 			continue;
 		const Vec2 l_Min{ l_Camera.worldToScreen(l_Bounds[i].min) };
 		const Vec2 l_Max{ l_Camera.worldToScreen(l_Bounds[i].max) };
@@ -222,26 +281,15 @@ void App::buildAssetSpinners()
 		const Vec2 l_Center = (l_Lo + l_Hi) * 0.5f;
 		const float l_Radius = std::clamp(l_Short * 0.2f, 9.f * l_Scale, 20.f * l_Scale);
 
-		if (l_Resend)
-		{
-			// The others cannot get this file: a button to send it again
-			const bool l_Wide = l_Short > 150.f * l_Scale;
-			const ui::Rect2 l_Button = ui::Rect2::fromCenter(l_Center, Vec2{ (l_Wide ? 168.f : 84.f) * l_Scale, 32.f * l_Scale });
-			m_Ui.beginPanel(l_Button); // the board underneath must not take the click
-			if (m_Ui.button("asset.resend." + std::to_string(l_Object.id), l_Button, l_Wide ? "Re-send for the others" : "Re-send", ui::ButtonStyle::Primary))
-				m_Collab->reupload(l_Asset);
-			continue;
-		}
 		if (l_Stalled)
 		{
-			// Nobody is sending it: a paused badge, and who can fix it
+			// Nobody is sending it: a paused badge
 			l_Draw.circle(l_Center, l_Radius + 5.f * l_Scale, ui::withAlpha(l_Theme.shadow, 0.55f));
 			l_Draw.ring(l_Center, l_Radius, Color{ 1.f, 1.f, 1.f, 0.35f }, 2.5f * l_Scale);
 			for (const float l_Side : { -1.f, 1.f })
 				l_Draw.line(l_Center + Vec2{ l_Side * 4.f * l_Scale, -6.f * l_Scale }, l_Center + Vec2{ l_Side * 4.f * l_Scale, 6.f * l_Scale }, 3.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f });
-			const std::string l_Owner = m_Collab->assetOwnerName(l_Asset);
 			if (l_Short > 90.f * l_Scale)
-				l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, l_Owner.empty() ? "Not available" : "Waiting for " + l_Owner + " to send it again", m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
+				l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, "Not available", m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
 			continue;
 		}
 		l_Any = true;

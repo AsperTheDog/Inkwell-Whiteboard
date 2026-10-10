@@ -39,7 +39,7 @@ namespace wb
 {
 void App::buildSelectionBar()
 {
-	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen() || m_Editor.textEditing())
+	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen() || m_Editor.textEditing() || m_Editor.cropping())
 	{
 		if (m_Popup == Popup::SelectionColor || m_Popup == Popup::Align)
 			closePopup("selection bar hidden");
@@ -95,6 +95,8 @@ void App::buildSelectionBar()
 	l_Buttons += l_HasStrokes ? 1 : 0; // smoothing
 	l_Buttons += l_Animated > 0 ? 1 : 0;
 	l_Buttons += l_Pictures > 0 ? 1 : 0;
+	const bool l_CanCrop = m_Editor.selection().size() == 1 && l_Pictures == 1;
+	l_Buttons += l_CanCrop ? 1 : 0;
 	// One picture or video selected: its file can be saved on its own
 	const bool l_CanSaveFile = m_Editor.selection().size() == 1 && l_MediaAsset != INVALID_ASSET_ID;
 	l_Buttons += l_CanSaveFile ? 1 : 0;
@@ -104,6 +106,9 @@ void App::buildSelectionBar()
 	// A single stroke can switch between its own axes and the board's (text and pictures always use their own)
 	const bool l_SpaceToggle = m_Editor.selection().size() == 1 && l_HasStrokes;
 	l_Buttons += l_SpaceToggle ? 1 : 0;
+	const bool l_CanGroup = m_Editor.canGroupSelection();
+	const bool l_HasGroup = m_Editor.selectionHasGroup();
+	l_Buttons += l_CanGroup || l_HasGroup ? 1 : 0;
 	const bool l_ShowColour = l_HasStrokes || l_HasText;
 	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);
 	const float l_Height = l_Button + l_Pad * 2.f;
@@ -151,6 +156,11 @@ void App::buildSelectionBar()
 		m_Editor.flipSelection(false);
 	if (m_Ui.iconButton("selbar.lock", l_Next(), l_Lock == Editor::LockState::None ? ui::Icon::Lock : ui::Icon::Unlock, l_Lock != Editor::LockState::None, true, l_Lock == Editor::LockState::None ? "Lock: nothing can move or erase it (Ctrl+L)" : "Unlock (Ctrl+L)"))
 		m_Editor.toggleSelectionLock();
+	if (l_CanGroup || l_HasGroup)
+	{
+		if (m_Ui.iconButton("selbar.group", l_Next(), ui::Icon::Layers, !l_CanGroup, l_Editable, l_CanGroup ? "Group: select and move these as one (Ctrl+G)" : "Ungroup (Ctrl+Shift+G)"))
+			m_Editor.toggleSelectionGroup();
+	}
 	if (l_Animated > 0)
 	{
 		const bool l_Playing = l_AnimatedPlaying == l_Animated;
@@ -189,6 +199,11 @@ void App::buildSelectionBar()
 		m_TextAnchor = l_TextRect;
 		if (m_Ui.iconButton("selbar.text", l_TextRect, ui::Icon::Type, m_Popup == Popup::Text, true, "Font, size and alignment of the selected text"))
 			openTextPopup(false);
+	}
+	if (l_CanCrop)
+	{
+		if (m_Ui.iconButton("selbar.crop", l_Next(), ui::Icon::Crop, false, l_Editable, "Crop the picture (or double-click it). The file is not changed: the crop can be widened again"))
+			m_Editor.beginCropSelected();
 	}
 	if (l_Pictures > 0)
 	{

@@ -44,6 +44,11 @@ void flipObjects(Document& p_Document, History& p_History, std::span<const Objec
 // Edits the image data of the image objects among p_Ids (one undo step). p_Edit returns false to leave an image alone.
 void editImages(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
 
+// Chooses which part of a picture is shown, as a rectangle of the whole picture (0..1, y down). The file is untouched, so
+// the crop can be widened again later; the shown part stays where it is on the board. One undo step. Returns false when
+// the object is not an unlocked picture or nothing changes.
+bool cropImage(Document& p_Document, History& p_History, ObjectId p_Id, Vec2 p_CropMin, Vec2 p_CropMax);
+
 // Same for video objects (loop, sound)
 void editVideos(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 
@@ -57,6 +62,13 @@ void editText(Document& p_Document, History& p_History, ObjectId p_Id, const Tex
 // Locks or unlocks the objects (one undo step). Locked objects are skipped by every other edit here, by the eraser
 // and by marquee selection; they can still be clicked to select them, which is how they are unlocked again.
 void lockObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, bool p_Locked);
+
+// Joins the unlocked objects into one new group (one undo step), so they are selected and moved as one. Objects that were
+// in other groups leave them. Returns the group id, or INVALID_OBJECT_ID when there are fewer than two objects to join.
+ObjectId groupObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
+
+// Takes the unlocked objects out of their groups (one undo step). Returns how many objects were in one.
+size_t ungroupObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
 
 enum class AlignMode : uint8_t
 {

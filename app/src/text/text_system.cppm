@@ -23,13 +23,15 @@ struct GpuGlyph
 	float rect[4];      // x, y, width, height of the quad
 	float uv[4];        // u0, v0, u1, v1 in the atlas
 	float baseline;     // object-local y of the baseline (italics shear around it)
-	uint32_t flags;     // GLYPH_BOLD, GLYPH_ITALIC
-	float padding[2];
+	uint32_t flags;     // GLYPH_BOLD, GLYPH_ITALIC, GLYPH_COLORED
+	uint32_t color;     // RGB8 (red in the low byte) of a glyph with GLYPH_COLORED; the text's alpha still applies
+	float padding;
 };
 static_assert(sizeof(GpuGlyph) == 48);
 
 inline constexpr uint32_t GLYPH_BOLD = 1u << 0;
 inline constexpr uint32_t GLYPH_ITALIC = 1u << 1;
+inline constexpr uint32_t GLYPH_COLORED = 1u << 2; // drawn in `color` instead of the colour of the whole text
 
 // Signed distance field glyphs in one R8 atlas. When it is full it is emptied and refilled from what is drawn next.
 class GlyphAtlas
@@ -87,7 +89,7 @@ public:
 	// may have to be measured again).
 	bool beginFrame();
 
-	// The layout of p_Data (its text, family, style, size, wrap width and alignment; the rest is ignored). The
+	// The layout of p_Data (its text, family, style, size, wrap width and alignment; the rest, colours included, is ignored). The
 	// reference stays valid until the next beginFrame().
 	[[nodiscard]] const TextLayout& layout(const TextData& p_Data);
 	// The extent p_Data needs

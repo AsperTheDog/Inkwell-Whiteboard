@@ -24,7 +24,8 @@ public:
 	Selection& operator=(const Selection&) = delete;
 
 	void clear();
-	// Replaces the selection (ids that are not in the document are ignored)
+	// Replaces the selection (ids that are not in the document are ignored). A group is only ever selected whole:
+	// set(), add() and toggle() bring along the rest of the group of each object, remove() takes all of it out.
 	void set(std::span<const ObjectId> p_Ids);
 	void add(ObjectId p_Id);
 	void remove(ObjectId p_Id);
@@ -50,6 +51,8 @@ public:
 	void onDocumentCleared() override;
 
 private:
+	void drop(ObjectId p_Id); // removes exactly this object
+
 	Document& m_Document;
 	std::vector<ObjectId> m_Ids;
 	std::unordered_set<ObjectId> m_Set;

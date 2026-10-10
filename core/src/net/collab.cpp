@@ -307,7 +307,6 @@ void CollabSession::stop(const std::string& p_Goodbye)
 	clearDownloads();
 	m_AssetWaiters.clear();
 	m_Stalled.clear();
-	m_Reuploadable.clear();
 	m_LocalMedia.clear();
 	++m_AssetsRevision;
 	m_Cursors.clear();
@@ -702,8 +701,6 @@ void CollabSession::hostFrame(Peer& p_Peer, Frame& p_Frame)
 		videoStateReceived(p_Peer, p_Frame);
 	else if (p_Frame.type == type(MsgType::AssetPreview))
 		previewReceived(p_Peer, p_Frame);
-	else if (p_Frame.type == type(MsgType::AssetOffer))
-		assetOffered(p_Peer, p_Frame);
 	else
 		dropPeer(p_Peer.id, "Protocol error");
 }
@@ -831,7 +828,7 @@ void CollabSession::hostOps(Peer& p_Peer, const Frame& p_Frame)
 			l_Locks[l_Lock->id] = l_Lock->locked;
 			return false;
 		}
-		const bool l_Edits = std::holds_alternative<RemoveOp>(p_Op) || std::holds_alternative<TransformOp>(p_Op) || std::holds_alternative<UpdateOp>(p_Op);
+		const bool l_Edits = std::holds_alternative<RemoveOp>(p_Op) || std::holds_alternative<TransformOp>(p_Op) || std::holds_alternative<UpdateOp>(p_Op) || std::holds_alternative<GroupOp>(p_Op);
 		const ObjectId l_Target = l_Edits ? opTarget(p_Op) : INVALID_OBJECT_ID;
 		if (l_Target == INVALID_OBJECT_ID || !l_Locked(l_Target))
 			return false;
@@ -842,10 +839,15 @@ void CollabSession::hostOps(Peer& p_Peer, const Frame& p_Frame)
 			{
 				const size_t l_Index = m_Document.indexOf(l_Target);
 				l_Corrections.push_back(AddOp{ .below = l_Index != SIZE_MAX && l_Index > 0 ? m_Document.objects()[l_Index - 1]->id : INVALID_OBJECT_ID, .locked = true, .object = encodeObject(*l_Object) });
+					if (l_Object->group != INVALID_OBJECT_ID)
+						l_Corrections.push_back(GroupOp{ .id = l_Target, .group = l_Object->group });
 			}
 			else
 			{
-				l_Corrections.push_back(UpdateOp{ .object = encodeObject(*l_Object) });
+				if (const auto* l_GroupEdit = std::get_if<GroupOp>(&p_Op))
+					l_Corrections.push_back(GroupOp{ .id = l_GroupEdit->id, .group = l_Object->group });
+				else
+					l_Corrections.push_back(UpdateOp{ .object = encodeObject(*l_Object) });
 			}
 		}
 		return true;
@@ -1280,7 +1282,6 @@ void CollabSession::resetAssetTransfers()
 	clearDownloads();
 	m_AssetWaiters.clear();
 	m_Stalled.clear();
-	m_Reuploadable.clear();
 	for (auto& [l_Id, l_Peer] : m_Peers)
 	{
 		l_Peer.uploads.clear();
@@ -1461,7 +1462,7 @@ void CollabSession::pruneDownloads()
 			l_Unused.push_back(l_Id);
 	}
 	for (const AssetId l_Id : l_Unused)
-		dropDownload(l_Id);
+		dropDownload(l_Id, true); // deleted while it was arriving: the delete cannot be undone
 }
 
 void CollabSession::abandonDownloadsFrom(const uint32_t p_PeerId, const std::string& p_Who)
@@ -1507,10 +1508,10 @@ void CollabSession::wantAssets(Peer& p_Source, const std::span<const ObjectId> p
 			l_Asset = l_Image->asset;
 		else if (const VideoData* l_Video = l_Found->video())
 			l_Asset = l_Video->asset;
-		if (l_Asset == INVALID_ASSET_ID || m_Document.findAsset(l_Asset) != nullptr || m_Downloads.contains(l_Asset) || m_Stalled.contains(l_Asset))
+		if (l_Asset == INVALID_ASSET_ID || m_Document.findAsset(l_Asset) != nullptr || m_Downloads.contains(l_Asset))
 			continue;
 		// A client may only supply files it made itself, so it cannot plant a file under someone else's id. When somebody
-		// else brought the object back (an undo) while the owner is here, the file is stalled until the owner sends it again.
+		// else brought the object back (an undo) while the owner is here, the file is stalled; the owner adding it to the board again starts a fresh transfer.
 		if (m_Role == Role::Host && idSlotOf(l_Asset) != p_Source.info.slot)
 		{
 			if (peerOfSlot(idSlotOf(l_Asset)) != nullptr)
@@ -1519,6 +1520,7 @@ void CollabSession::wantAssets(Peer& p_Source, const std::span<const ObjectId> p
 		}
 		if (m_Downloads.size() >= MAX_PENDING_ASSETS)
 			return;
+		m_Stalled.erase(l_Asset); // put on the board again by whoever has it: that is a fresh transfer from the start
 		Download& l_Download = m_Downloads[l_Asset];
 		l_Download.from = p_Source.id;
 		l_Download.ticket = ++m_NextTicket;
@@ -1613,7 +1615,7 @@ void CollabSession::stallAsset(const AssetId p_Id)
 	if (!m_Stalled.insert(p_Id).second)
 		return;
 	++m_AssetsRevision;
-	note("A file is stalled: nobody is sending it. Its owner can send it again");
+	note("A file is stalled: nobody is sending it");
 	const std::vector<uint8_t> l_Payload = encode(AssetRequest{ .id = p_Id });
 	for (auto& [l_Id, l_Peer] : m_Peers)
 	{
@@ -1632,72 +1634,9 @@ void CollabSession::assetStalledReceived(Peer& p_Peer, const Frame& p_Frame)
 		return;
 	}
 	dropDownload(l_Message.id); // the transfer we waited for is not coming
-	if (m_Document.findAsset(l_Message.id) != nullptr)
-		m_Reuploadable.insert(l_Message.id); // we made it: the others cannot see it
-	else
+	if (m_Document.findAsset(l_Message.id) == nullptr)
 		m_Stalled.insert(l_Message.id);
 	++m_AssetsRevision;
-}
-
-void CollabSession::reupload(const AssetId p_Id)
-{
-	if (m_Role != Role::Client || m_State != LinkState::Online || m_Peers.empty() || !m_Reuploadable.erase(p_Id))
-		return;
-	++m_AssetsRevision;
-	m_Peers.begin()->second.connection->send(type(MsgType::AssetOffer), encode(AssetRequest{ .id = p_Id }));
-	note("Offered a file to the host again");
-}
-
-std::string CollabSession::assetOwnerName(const AssetId p_Id) const
-{
-	const UserInfo* l_User = user(idSlotOf(p_Id));
-	return l_User != nullptr ? l_User->name : std::string();
-}
-
-void CollabSession::assetOffered(Peer& p_Peer, const Frame& p_Frame)
-{
-	AssetRequest l_Message;
-	if (!decode(p_Frame.payload, l_Message))
-	{
-		if (m_Role == Role::Host)
-			dropPeer(p_Peer.id, "Protocol error");
-		else
-			failClient("The host sent a damaged message");
-		return;
-	}
-	const AssetId l_Id = l_Message.id;
-	if (m_Role == Role::Client)
-	{
-		// The owner is sending it again: ask for it as usual
-		m_Stalled.erase(l_Id);
-		m_Reuploadable.erase(l_Id);
-		++m_AssetsRevision;
-		wantAllMissingAssets(p_Peer);
-		return;
-	}
-	// Host: only the file's owner may offer it, and only while we lack it and an object waits for it
-	if (idSlotOf(l_Id) != p_Peer.info.slot || m_Document.findAsset(l_Id) != nullptr || m_Downloads.contains(l_Id))
-		return;
-	const bool l_Wanted = std::ranges::any_of(m_Document.objects(), [&](const std::unique_ptr<Object>& p_Object)
-	{
-		return (p_Object->image() != nullptr && p_Object->image()->asset == l_Id) || (p_Object->video() != nullptr && p_Object->video()->asset == l_Id);
-	});
-	if (!l_Wanted || m_Downloads.size() >= MAX_PENDING_ASSETS)
-		return;
-	m_Stalled.erase(l_Id);
-	Download& l_Download = m_Downloads[l_Id];
-	l_Download.from = p_Peer.id;
-	l_Download.ticket = ++m_NextTicket;
-	p_Peer.connection->send(type(MsgType::AssetRequest), encode(AssetRequest{ .id = l_Id, .ticket = l_Download.ticket }));
-	++m_AssetsRevision;
-	note("Receiving a file again from " + p_Peer.info.name);
-	// The others can ask for it again now
-	const std::vector<uint8_t> l_Payload = encode(AssetRequest{ .id = l_Id });
-	for (auto& [l_Other, l_Peer] : m_Peers)
-	{
-		if (l_Peer.state == PeerState::Joined && l_Other != p_Peer.id)
-			l_Peer.connection->send(type(MsgType::AssetOffer), l_Payload);
-	}
 }
 
 void CollabSession::resolveLocalMedia()
@@ -1712,15 +1651,6 @@ void CollabSession::resolveLocalMedia()
 	{
 		if (m_Peers.empty())
 			return;
-		// A picture of ours that the host was not able to get, put on the board again (dragged in once more, or an undo):
-		// that is a new try, no button needed
-		for (const ObjectId l_Object : l_Objects)
-		{
-			const Object* l_Found = m_Document.find(l_Object);
-			const AssetId l_Asset = l_Found == nullptr ? INVALID_ASSET_ID : (l_Found->image() != nullptr ? l_Found->image()->asset : (l_Found->video() != nullptr ? l_Found->video()->asset : INVALID_ASSET_ID));
-			if (l_Asset != INVALID_ASSET_ID && m_Reuploadable.contains(l_Asset))
-				reupload(l_Asset);
-		}
 		wantAssets(m_Peers.begin()->second, l_Objects); // an undo can bring back a picture we gave up on
 		return;
 	}
@@ -1900,7 +1830,6 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 	}
 	m_Downloads.erase(l_It);
 	m_Stalled.erase(l_Id);
-	m_Reuploadable.erase(l_Id);
 	++m_AssetsRevision;
 
 	// Others that asked the host for it while it was still on its way
@@ -2037,11 +1966,6 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		if (p_Peer.state != PeerState::Joined)
 			return l_Protocol();
 		assetStalledReceived(p_Peer, p_Frame);
-		return;
-	case MsgType::AssetOffer:
-		if (p_Peer.state != PeerState::Joined)
-			return l_Protocol();
-		assetOffered(p_Peer, p_Frame);
 		return;
 	default:
 		return l_Protocol();

@@ -50,7 +50,7 @@ struct VideoInfo
 // One decoded picture, shown from `pts` on
 struct Frame
 {
-	std::vector<uint8_t> pixels; // RGBA8, width * height * 4
+	std::vector<uint8_t> pixels; // RGBA8, width * height * 4 (and a little more: do not use size())
 	double pts = 0.0;
 	uint64_t serial = 0;         // grows with every picture the player produces
 	uint64_t epoch = 0;          // which seek it belongs to

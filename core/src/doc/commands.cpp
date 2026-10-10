@@ -240,13 +240,25 @@ SetImageDataCommand::SetImageDataCommand(std::vector<Entry> p_Entries, std::stri
 void SetImageDataCommand::apply(Document& p_Document)
 {
 	for (const Entry& l_Entry : m_Entries)
-		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (ImageData* l_Image = p_Object.image()) *l_Image = l_Entry.after; }, ObjectChange::Geometry | ObjectChange::Style);
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (ImageData* l_Image = p_Object.image())
+				*l_Image = l_Entry.after;
+			if (l_Entry.setTransform)
+				p_Object.transform = l_Entry.transformAfter;
+		}, ObjectChange::Geometry | ObjectChange::Style);
 }
 
 void SetImageDataCommand::revert(Document& p_Document)
 {
 	for (const Entry& l_Entry : m_Entries)
-		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (ImageData* l_Image = p_Object.image()) *l_Image = l_Entry.before; }, ObjectChange::Geometry | ObjectChange::Style);
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (ImageData* l_Image = p_Object.image())
+				*l_Image = l_Entry.before;
+			if (l_Entry.setTransform)
+				p_Object.transform = l_Entry.transformBefore;
+		}, ObjectChange::Geometry | ObjectChange::Style);
 }
 
 SetVideoDataCommand::SetVideoDataCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
@@ -291,15 +303,24 @@ const Color* colorOf(const Object& p_Object)
 void SetStrokeColorCommand::apply(Document& p_Document)
 {
 	m_Old.clear();
+	m_OldSpans.clear();
 	for (const ObjectId l_Id : m_Ids)
 	{
 		const Object* l_Object = p_Document.find(l_Id);
 		const Color* l_Current = l_Object != nullptr ? colorOf(*l_Object) : nullptr;
 		m_Old.push_back(l_Current != nullptr ? *l_Current : m_New);
+		m_OldSpans.emplace_back();
 		if (l_Current == nullptr)
 			continue;
+		if (const TextData* l_Text = l_Object->text())
+			m_OldSpans.back() = l_Text->spans;
 		const Color l_Color{ m_New.r, m_New.g, m_New.b, l_Current->a };
-		p_Document.modify(l_Id, [&](Object& p_Object) { *colorOf(p_Object) = l_Color; }, ObjectChange::Style);
+		p_Document.modify(l_Id, [&](Object& p_Object)
+		{
+			*colorOf(p_Object) = l_Color;
+			if (TextData* l_Text = p_Object.text())
+				l_Text->spans.clear(); // the whole text takes the colour
+		}, ObjectChange::Style);
 	}
 }
 
@@ -310,7 +331,12 @@ void SetStrokeColorCommand::revert(Document& p_Document)
 		const Object* l_Object = p_Document.find(m_Ids[i]);
 		if (l_Object == nullptr || colorOf(*l_Object) == nullptr)
 			continue;
-		p_Document.modify(m_Ids[i], [&](Object& p_Object) { *colorOf(p_Object) = m_Old[i]; }, ObjectChange::Style);
+		p_Document.modify(m_Ids[i], [&](Object& p_Object)
+		{
+			*colorOf(p_Object) = m_Old[i];
+			if (TextData* l_Text = p_Object.text(); l_Text != nullptr && i < m_OldSpans.size())
+				l_Text->spans = m_OldSpans[i];
+		}, ObjectChange::Style);
 	}
 }
 
@@ -344,6 +370,22 @@ void SetLockedCommand::revert(Document& p_Document)
 {
 	for (const ObjectId l_Id : m_Ids)
 		p_Document.modify(l_Id, [&](Object& p_Object) { p_Object.locked = !m_Locked; }, ObjectChange::Lock);
+}
+
+SetGroupCommand::SetGroupCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
+{
+}
+
+void SetGroupCommand::apply(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { p_Object.group = l_Entry.after; }, ObjectChange::Group);
+}
+
+void SetGroupCommand::revert(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { p_Object.group = l_Entry.before; }, ObjectChange::Group);
 }
 
 SetTextCommand::SetTextCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))

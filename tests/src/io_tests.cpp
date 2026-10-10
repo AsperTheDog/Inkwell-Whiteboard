@@ -281,6 +281,25 @@ TEST(Settings, RoundTripKeepsUnknownKeysAndIgnoresGarbage)
 	wb::removeFileQuiet(l_File);
 }
 
+TEST(Serializer, GroupsAreSaved)
+{
+	wb::Document l_Doc;
+	fill(l_Doc, 4);
+	const wb::ObjectId l_First = l_Doc.objects()[0]->id;
+	const wb::ObjectId l_Third = l_Doc.objects()[2]->id;
+	const wb::ObjectId l_Group = l_Doc.allocateId();
+	l_Doc.modify(l_First, [&](wb::Object& p_Object) { p_Object.group = l_Group; }, wb::ObjectChange::Group);
+	l_Doc.modify(l_Third, [&](wb::Object& p_Object) { p_Object.group = l_Group; }, wb::ObjectChange::Group);
+
+	const std::vector<uint8_t> l_Bytes = wb::serializeBoard(l_Doc, {});
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	ASSERT_TRUE(wb::deserializeBoard(l_Bytes, l_Loaded, l_Meta).ok);
+	ASSERT_EQ(l_Loaded.size(), 4u);
+	for (const auto& l_Object : l_Loaded.objects())
+		EXPECT_EQ(l_Object->group, l_Object->id == l_First || l_Object->id == l_Third ? l_Group : wb::INVALID_OBJECT_ID);
+}
+
 TEST(Serializer, LockedObjectsStayLocked)
 {
 	wb::Document l_Doc;

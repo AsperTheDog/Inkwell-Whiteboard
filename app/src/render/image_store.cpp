@@ -59,9 +59,11 @@ struct PushConstants
 	float translation[2];
 	float size[2];
 	float opacity;
-	float padding[3];
+	float dim;
+	float padding[2];
+	float uvRect[4];
 };
-static_assert(sizeof(PushConstants) == 64);
+static_assert(sizeof(PushConstants) == 80);
 
 uint32_t mipCountFor(const uint32_t p_Width, const uint32_t p_Height)
 {
@@ -517,7 +519,9 @@ void ImageStore::draw(const VkCommandBuffer p_Cmd, const VkExtent2D p_Extent, co
 		.translation = { static_cast<float>(p_Draw.localToScreen.translation.x), static_cast<float>(p_Draw.localToScreen.translation.y) },
 		.size = { p_Draw.size.x, p_Draw.size.y },
 		.opacity = 1.f,
-		.padding = { 0.f, 0.f, 0.f },
+		.dim = p_Draw.dim,
+		.padding = { 0.f, 0.f },
+		.uvRect = { p_Draw.uvRect.x, p_Draw.uvRect.y, p_Draw.uvRect.z, p_Draw.uvRect.w },
 	};
 	vkCmdBindDescriptorSets(p_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0, 1, &p_Draw.set, 0, nullptr);
 	vkCmdPushConstants(p_Cmd, m_Layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(l_Push), &l_Push);

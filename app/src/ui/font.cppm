@@ -74,6 +74,7 @@ enum class Icon : uint32_t
 	Play = 0xE13F,
 	Pause = 0xE131,
 	ShrinkImage = 0xE540,
+	Crop = 0xE0AF,
 	Type = 0xE197,
 	Bold = 0xE061,
 	Italic = 0xE100,

@@ -97,7 +97,7 @@ void TextSession::beginExisting(const ObjectId p_Id, const std::optional<DVec2> 
 	m_Data = *l_Text;
 	m_BeforeData = *l_Text;
 	m_BeforeTransform = l_Object->transform;
-	m_Editor = text::TextEditor(l_Text->text);
+	m_Editor = text::TextEditor(l_Text->text, l_Text->spans);
 	m_Active = true;
 	m_IsNew = false;
 	m_HasPreferredX = false;
@@ -131,6 +131,7 @@ void TextSession::end()
 
 	TextData l_Final = *l_Object->text();
 	l_Final.text = m_Editor.text();
+	l_Final.spans = m_Editor.spans();
 	l_Final.size = m_TextSystem.measure(l_Final);
 	const Affine2 l_FinalTransform = anchoredTextTransform(l_Object->transform, l_Object->text()->size, l_Final.size, l_Final.align);
 	const bool l_Empty = isBlank(l_Final.text);
@@ -192,6 +193,7 @@ void TextSession::refresh()
 	}
 	TextData l_Data = m_Data;
 	l_Data.text = m_Editor.displayText();
+	l_Data.spans = m_Editor.displaySpans();
 	l_Data.size = m_TextSystem.measure(l_Data);
 	const Affine2 l_Transform = anchoredTextTransform(l_Object->transform, l_Object->text()->size, l_Data.size, l_Data.align);
 	m_Data.size = l_Data.size;
@@ -209,7 +211,34 @@ void TextSession::applyStyle(const std::function<void(TextData&)>& p_Edit)
 		return;
 	p_Edit(m_Data);
 	m_Data.text.clear();
+	m_Data.spans.clear();
 	refresh();
+}
+
+void TextSession::applyColor(const Color p_Color)
+{
+	if (!m_Active)
+		return;
+	if (m_Editor.hasSelection())
+	{
+		// Only the selected letters change colour
+		m_Editor.paintSelection(p_Color, m_Data.color);
+	}
+	else
+	{
+		// The whole text, letters with a colour of their own included
+		m_Editor.clearSpans();
+		m_Data.color = Color{ p_Color.r, p_Color.g, p_Color.b, m_Data.color.a };
+	}
+	refresh();
+}
+
+std::optional<Color> TextSession::selectionColor() const
+{
+	if (!m_Active || !m_Editor.hasSelection())
+		return std::nullopt;
+	const ColorSpan* l_Span = spanAt(m_Editor.spans(), m_Editor.selectionBegin());
+	return l_Span != nullptr ? Color{ l_Span->color.r, l_Span->color.g, l_Span->color.b, m_Data.color.a } : m_Data.color;
 }
 
 // ------------------------------------------------------------------------------------------------ geometry

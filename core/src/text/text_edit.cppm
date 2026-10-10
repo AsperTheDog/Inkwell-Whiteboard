@@ -10,6 +10,9 @@ module;
 
 export module wb.text.edit;
 
+import wb.math;
+import wb.doc.object;
+
 export namespace wb::text
 {
 class TextEditor
@@ -17,7 +20,7 @@ class TextEditor
 public:
 	TextEditor() = default;
 	// The caret starts after the last character
-	explicit TextEditor(std::string p_Text);
+	explicit TextEditor(std::string p_Text, std::vector<ColorSpan> p_Spans = {});
 
 	[[nodiscard]] const std::string& text() const { return m_Text; }
 	[[nodiscard]] size_t caret() const { return m_Caret; }
@@ -34,8 +37,17 @@ public:
 	bool backspace(bool p_Word);
 	bool erase(bool p_Word); // the Delete key
 	bool deleteSelection();
-	// Replaces everything (undoable)
+	// Replaces everything (undoable); the text loses its colour spans
 	bool setText(std::string_view p_Text);
+
+	// ---- per-letter colour. Typed and pasted text takes the colour of the letter before it.
+	[[nodiscard]] const std::vector<ColorSpan>& spans() const { return m_Spans; }
+	// Colours the selection (undoable); p_Base is the text's own colour, which needs no span. False without a selection.
+	bool paintSelection(const Color& p_Color, const Color& p_Base);
+	// Drops every span (not an undo step: the caller changes the text's own colour at the same time)
+	void clearSpans();
+	// The colour of the letter after the caret, or of the one before it at the end of the text; nullptr for the base colour
+	[[nodiscard]] const ColorSpan* spanAtCaret() const;
 
 	// ---- movement; p_Extend keeps the anchor (Shift held)
 	void moveLeft(bool p_Extend, bool p_Word);
@@ -51,6 +63,8 @@ public:
 	[[nodiscard]] const std::string& composition() const { return m_Composition; }
 	// The text as it is displayed (composition included) and where the caret is in it
 	[[nodiscard]] std::string displayText() const;
+	// The spans matching displayText(): the composition has the colour of the letter before the caret
+	[[nodiscard]] std::vector<ColorSpan> displaySpans() const;
 	[[nodiscard]] size_t displayCaret() const { return m_Caret + m_CompositionCursor; }
 	// Maps a byte of the displayed text to the real text (bytes inside the composition map to the caret)
 	[[nodiscard]] size_t realIndex(size_t p_DisplayByte) const;
@@ -66,6 +80,7 @@ private:
 	struct Snapshot
 	{
 		std::string text;
+		std::vector<ColorSpan> spans;
 		size_t caret = 0;
 		size_t anchor = 0;
 	};
@@ -81,8 +96,12 @@ private:
 	void remember(Kind p_Kind);
 	void changed();
 	void restore(const Snapshot& p_Snapshot);
+	[[nodiscard]] Snapshot snapshot() const { return Snapshot{ m_Text, m_Spans, m_Caret, m_Anchor }; }
+	// The span a letter inserted at p_Position inherits
+	[[nodiscard]] const ColorSpan* inheritedSpan(size_t p_Position, bool p_Replacing) const;
 
 	std::string m_Text;
+	std::vector<ColorSpan> m_Spans;
 	size_t m_Caret = 0;
 	size_t m_Anchor = 0;
 	std::string m_Composition;

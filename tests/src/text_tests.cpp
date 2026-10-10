@@ -453,6 +453,172 @@ TEST(TextObject, DamagedTextDataIsRejectedNotTrusted)
 	}
 }
 
+namespace
+{
+const wb::Color RED{ 1.f, 0.f, 0.f, 1.f };
+const wb::Color BLUE{ 0.f, 0.f, 1.f, 1.f };
+const wb::Color BASE{ 0.1f, 0.1f, 0.1f, 0.5f };
+
+wb::ColorSpan span(const uint32_t p_Begin, const uint32_t p_End, const wb::Color p_Color)
+{
+	return wb::ColorSpan{ p_Begin, p_End, p_Color };
+}
+} // namespace
+
+TEST(ColorSpans, PaintingSplitsMergesAndDropsTheBaseColour)
+{
+	std::vector<wb::ColorSpan> l_Spans;
+	wb::paintSpans(l_Spans, 2, 6, RED, 10, BASE);
+	wb::paintSpans(l_Spans, 4, 8, BLUE, 10, BASE);
+	ASSERT_EQ(l_Spans.size(), 2u);
+	EXPECT_EQ(l_Spans[0], span(2, 4, RED));
+	EXPECT_EQ(l_Spans[1], span(4, 8, BLUE));
+	// The same colour next to itself becomes one span
+	wb::paintSpans(l_Spans, 0, 4, BLUE, 10, BASE);
+	ASSERT_EQ(l_Spans.size(), 1u);
+	EXPECT_EQ(l_Spans[0], span(0, 8, BLUE));
+	// Painting with the text's own colour takes the override away
+	wb::paintSpans(l_Spans, 1, 3, BASE, 10, BASE);
+	ASSERT_EQ(l_Spans.size(), 2u);
+	EXPECT_EQ(l_Spans[0], span(0, 1, BLUE));
+	EXPECT_EQ(l_Spans[1], span(3, 8, BLUE));
+	EXPECT_EQ(wb::spanAt(l_Spans, 2), nullptr);
+	ASSERT_NE(wb::spanAt(l_Spans, 3), nullptr);
+	EXPECT_EQ(wb::spanAt(l_Spans, 8), nullptr);
+}
+
+TEST(ColorSpans, NormalizeRepairsDamagedSpans)
+{
+	std::vector<wb::ColorSpan> l_Spans{ span(5, 5, RED), span(8, 40, RED), span(6, 3, BLUE), span(0, 2, BLUE) };
+	wb::normalizeSpans(l_Spans, 10, BASE);
+	ASSERT_EQ(l_Spans.size(), 2u);
+	EXPECT_EQ(l_Spans[0], span(0, 2, BLUE));
+	EXPECT_EQ(l_Spans[1], span(8, 10, RED));
+}
+
+TEST(ColorSpans, EditsMoveTheSpansWithTheText)
+{
+	// "ab[cd]ef": insert inside, delete across the start, delete everything
+	std::vector<wb::ColorSpan> l_Spans{ span(2, 4, RED) };
+	wb::editSpans(l_Spans, 3, 0, 2, wb::spanAt(l_Spans, 2)); // typed inside the red letters: they stay red
+	EXPECT_EQ(l_Spans, (std::vector<wb::ColorSpan>{ span(2, 6, RED) }));
+	wb::editSpans(l_Spans, 0, 0, 3, nullptr); // typed before them
+	EXPECT_EQ(l_Spans, (std::vector<wb::ColorSpan>{ span(5, 9, RED) }));
+	wb::editSpans(l_Spans, 4, 3, 0, nullptr); // deleted [4,7): the front of the span goes
+	EXPECT_EQ(l_Spans, (std::vector<wb::ColorSpan>{ span(4, 6, RED) }));
+	wb::editSpans(l_Spans, 0, 10, 0, nullptr);
+	EXPECT_TRUE(l_Spans.empty());
+
+	// Text typed without inheriting inside a span opens a gap
+	l_Spans = { span(0, 6, RED) };
+	wb::editSpans(l_Spans, 3, 0, 2, nullptr);
+	EXPECT_EQ(l_Spans, (std::vector<wb::ColorSpan>{ span(0, 3, RED), span(5, 8, RED) }));
+}
+
+TEST(TextEditor, TypedTextTakesTheColourOfThePreviousLetter)
+{
+	wb::text::TextEditor l_Editor("abcd");
+	l_Editor.moveTo(1, false);
+	l_Editor.moveTo(3, true);
+	ASSERT_TRUE(l_Editor.paintSelection(RED, BASE)); // "bc"
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(1, 3, RED) }));
+
+	l_Editor.moveTo(3, false);
+	l_Editor.insert("XY"); // right after a red letter
+	EXPECT_EQ(l_Editor.text(), "abcXYd");
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(1, 5, RED) }));
+
+	l_Editor.moveTo(0, false);
+	l_Editor.insert("_"); // at the start, before any red letter
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(2, 6, RED) }));
+
+	l_Editor.moveTo(6, false);
+	l_Editor.backspace(false); // removes the last red letter
+	EXPECT_EQ(l_Editor.text(), "_abcXd");
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(2, 5, RED) }));
+}
+
+TEST(TextEditor, ReplacingASelectionKeepsItsFirstLettersColour)
+{
+	wb::text::TextEditor l_Editor("abcd");
+	l_Editor.moveTo(1, false);
+	l_Editor.moveTo(3, true);
+	l_Editor.paintSelection(RED, BASE);
+	l_Editor.insert("Z"); // replaces "bc"
+	EXPECT_EQ(l_Editor.text(), "aZd");
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(1, 2, RED) }));
+}
+
+TEST(TextEditor, ColoursAreUndoneWithTheText)
+{
+	wb::text::TextEditor l_Editor("abcd");
+	l_Editor.selectAll();
+	l_Editor.paintSelection(RED, BASE);
+	l_Editor.moveTo(4, false);
+	l_Editor.backspace(false);
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(0, 3, RED) }));
+	l_Editor.undo(); // the deleted letter and its colour return
+	EXPECT_EQ(l_Editor.text(), "abcd");
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(0, 4, RED) }));
+	l_Editor.undo(); // the colouring itself
+	EXPECT_TRUE(l_Editor.spans().empty());
+	l_Editor.redo();
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(0, 4, RED) }));
+}
+
+TEST(TextEditor, CompositionTakesThePreviousLettersColour)
+{
+	wb::text::TextEditor l_Editor("abcd");
+	l_Editor.moveTo(2, false);
+	l_Editor.moveTo(0, true);
+	l_Editor.paintSelection(RED, BASE);
+	l_Editor.moveTo(2, false);
+	l_Editor.setComposition("xyz", 3);
+	EXPECT_EQ(l_Editor.displayText(), "abxyzcd");
+	EXPECT_EQ(l_Editor.displaySpans(), (std::vector<wb::ColorSpan>{ span(0, 5, RED) }));
+	EXPECT_EQ(l_Editor.spans(), (std::vector<wb::ColorSpan>{ span(0, 2, RED) })); // the real text is untouched
+}
+
+TEST(TextObject, ColouredLettersSurviveSaveAndLoad)
+{
+	wb::Document l_Doc;
+	const wb::ObjectId l_Id = addText(l_Doc, { 0.0, 0.0 }, "hello world");
+	const_cast<wb::Object*>(l_Doc.find(l_Id))->text()->spans = { span(0, 5, RED), span(6, 11, BLUE) };
+	const std::vector<uint8_t> l_Bytes = wb::serializeBoard(l_Doc, {});
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	const wb::LoadResult l_Result = wb::deserializeBoard(l_Bytes, l_Loaded, l_Meta);
+	ASSERT_TRUE(l_Result.ok) << l_Result.error;
+	ASSERT_NE(l_Loaded.find(l_Id), nullptr);
+	EXPECT_EQ(*l_Loaded.find(l_Id)->text(), *l_Doc.find(l_Id)->text());
+	EXPECT_EQ(l_Loaded.find(l_Id)->text()->spans.size(), 2u);
+
+	// A text without coloured letters is stored exactly as before they existed, and truncations stay errors
+	const_cast<wb::Object*>(l_Doc.find(l_Id))->text()->spans.clear();
+	const std::vector<uint8_t> l_Plain = wb::serializeBoard(l_Doc, {});
+	EXPECT_LT(l_Plain.size(), l_Bytes.size());
+	for (size_t l_Size = 0; l_Size < l_Bytes.size(); l_Size += 3)
+	{
+		wb::Document l_Target;
+		wb::BoardMeta l_TargetMeta;
+		EXPECT_FALSE(wb::deserializeBoard(std::span<const uint8_t>(l_Bytes.data(), l_Size), l_Target, l_TargetMeta).ok);
+	}
+}
+
+TEST(TextObject, RecolouringAWholeTextDropsLetterColoursAndUndoBringsThemBack)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_Id = addText(l_Doc, { 0.0, 0.0 }, "hello");
+	l_Doc.modify(l_Id, [](wb::Object& p_Object) { p_Object.text()->spans = { span(0, 2, BLUE) }; });
+	const std::array<wb::ObjectId, 1> l_Ids{ l_Id };
+	// Same colour as the text's own, but letters differ: still a change
+	wb::recolorObjects(l_Doc, l_History, l_Ids, l_Doc.find(l_Id)->text()->color);
+	EXPECT_TRUE(l_Doc.find(l_Id)->text()->spans.empty());
+	l_History.undo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_Id)->text()->spans, (std::vector<wb::ColorSpan>{ span(0, 2, BLUE) }));
+}
+
 TEST(ResetTransform, MakesObjectsUprightAroundTheirCentre)
 {
 	wb::Document l_Doc;

@@ -486,6 +486,100 @@ TEST(Lock, CopiesAreNotLocked)
 	EXPECT_TRUE(l_Doc.find(l_A)->locked);
 }
 
+// ---------------------------------------------------------------------------------------------- grouping
+
+TEST(Group, SelectionTakesTheWholeGroup)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	wb::Selection l_Selection(l_Doc);
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	const wb::ObjectId l_C = addStroke(l_Doc, { 200.0, 0.0 });
+	const wb::ObjectId l_D = addStroke(l_Doc, { 300.0, 0.0 });
+
+	const wb::ObjectId l_Group = wb::groupObjects(l_Doc, l_History, std::array<wb::ObjectId, 3>{ l_A, l_B, l_C });
+	EXPECT_NE(l_Group, wb::INVALID_OBJECT_ID);
+	EXPECT_EQ(l_Doc.find(l_A)->group, l_Group);
+	EXPECT_EQ(l_Doc.find(l_D)->group, wb::INVALID_OBJECT_ID);
+
+	l_Selection.set(std::array<wb::ObjectId, 1>{ l_B });
+	EXPECT_EQ(l_Selection.size(), 3u);
+	EXPECT_TRUE(l_Selection.contains(l_A) && l_Selection.contains(l_C));
+
+	// Adding the loose one keeps the group; removing a member removes the whole group
+	l_Selection.add(l_D);
+	EXPECT_EQ(l_Selection.size(), 4u);
+	l_Selection.toggle(l_A);
+	EXPECT_EQ(l_Selection.size(), 1u);
+	EXPECT_TRUE(l_Selection.contains(l_D));
+
+	// A member that disappears (erased...) leaves the others selected
+	l_Selection.set(std::array<wb::ObjectId, 1>{ l_A });
+	(void)l_Doc.take(l_B);
+	EXPECT_EQ(l_Selection.size(), 2u);
+	EXPECT_FALSE(l_Selection.contains(l_B));
+}
+
+TEST(Group, MovesTogetherAndUndoes)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	const std::array<wb::ObjectId, 2> l_Both{ l_A, l_B };
+
+	// Fewer than two objects: no group
+	EXPECT_EQ(wb::groupObjects(l_Doc, l_History, std::array<wb::ObjectId, 1>{ l_A }), wb::INVALID_OBJECT_ID);
+	const wb::ObjectId l_Group = wb::groupObjects(l_Doc, l_History, l_Both);
+	ASSERT_NE(l_Group, wb::INVALID_OBJECT_ID);
+	// Already the same group: nothing new to undo
+	EXPECT_EQ(wb::groupObjects(l_Doc, l_History, l_Both), l_Group);
+
+	l_History.undo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_A)->group, wb::INVALID_OBJECT_ID);
+	EXPECT_EQ(l_Doc.find(l_B)->group, wb::INVALID_OBJECT_ID);
+	l_History.redo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_B)->group, l_Group);
+
+	EXPECT_EQ(wb::ungroupObjects(l_Doc, l_History, l_Both), 2u);
+	EXPECT_EQ(l_Doc.find(l_A)->group, wb::INVALID_OBJECT_ID);
+	EXPECT_EQ(wb::ungroupObjects(l_Doc, l_History, l_Both), 0u);
+	l_History.undo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_A)->group, l_Group);
+}
+
+TEST(Group, LockedObjectsAreNotGrouped)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	wb::lockObjects(l_Doc, l_History, std::array<wb::ObjectId, 1>{ l_A }, true);
+	EXPECT_EQ(wb::groupObjects(l_Doc, l_History, std::array<wb::ObjectId, 2>{ l_A, l_B }), wb::INVALID_OBJECT_ID);
+}
+
+TEST(Group, CopiesFormTheirOwnGroup)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	const wb::ObjectId l_Group = wb::groupObjects(l_Doc, l_History, std::array<wb::ObjectId, 2>{ l_A, l_B });
+
+	const std::vector<wb::ObjectId> l_Copies = wb::duplicateObjects(l_Doc, l_History, std::array<wb::ObjectId, 2>{ l_A, l_B }, { 10.0, 10.0 });
+	ASSERT_EQ(l_Copies.size(), 2u);
+	const wb::ObjectId l_CopyGroup = l_Doc.find(l_Copies[0])->group;
+	EXPECT_NE(l_CopyGroup, wb::INVALID_OBJECT_ID);
+	EXPECT_NE(l_CopyGroup, l_Group);
+	EXPECT_EQ(l_Doc.find(l_Copies[1])->group, l_CopyGroup);
+
+	// Only one member copied: the copy is not left in a group of one
+	const std::vector<wb::ObjectId> l_Single = wb::duplicateObjects(l_Doc, l_History, std::array<wb::ObjectId, 1>{ l_A }, { 10.0, 10.0 });
+	ASSERT_EQ(l_Single.size(), 1u);
+	EXPECT_EQ(l_Doc.find(l_Single[0])->group, wb::INVALID_OBJECT_ID);
+}
+
 // ---------------------------------------------------------------------------------------------- alignment
 
 TEST(Align, EdgesCentresAndSpacing)

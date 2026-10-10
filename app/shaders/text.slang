@@ -10,8 +10,9 @@ struct Glyph
 	float4 rect;     // x, y, width, height of the quad in object-local units
 	float4 uv;       // u0, v0, u1, v1
 	float baseline;  // object-local y of the baseline
-	uint flags;      // 1 = bold, 2 = italic
-	float2 padding;
+	uint flags;      // 1 = bold, 2 = italic, 4 = the glyph has a colour of its own
+	uint color;      // RGB8 (red in the low byte), used with flag 4
+	float padding;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<Glyph> gGlyphs;
@@ -38,6 +39,7 @@ struct VSOutput
 	float4 position : SV_Position;
 	float2 uv;
 	nointerpolation uint flags;
+	nointerpolation float3 color;
 };
 
 [shader("vertex")]
@@ -56,6 +58,9 @@ VSOutput vsMain(uint vertexId : SV_VulkanVertexID, uint instanceId : SV_VulkanIn
 	output.position = float4(screenToNdc(pixel, pc.viewportSize), 0.0, 1.0);
 	output.uv = lerp(g.uv.xy, g.uv.zw, t);
 	output.flags = g.flags;
+	output.color = (g.flags & 4u) != 0u
+		? float3(float(g.color & 255u), float((g.color >> 8) & 255u), float((g.color >> 16) & 255u)) / 255.0
+		: pc.color.rgb;
 	return output;
 }
 
@@ -71,5 +76,5 @@ float4 fsMain(VSOutput input) : SV_Target
 	float coverage = smoothstep(edge - w, edge + w, d);
 	if (coverage <= 0.0)
 		discard;
-	return float4(pc.color.rgb * pc.color.a, pc.color.a) * coverage;
+	return float4(input.color * pc.color.a, pc.color.a) * coverage;
 }

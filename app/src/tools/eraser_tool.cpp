@@ -80,6 +80,7 @@ void EraserTool::eraseAlong(const DVec2 p_From, const DVec2 p_To, ToolContext& p
 		ObjectId id = INVALID_OBJECT_ID;
 		std::vector<StrokeData> pieces;
 		Affine2 transform{};
+		ObjectId group = INVALID_OBJECT_ID;
 	};
 	std::vector<Hit> l_Hits;
 
@@ -100,7 +101,7 @@ void EraserTool::eraseAlong(const DVec2 p_From, const DVec2 p_To, ToolContext& p
 		}
 		else if (std::optional<std::vector<StrokeData>> l_Pieces = cutStroke(*l_Object, l_Capsule))
 		{
-			l_Hits.push_back(Hit{ .id = l_Object->id, .pieces = std::move(*l_Pieces), .transform = l_Object->transform });
+			l_Hits.push_back(Hit{ .id = l_Object->id, .pieces = std::move(*l_Pieces), .transform = l_Object->transform, .group = l_Object->group });
 		}
 	}
 
@@ -112,6 +113,7 @@ void EraserTool::eraseAlong(const DVec2 p_From, const DVec2 p_To, ToolContext& p
 			auto l_Object = std::make_unique<Object>();
 			l_Object->id = p_Context.document.allocateId();
 			l_Object->transform = l_Hit.transform;
+			l_Object->group = l_Hit.group; // the pieces of a stroke stay with the rest of its group
 			l_Object->payload = std::move(l_Piece);
 			l_Added.push_back(std::move(l_Object));
 		}
