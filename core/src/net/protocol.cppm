@@ -9,7 +9,7 @@
 //   host -> client   Welcome    (your slot, the users, the host's own proof)   or   Reject (reason)
 //   host -> client   Snapshot*  (the board, in chunks; the last one is flagged)
 //   both ways        Ops        (a batch of edits, in order)
-//   host -> clients  UserJoined / UserLeft
+//   host -> clients  UserJoined / UserLeft / UserUpdate
 //   both ways        AssetRequest (a picture/video id) answered by AssetChunk* (the file, in order)
 module;
 #include <array>
@@ -28,7 +28,7 @@ import wb.net.crypto;
 
 export namespace wb::net
 {
-inline constexpr uint16_t PROTOCOL_VERSION = 2;
+inline constexpr uint16_t PROTOCOL_VERSION = 3;
 // Before the password has been checked a peer may only send tiny frames
 inline constexpr uint32_t MAX_HANDSHAKE_FRAME = 1024;
 // One frame: room for the largest single object plus its framing
@@ -70,6 +70,7 @@ enum class MsgType : uint8_t
 	Cursor = 11,      // where somebody's pointer is (about 30 times a second, only the latest matters)
 	StrokePreview = 15, // a line somebody is drawing right now, before they lift the pen
 	VideoState = 16,    // somebody pressed play/pause or moved the playhead of a video
+	UserUpdate = 17,    // host -> everyone: a user's details changed (a UserInfo), e.g. the host made them read-only
 };
 
 struct UserInfo
@@ -78,6 +79,7 @@ struct UserInfo
 	std::string name;
 	uint32_t color = 0xFFFFFFFFu; // RGBA8
 	bool host = false;
+	bool readOnly = false; // the host lets this user watch but not change the board
 };
 
 struct Challenge

@@ -13,6 +13,7 @@ module;
 export module wb.platform.input;
 
 import wb.math;
+import wb.platform.wintab;
 
 export namespace wb::platform
 {
@@ -118,11 +119,20 @@ public:
 	// Translates one SDL event. Returns nothing for events that are not pointer/wheel input (or are filtered).
 	[[nodiscard]] std::optional<InputEvent> translate(const SDL_Event& p_Event, float p_PixelDensity);
 
+	// Enables the WinTab fallback for tablets without Windows Ink. It stays dormant (and closes itself) as soon as
+	// SDL reports a real pen, so the two sources never both drive the canvas.
+	void attachWindow(SDL_Window* p_Window);
+	void setWindowFocus(bool p_Focused);
+
 	[[nodiscard]] const PenState& penState() const { return m_Pen; }
 	[[nodiscard]] const InputStats& stats() const { return m_Stats; }
+	[[nodiscard]] bool wintabActive() const { return m_Wintab.isOpen(); }
 
 private:
 	[[nodiscard]] static uint8_t currentModifiers();
+	void noteSdlPen();
+	[[nodiscard]] bool tabletOwnsMouse(uint64_t p_NowNs);
+	[[nodiscard]] PointerEvent makeTabletEvent(PointerPhase p_Phase, PointerButton p_Button, Vec2 p_Points, uint64_t p_TimestampNs, float p_PixelDensity);
 	void updatePenRate(uint64_t p_TimestampNs);
 	[[nodiscard]] PointerEvent makePenEvent(PointerPhase p_Phase, Vec2 p_Points, uint64_t p_TimestampNs, float p_PixelDensity) const;
 
@@ -133,5 +143,7 @@ private:
 	bool m_FingerActive = false;
 	uint64_t m_RateWindowStartNs = 0;
 	uint64_t m_RateWindowCount = 0;
+	Wintab m_Wintab;
+	bool m_SdlPenSeen = false;
 };
 } // namespace wb::platform

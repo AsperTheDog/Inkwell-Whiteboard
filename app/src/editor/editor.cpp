@@ -126,7 +126,7 @@ tools::Tool* Editor::toolInEffect() const
 		return m_ActiveTool;
 	if (m_Momentary)
 		return toolFor(m_Momentary->kind);
-	if (m_HoverEraser)
+	if (m_HoverEraser && !m_ReadOnly)
 		return m_Eraser.get();
 	return toolFor(m_DeviceTools[static_cast<size_t>(m_LastDevice)]);
 }
@@ -141,8 +141,43 @@ void Editor::setTool(const tools::ToolKind p_Kind)
 	setDeviceTool(m_LastDevice, p_Kind);
 }
 
+namespace
+{
+// The tools that change nothing on the board
+bool viewingTool(const tools::ToolKind p_Kind)
+{
+	return p_Kind == tools::ToolKind::Hand || p_Kind == tools::ToolKind::Laser;
+}
+} // namespace
+
+void Editor::setReadOnly(const bool p_ReadOnly)
+{
+	if (p_ReadOnly == m_ReadOnly)
+		return;
+	if (p_ReadOnly)
+	{
+		// Whatever was in progress (a stroke, a drag, typed text, a crop) is dropped before the history stops listening
+		cancelGestures();
+		endCrop();
+		m_Selection.clear();
+	}
+	m_ReadOnly = p_ReadOnly;
+	m_History.setReadOnly(p_ReadOnly);
+	if (!p_ReadOnly)
+		return;
+	m_Momentary.reset();
+	for (size_t i = 0; i < m_DeviceTools.size(); ++i)
+	{
+		if (!viewingTool(m_DeviceTools[i]))
+			m_DeviceTools[i] = tools::ToolKind::Hand;
+	}
+	m_ActiveTool = toolInEffect();
+}
+
 void Editor::setDeviceTool(const platform::PointerDevice p_Device, const tools::ToolKind p_Kind)
 {
+	if (m_ReadOnly && !viewingTool(p_Kind))
+		return;
 	endCrop();
 	if (p_Kind != tools::ToolKind::Text)
 		m_TextSession.end();
@@ -159,6 +194,8 @@ void Editor::setDeviceTool(const platform::PointerDevice p_Device, const tools::
 
 void Editor::borrowTool(const tools::ToolKind p_Kind, const SDL_Keycode p_Key)
 {
+	if (m_ReadOnly && !viewingTool(p_Kind))
+		return;
 	if (m_Momentary && m_Momentary->kind == p_Kind && m_Momentary->key == p_Key)
 		return;
 	if (p_Kind != tools::ToolKind::Text)
@@ -611,7 +648,7 @@ tools::SelectionOverlay Editor::selectionOverlay()
 
 void Editor::selectAll()
 {
-	if (isBusy())
+	if (m_ReadOnly || isBusy())
 		return;
 	std::vector<ObjectId> l_Ids;
 	l_Ids.reserve(m_Document.size());
@@ -750,7 +787,7 @@ void Editor::cutSelection()
 
 void Editor::paste()
 {
-	if (isBusy() || m_Clip.empty())
+	if (m_ReadOnly || isBusy() || m_Clip.empty())
 		return;
 	// Lands under the pointer when it is over the canvas, else in the middle of the view
 	const DVec2 l_Viewport = m_Camera.viewport();
@@ -823,7 +860,7 @@ ObjectId Editor::insertVideo(ImageAsset p_Asset, const DVec2 p_WorldCenter)
 
 ObjectId Editor::insertMedia(ImageAsset p_Asset, const DVec2 p_WorldCenter, const bool p_Video)
 {
-	if (isBusy() || p_Asset.width == 0 || p_Asset.height == 0)
+	if (m_ReadOnly || isBusy() || p_Asset.width == 0 || p_Asset.height == 0)
 		return INVALID_OBJECT_ID;
 	const uint32_t l_Width = p_Asset.width;
 	const uint32_t l_Height = p_Asset.height;
@@ -852,7 +889,7 @@ ObjectId Editor::insertMedia(ImageAsset p_Asset, const DVec2 p_WorldCenter, cons
 
 std::vector<ObjectId> Editor::insertPages(std::vector<PageImage> p_Pages)
 {
-	if (isBusy() || p_Pages.empty())
+	if (m_ReadOnly || isBusy() || p_Pages.empty())
 		return {};
 	constexpr double PAGE_GAP = 32.0;
 	const double l_ZoomFit = 0.7 * (m_Camera.viewport().x / m_Camera.pixelScale()) / std::max(1.0, static_cast<double>(p_Pages.front().size.x));
@@ -894,21 +931,21 @@ std::vector<ObjectId> Editor::insertPages(std::vector<PageImage> p_Pages)
 
 void Editor::editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
 {
-	if (isBusy() || m_Selection.empty())
+	if (m_ReadOnly || isBusy() || m_Selection.empty())
 		return;
 	wb::editImages(m_Document, m_History, m_Selection.orderedIds(), p_Name, p_Edit);
 }
 
 void Editor::editImages(const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
 {
-	if (isBusy() || p_Ids.empty())
+	if (m_ReadOnly || isBusy() || p_Ids.empty())
 		return;
 	wb::editImages(m_Document, m_History, p_Ids, p_Name, p_Edit);
 }
 
 void Editor::editVideo(const ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
 {
-	if (isBusy())
+	if (m_ReadOnly || isBusy())
 		return;
 	const ObjectId l_Ids[]{ p_Id };
 	editVideos(m_Document, m_History, l_Ids, p_Name, p_Edit);
@@ -1160,7 +1197,7 @@ std::optional<CropTarget> cropTargetOf(const Object* p_Object)
 bool Editor::beginCrop(const ObjectId p_Id)
 {
 	const Object* l_Object = m_Document.find(p_Id);
-	if (!cropTargetOf(l_Object) || l_Object->locked || !l_Object->transform.isInvertible() || isBusy())
+	if (m_ReadOnly || !cropTargetOf(l_Object) || l_Object->locked || !l_Object->transform.isInvertible() || isBusy())
 		return false;
 	m_TextSession.end();
 	const ObjectId l_Only[]{ p_Id };
@@ -1375,7 +1412,7 @@ TextData Editor::newTextData() const
 
 ObjectId Editor::insertText(std::string p_Text, const DVec2 p_WorldCenter)
 {
-	if (isBusy() || m_TextSession.active())
+	if (m_ReadOnly || isBusy() || m_TextSession.active())
 		return INVALID_OBJECT_ID;
 	TextData l_Data = newTextData();
 	l_Data.text = text::sanitize(p_Text);

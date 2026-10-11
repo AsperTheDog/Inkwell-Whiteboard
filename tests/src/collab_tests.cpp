@@ -583,6 +583,51 @@ TEST(Collab, TheHostRefusesEditsToLockedObjectsAndCorrectsTheSender)
 	EXPECT_FALSE(l_Host.doc.find(l_Id)->locked);
 }
 
+TEST(Collab, AReadOnlyGuestWatchesButTheirEditsAreIgnored)
+{
+	Node l_Host;
+	Node l_Ana;
+	Node l_Bo;
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return joinedAndOnline(l_Ana) && joinedAndOnline(l_Bo) && l_Ana.session->users().size() == 3 && l_Bo.session->users().size() == 3; }));
+	const uint16_t l_AnaSlot = l_Ana.session->localSlot();
+	EXPECT_FALSE(l_Ana.session->localReadOnly());
+	EXPECT_FALSE(l_Ana.session->setReadOnly(l_AnaSlot, true)); // only the host decides
+	EXPECT_FALSE(l_Host.session->setReadOnly(999, true));      // nobody by that slot
+
+	ASSERT_TRUE(l_Host.session->setReadOnly(l_AnaSlot, true));
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Ana.session->localReadOnly() && l_Bo.session->user(l_AnaSlot) != nullptr && l_Bo.session->user(l_AnaSlot)->readOnly; }));
+	EXPECT_FALSE(l_Bo.session->localReadOnly());
+	EXPECT_FALSE(l_Host.session->localReadOnly());
+
+	// Ana's edits (here forced past her editor) never reach the host or Bo; Bo's still reach everybody, Ana included
+	const wb::ObjectId l_Mine = addPicture(l_Ana.doc, noise(2u << 10, 3), "mine.png");
+	const wb::ObjectId l_Bos = addPicture(l_Bo.doc, noise(2u << 10, 4), "bos.png");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.doc.find(l_Bos) != nullptr && l_Ana.doc.find(l_Bos) != nullptr; }));
+	pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.doc.find(l_Mine) != nullptr; }, 1000);
+	EXPECT_EQ(l_Host.doc.find(l_Mine), nullptr);
+	EXPECT_EQ(l_Bo.doc.find(l_Mine), nullptr);
+
+	// Lifting it lets her edits through again
+	ASSERT_TRUE(l_Host.session->setReadOnly(l_AnaSlot, false));
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return !l_Ana.session->localReadOnly(); }));
+	const wb::ObjectId l_Later = addPicture(l_Ana.doc, noise(2u << 10, 5), "later.png");
+	EXPECT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return l_Host.doc.find(l_Later) != nullptr && l_Bo.doc.find(l_Later) != nullptr; }));
+}
+
+TEST(Protocol, UserReadOnlyFlagRoundTrips)
+{
+	using namespace wb::net;
+	UserInfo l_User{ .slot = 4, .name = "Ana", .color = 0x445566FFu, .host = false, .readOnly = true };
+	UserInfo l_Back;
+	ASSERT_TRUE(decode(encode(l_User), l_Back));
+	EXPECT_TRUE(l_Back.readOnly);
+	EXPECT_EQ(l_Back.slot, 4);
+}
+
 TEST(Collab, PointersAreSharedAndAttributedToTheirOwner)
 {
 	Node l_Host;

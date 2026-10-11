@@ -77,6 +77,10 @@ public:
 	// Changes whenever the undo state changes; compare against a saved value to know whether there are unsaved edits
 	[[nodiscard]] uint64_t stateId() const { return m_StateId; }
 
+	// While read-only (a collaboration guest the host only lets watch) nothing is executed, recorded, undone or redone
+	void setReadOnly(const bool p_ReadOnly) { m_ReadOnly = p_ReadOnly; }
+	[[nodiscard]] bool readOnly() const { return m_ReadOnly; }
+
 	// Prevents the next push from merging into the previous command (e.g. at the end of a drag)
 	void sealLast() { m_LastSealed = true; }
 
@@ -92,5 +96,6 @@ private:
 	std::vector<uint64_t> m_UndoStateIds; // state id after each undo entry
 	std::vector<uint64_t> m_RedoStateIds;
 	bool m_LastSealed = true;
+	bool m_ReadOnly = false;
 };
 } // namespace wb

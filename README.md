@@ -7,37 +7,46 @@ Windows and Linux.
 
 ## Features
 
-- Pen with pressure and tilt (Windows Ink, Wacom, Huion, XP-Pen), highlighter, shapes, ruler, adjustable stroke smoothing
-- Text, pictures, animated GIFs, videos (with sound, of any size: a video is played straight from its file, never loaded into memory), PDF import
-- Select, move, scale, rotate, align, group lock, duplicate, z-order; the selection bar groups its actions into Transform and File popovers
-- Save any picture or video on the board back to your computer
-- Video sound track and text subtitle selection, with SRT, WebVTT and ASS subtitle files
-- Laser pointer with a fading trail
-- Undo/redo, autosave with recovery, save file export/import, PNG export
+- Pen with pressure and tilt (Windows Ink, Wacom, Huion, XP-Pen), highlighter, shapes, ruler, stroke smoothing
+- Text, pictures, animated GIFs, videos with sound, PDF import. Videos play straight from their file, so size doesn't matter.
+- Select, move, scale, rotate, align, lock, duplicate, z-order
+- Save any picture or video on the board back to disk
+- Video sound track and subtitle selection (SRT, WebVTT, ASS)
+- Laser pointer
+- Undo/redo, autosave with recovery, save files, PNG export
 - Light and dark themes
-- Live collaboration over the network, encrypted: shared editing, remote pointers, people list, live pen strokes, shared video playback
+- Live collaboration over the network (encrypted)
 
 ## Collaborating
 
-One person hosts, the others join. Open **Collaborate** in the top bar.
+One person hosts, the others join. Both options are under **Collaborate** in the top bar.
 
-- **Host a session...** picks a port (default 5000), a password and your display name. Others reach you at `your-address:port`.
-- **Join a session...** takes the host's `address:port`, the password and your name.
-- Everybody edits the same board: strokes, shapes, text, pictures, GIFs, videos and PDF pages. You see the others' pointers (in their colour, with their name), the people list at the top, and the lines they are drawing as they draw them. Undo only undoes your own edits.
-- Pictures and videos stream after the board arrives; you see a thumbnail with a spinner while it loads. A big video is written to a temporary file as it arrives and starts playing as soon as the beginning is there (a video whose index sits at the end of the file has to arrive first).
-- Anyone can save a picture or video from the shared board to their own computer.
-- Video play/pause and the playhead are shared; loop, mute, volume and which sound track and subtitles you watch with are your own. Anyone can add a subtitle file (SRT, WebVTT or ASS, from the video bar or by dropping it on the video) and it appears in everybody's list.
+- **Host a session** asks for a port (default 5000), a password and your name. Others connect to `your-address:port`.
+- **Join a session** asks for the host's `address:port`, the password and your name.
 
-**Reaching the host.** The host needs an address the others can reach: the same local network, a VPN such as Tailscale or ZeroTier (easiest, nothing to open), or a router port forward to the chosen port. The host's firewall must allow the app.
+Everyone edits the same board and sees each other's pointers, names and in-progress strokes. Undo only affects your own edits. Video play/pause and position are shared; loop, volume, mute, sound track and subtitles are per person, and anyone can add a subtitle file.
 
-**Security, plainly.** Every connection is encrypted and tamper-proof: each side makes a throwaway X25519 key pair, the traffic is sealed with ChaCha20-Poly1305 (via [Monocypher](https://monocypher.org)), and the keys are never reused, so a recording of the traffic stays unreadable even if a password leaks later. The key exchange alone cannot tell who is on the other end, so the **password** does that: both sides prove they know it (stretched with Argon2id and tied to this exact key exchange), which stops anybody sitting between you and the host from joining the two. That has consequences worth knowing:
-- Choose a password that is hard to guess. Somebody who intercepts the connection cannot read it, but can try guesses against what they saw; a long password makes that hopeless, a short one does not.
-- A session with an **empty password** is still encrypted against eavesdroppers, but cannot be told apart from an impostor in the middle.
-- Hosts and clients need the same Inkwell version; older versions cannot talk to encrypted sessions.
+The host can make someone read-only from the people list. Read-only guests can look around, zoom and use the laser, nothing else.
 
-The host checks everything clients send (sizes, ids, locks, rates) and treats them as untrusted, but anybody with the password can edit and delete anything on the board that is not locked. Anything you load or receive passes through the same validation as opening a file.
+Pictures and videos arrive after the board does. Big videos are written to a temporary file and start playing once the beginning is there (if the file's index is at the end, it has to arrive first).
 
-**Limits worth knowing.** Up to 64 people; files of any size that fit on the disk (a big one arrives in a temporary file on the receiving computer, which needs the room); interrupted file transfers restart from the beginning; the host's machine is the hub, so the session ends for everybody when the host stops.
+### Reaching the host
+
+The host needs an address the others can reach: the same local network, a VPN like Tailscale or ZeroTier (no setup), or a port forward on the router. The host's firewall has to allow the app.
+
+### Security
+
+Connections are encrypted with ChaCha20-Poly1305 ([Monocypher](https://monocypher.org)) over a fresh X25519 key exchange for every session, so recorded traffic can't be decrypted later. The key exchange can't tell who is on the other end, so the password is used for that: both sides prove they know it (Argon2id, bound to the key exchange), which stops someone in the middle from joining the two.
+
+- Use a long password. An eavesdropper can't read it but can guess against what they captured.
+- An empty password still protects against eavesdropping, but not against someone in the middle.
+- Host and clients must run the same version.
+
+The host validates everything clients send, but anyone with the password can edit or delete anything that isn't locked.
+
+### Limits
+
+Up to 64 people. A file transfer that gets interrupted starts over. Large files need free disk space on the receiving machine. The session ends for everyone when the host quits.
 
 ## Running a release
 

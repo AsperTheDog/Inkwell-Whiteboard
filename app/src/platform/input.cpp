@@ -131,8 +131,61 @@ PointerEvent InputRouter::makePenEvent(const PointerPhase p_Phase, const Vec2 p_
 	};
 }
 
+void InputRouter::attachWindow(SDL_Window* p_Window)
+{
+	if (!m_SdlPenSeen)
+		m_Wintab.open(p_Window);
+}
+
+void InputRouter::setWindowFocus(const bool p_Focused)
+{
+	m_Wintab.setFocused(p_Focused);
+}
+
+void InputRouter::noteSdlPen()
+{
+	// Windows Ink (or Wayland/X11) delivers the pen itself, so the WinTab fallback would only duplicate it
+	if (m_SdlPenSeen)
+		return;
+	m_SdlPenSeen = true;
+	m_Wintab.close();
+}
+
+bool InputRouter::tabletOwnsMouse(const uint64_t p_NowNs)
+{
+	if (!m_Wintab.isOpen())
+		return false;
+	m_Wintab.poll(p_NowNs);
+	// The driver's emulated mouse events belong to the pen while it is in contact or recently reported by WinTab
+	constexpr uint64_t PROXIMITY_NS = 400'000'000ull;
+	const uint64_t l_Last = m_Wintab.lastPacketNs();
+	return m_Pen.down || (l_Last != 0 && (p_NowNs < l_Last || p_NowNs - l_Last < PROXIMITY_NS));
+}
+
+PointerEvent InputRouter::makeTabletEvent(const PointerPhase p_Phase, const PointerButton p_Button, const Vec2 p_Points, const uint64_t p_TimestampNs, const float p_PixelDensity)
+{
+	const TabletSample& l_Sample = m_Wintab.sample();
+	m_Pen.id = 1;
+	m_Pen.inProximity = true;
+	m_Pen.position = p_Points;
+	m_Pen.pressure = l_Sample.pressure;
+	m_Pen.tilt = l_Sample.tilt;
+	m_Pen.eraser = l_Sample.eraser;
+	m_Pen.buttons = m_MouseButtons;
+	updatePenRate(p_TimestampNs);
+	++m_Stats.pointerEvents;
+	m_Stats.lastDevice = PointerDevice::Pen;
+
+	PointerEvent l_Event = makePenEvent(p_Phase, p_Points, p_TimestampNs, p_PixelDensity);
+	l_Event.button = p_Button;
+	return l_Event;
+}
+
 std::optional<InputEvent> InputRouter::translate(const SDL_Event& p_Event, const float p_PixelDensity)
 {
+	if (p_Event.type >= SDL_EVENT_PEN_PROXIMITY_IN && p_Event.type <= SDL_EVENT_PEN_AXIS)
+		noteSdlPen();
+
 	switch (p_Event.type)
 	{
 	// ---------------------------------------------------------------- pen
@@ -254,6 +307,8 @@ std::optional<InputEvent> InputRouter::translate(const SDL_Event& p_Event, const
 			++m_Stats.droppedSyntheticMouse;
 			return std::nullopt;
 		}
+		if (tabletOwnsMouse(l_Motion.timestamp))
+			return makeTabletEvent(PointerPhase::Move, PointerButton::None, Vec2{ l_Motion.x, l_Motion.y }, l_Motion.timestamp, p_PixelDensity);
 		++m_Stats.pointerEvents;
 		m_Stats.lastDevice = PointerDevice::Mouse;
 		return PointerEvent{
@@ -280,10 +335,19 @@ std::optional<InputEvent> InputRouter::translate(const SDL_Event& p_Event, const
 			return std::nullopt;
 
 		const bool l_Down = p_Event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+		// Decided before the state changes: a release belongs to the device that took the press
+		const bool l_Tablet = tabletOwnsMouse(l_Button.timestamp);
 		if (l_Down)
 			m_MouseButtons |= buttonToMask(*l_Which);
 		else
 			m_MouseButtons &= static_cast<uint8_t>(~buttonToMask(*l_Which));
+
+		if (l_Tablet)
+		{
+			if (*l_Which == PointerButton::Primary)
+				m_Pen.down = l_Down;
+			return makeTabletEvent(l_Down ? PointerPhase::Down : PointerPhase::Up, *l_Which, Vec2{ l_Button.x, l_Button.y }, l_Button.timestamp, p_PixelDensity);
+		}
 
 		++m_Stats.pointerEvents;
 		m_Stats.lastDevice = PointerDevice::Mouse;

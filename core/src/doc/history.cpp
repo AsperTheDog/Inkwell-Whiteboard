@@ -17,12 +17,16 @@ namespace wb
 {
 void History::execute(Document& p_Document, std::unique_ptr<Command> p_Command)
 {
+	if (m_ReadOnly)
+		return;
 	p_Command->apply(p_Document);
 	push(std::move(p_Command));
 }
 
 void History::push(std::unique_ptr<Command> p_Command)
 {
+	if (m_ReadOnly)
+		return;
 	m_Redo.clear();
 	m_RedoStateIds.clear();
 
@@ -42,7 +46,7 @@ void History::push(std::unique_ptr<Command> p_Command)
 
 bool History::undo(Document& p_Document)
 {
-	if (m_Undo.empty())
+	if (m_ReadOnly || m_Undo.empty())
 		return false;
 
 	std::unique_ptr<Command> l_Command = std::move(m_Undo.back());
@@ -60,7 +64,7 @@ bool History::undo(Document& p_Document)
 
 bool History::redo(Document& p_Document)
 {
-	if (m_Redo.empty())
+	if (m_ReadOnly || m_Redo.empty())
 		return false;
 
 	std::unique_ptr<Command> l_Command = std::move(m_Redo.back());

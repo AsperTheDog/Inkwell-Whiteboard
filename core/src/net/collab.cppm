@@ -111,6 +111,11 @@ public:
 	[[nodiscard]] const std::deque<std::string>& diagnostics() const { return m_Log; }
 	// Bumps whenever the user table changes
 	[[nodiscard]] uint64_t usersRevision() const { return m_UsersRevision; }
+	// Host only: lets a person watch the board without changing it (or lets them edit again). The host ignores everything
+	// editing-related they send, and their own editor is told so it does not offer it. False when p_Slot is not a joined guest.
+	bool setReadOnly(uint16_t p_Slot, bool p_ReadOnly);
+	// This user may only watch (always false for the host and outside a session)
+	[[nodiscard]] bool localReadOnly() const;
 
 	// Pictures and videos being received. They arrive after the board, so objects show a placeholder until theirs lands.
 	struct AssetProgress

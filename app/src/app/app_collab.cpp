@@ -236,6 +236,8 @@ void App::initCollab()
 
 void App::pollCollab()
 {
+	// The host can make a guest read-only (and back) at any time; leaving the session lifts it
+	m_Editor.setReadOnly(m_Collab && m_Collab->localReadOnly());
 	if (!m_Collab || !m_Collab->active())
 	{
 		if (m_Collab && m_Collab->usersRevision() != m_CollabUsersSeen)
@@ -437,6 +439,7 @@ void App::buildCollabDialog()
 		}
 		l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(11.f) }, l_Where, m_Ui.fontPx(13.f), l_Theme.textMuted);
 		l_Y += m_Ui.px(22.f) + m_Ui.px(8.f);
+		std::optional<std::pair<uint16_t, bool>> l_ReadOnlyChange;
 		for (const net::UserInfo& l_User : l_Users)
 		{
 			const float l_CenterY = l_Y + l_RowHeight * 0.5f;
@@ -446,12 +449,24 @@ void App::buildCollabDialog()
 				l_Tags += "host";
 			if (l_User.slot == m_Collab->localSlot())
 				l_Tags += l_Tags.empty() ? "you" : ", you";
+			if (l_User.readOnly)
+				l_Tags += l_Tags.empty() ? "read-only" : ", read-only";
 			const float l_NameWidth = m_Ui.font().measure(l_User.name, m_Ui.fontPx(14.f));
 			l_Draw.text(Vec2{ l_Left + m_Ui.px(26.f), l_CenterY }, l_User.name, m_Ui.fontPx(14.f), l_Theme.text);
 			if (!l_Tags.empty())
 				l_Draw.text(Vec2{ l_Left + m_Ui.px(26.f) + l_NameWidth + m_Ui.px(10.f), l_CenterY }, l_Tags, m_Ui.fontPx(12.5f), l_Theme.textMuted);
+			if (l_Hosting && !l_User.host)
+			{
+				// Only the host decides who may change the board
+				const float l_ToggleWidth = m_Ui.px(120.f);
+				const Rect2 l_Toggle = Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ToggleWidth, l_CenterY - m_Ui.px(14.f) }, Vec2{ l_ToggleWidth, m_Ui.px(28.f) });
+				if (m_Ui.button("collab.readonly." + std::to_string(l_User.slot), l_Toggle, l_User.readOnly ? "Allow editing" : "Make read-only", ui::ButtonStyle::Secondary))
+					l_ReadOnlyChange = std::pair<uint16_t, bool>{ l_User.slot, !l_User.readOnly }; // applied below: it rebuilds the list being walked
+			}
 			l_Y += l_RowHeight;
 		}
+		if (l_ReadOnlyChange)
+			m_Collab->setReadOnly(l_ReadOnlyChange->first, l_ReadOnlyChange->second);
 		if (l_Users.empty())
 			l_Y += l_RowHeight;
 		if (l_LogShown > 0)
@@ -482,7 +497,7 @@ void App::buildCollabDialog()
 	}
 
 	const bool l_Host = l_Kind == CollabDialog::Host;
-	const std::string l_Note = l_Host ? "Share your address and this port with the people who should join. The connection is encrypted; the password also proves who is who, so choose one that is hard to guess. Everyone with the password can edit this board."
+	const std::string l_Note = l_Host ? "Share your address and this port with the people who should join. The connection is encrypted; the password also proves who is who, so choose one that is hard to guess. Everyone with the password can edit this board, unless you make them read-only from the session window."
 	                                  : "Joining replaces the board you have open with the host's.";
 	const std::vector<std::string> l_NoteLines = m_Ui.font().wrap(l_Note, l_NotePx, l_InnerWidth);
 	const float l_Height = l_Pad + l_TitleBlock + 3.f * l_FieldBlock + l_NoteLine * static_cast<float>(l_NoteLines.size()) + m_Ui.px(16.f) + l_ButtonHeight + l_Pad;

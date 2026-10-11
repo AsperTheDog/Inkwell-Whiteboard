@@ -26,6 +26,7 @@ void writeUser(ByteWriter& p_Writer, const UserInfo& p_User)
 	p_Writer.string(p_User.name);
 	p_Writer.u32(p_User.color);
 	p_Writer.boolean(p_User.host);
+	p_Writer.boolean(p_User.readOnly);
 }
 
 bool readUser(ByteReader& p_Reader, UserInfo& p_User)
@@ -34,6 +35,7 @@ bool readUser(ByteReader& p_Reader, UserInfo& p_User)
 	p_User.name = p_Reader.string(MAX_NAME_BYTES);
 	p_User.color = p_Reader.u32();
 	p_User.host = p_Reader.boolean();
+	p_User.readOnly = p_Reader.boolean();
 	return p_Reader.ok();
 }
 

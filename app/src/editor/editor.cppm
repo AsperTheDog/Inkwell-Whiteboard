@@ -84,6 +84,11 @@ public:
 	// Set while the pen is the tool in effect: the outline of the stroke width at the pointer
 	[[nodiscard]] std::optional<EraserCursor> brushCursor() const;
 
+	// ---- read-only (a collaboration guest the host only lets watch): only the hand and laser tools work, nothing on the
+	// board can be added, changed, deleted or undone. Looking around is unaffected.
+	void setReadOnly(bool p_ReadOnly);
+	[[nodiscard]] bool readOnly() const { return m_ReadOnly; }
+
 	// ---- tools. The selected tool belongs to the device used last (what the toolbar shows).
 	void setTool(tools::ToolKind p_Kind);
 	[[nodiscard]] tools::ToolKind selectedTool() const;
@@ -343,6 +348,7 @@ private:
 
 	// Panning
 	bool m_SpaceHeld = false;
+	bool m_ReadOnly = false;
 	DVec2 m_PendingPan{ 0.0 }; // scroll-wheel pan (pixels) still to be applied, eased in by update()
 	bool m_Panning = false;
 	bool m_SwallowPointer = false; // the press that began text editing: its drag and release are ignored

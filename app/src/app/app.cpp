@@ -171,6 +171,7 @@ void App::init()
 	if (m_Options.perfStrokes > 0)
 		m_PresentPolicy = gfx::PresentPolicy::Immediate;
 	m_Window.create("Inkwell");
+	m_Input.attachWindow(m_Window.handle()); // WinTab fallback for tablets without Windows Ink
 	m_Context.init(m_Window);
 	m_Swapchain.create(m_Context, m_Window.pixelSize(), m_PresentPolicy);
 	m_Frames.init(m_Context);
@@ -354,7 +355,11 @@ void App::handleEvent(const SDL_Event& p_Event)
 		return;
 	case SDL_EVENT_DROP_COMPLETE:
 		return;
+	case SDL_EVENT_WINDOW_FOCUS_GAINED:
+		m_Input.setWindowFocus(true);
+		return;
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
+		m_Input.setWindowFocus(false);
 		m_Editor.handleFocusLost();
 		requestRedraw();
 		return;
@@ -747,11 +752,14 @@ void App::buildDebugPanel()
 			ImGui::Text("Last: %s %s at (%.1f, %.1f) buttons 0x%X", deviceName(l_Pointer.device), phaseName(l_Pointer.phase), static_cast<double>(l_Pointer.position.x), static_cast<double>(l_Pointer.position.y), l_Pointer.buttons);
 		}
 
-		ImGui::SeparatorText("Pen");
+		ImGui::SeparatorText(m_Input.wintabActive() ? "Pen (WinTab)" : "Pen");
 		const platform::PenState& l_Pen = m_Input.penState();
 		if (l_Pen.eventCount == 0)
 		{
-			ImGui::TextWrapped("No pen events received yet. For Wacom/Huion/XP-Pen tablets, enable \"Windows Ink\" in the tablet driver settings.");
+			if (m_Input.wintabActive())
+				ImGui::TextWrapped("WinTab tablet detected (Windows Ink is off). Bring the pen near the tablet to see its data here.");
+			else
+				ImGui::TextWrapped("No pen events received yet. For Wacom/Huion/XP-Pen tablets, install the tablet driver (WinTab) or enable \"Windows Ink\".");
 		}
 		else
 		{

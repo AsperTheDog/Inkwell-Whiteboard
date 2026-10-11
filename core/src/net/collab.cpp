@@ -120,6 +120,35 @@ const UserInfo* CollabSession::user(const uint16_t p_Slot) const
 	return nullptr;
 }
 
+bool CollabSession::localReadOnly() const
+{
+	if (m_Role != Role::Client || m_State != LinkState::Online)
+		return false;
+	const UserInfo* l_Me = user(m_LocalSlot);
+	return l_Me != nullptr && l_Me->readOnly;
+}
+
+bool CollabSession::setReadOnly(const uint16_t p_Slot, const bool p_ReadOnly)
+{
+	if (m_Role != Role::Host)
+		return false;
+	Peer* l_Peer = peerOfSlot(p_Slot);
+	if (l_Peer == nullptr)
+		return false;
+	if (l_Peer->info.readOnly == p_ReadOnly)
+		return true;
+	l_Peer->info.readOnly = p_ReadOnly;
+	note(l_Peer->info.name + (p_ReadOnly ? " is now read-only" : " can edit again"));
+	rebuildUsers();
+	const std::vector<uint8_t> l_Announce = encode(l_Peer->info);
+	for (auto& [l_Id, l_Other] : m_Peers)
+	{
+		if (l_Other.state == PeerState::Joined)
+			l_Other.connection->send(type(MsgType::UserUpdate), l_Announce);
+	}
+	return true;
+}
+
 void CollabSession::tell(const std::string& p_Text, const bool p_Error)
 {
 	if (m_Hooks.message)
@@ -445,7 +474,7 @@ void CollabSession::flushLocal()
 {
 	if (m_Pending.empty())
 		return;
-	if (m_State == LinkState::Online)
+	if (m_State == LinkState::Online && !localReadOnly())
 		sendOps(m_Pending, 0);
 	m_Pending.clear();
 	m_PendingMove.clear();
@@ -800,6 +829,9 @@ void CollabSession::hostOps(Peer& p_Peer, const Frame& p_Frame)
 		dropPeer(p_Peer.id, "Protocol error");
 		return;
 	}
+	// The host does not take a read-only guest's word that it behaves: whatever it sends is ignored
+	if (p_Peer.info.readOnly)
+		return;
 	// A peer may only create objects with ids from its own slot (so ids never collide), and may not wipe the board
 	std::erase_if(l_Message.ops, [&](const Op& p_Op)
 	{
@@ -1008,6 +1040,8 @@ void CollabSession::videoStateReceived(Peer& p_Peer, const Frame& p_Frame)
 	}
 	if (m_Role == Role::Host)
 	{
+		if (p_Peer.info.readOnly)
+			return; // a read-only guest does not control playback
 		const Clock::time_point l_Now = Clock::now();
 		if (l_Now - p_Peer.videoWindow > std::chrono::seconds(1))
 		{
@@ -1156,6 +1190,8 @@ void CollabSession::strokeReceived(Peer& p_Peer, const Frame& p_Frame)
 	}
 	if (m_Role == Role::Host)
 	{
+		if (p_Peer.info.readOnly)
+			return; // a read-only guest draws nothing
 		// A person draws about 30 updates a second; far more is somebody trying to flood everyone
 		const Clock::time_point l_Now = Clock::now();
 		if (l_Now - p_Peer.strokeWindow > std::chrono::seconds(1))
@@ -1922,6 +1958,33 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 			m_Users.push_back(l_User);
 			++m_UsersRevision;
 			tell(l_User.name + " joined");
+		}
+		return;
+	}
+	case MsgType::UserUpdate:
+	{
+		UserInfo l_Update;
+		if (p_Peer.state != PeerState::Joined || !decode(p_Frame.payload, l_Update))
+			return l_Protocol();
+		for (UserInfo& l_User : m_Users)
+		{
+			if (l_User.slot != l_Update.slot)
+				continue;
+			const bool l_Changed = l_User.readOnly != l_Update.readOnly;
+			l_User.readOnly = l_Update.readOnly;
+			++m_UsersRevision;
+			if (l_Changed && l_Update.slot == m_LocalSlot)
+			{
+				if (l_Update.readOnly)
+				{
+					m_Pending.clear(); // what was not sent yet would be ignored anyway
+					m_PendingMove.clear();
+					m_StrokeActive = false;
+					m_StrokeDirty = false;
+				}
+				tell(l_Update.readOnly ? "The host made you read-only: you can watch but not change the board" : "The host lets you edit again");
+			}
+			break;
 		}
 		return;
 	}
