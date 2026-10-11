@@ -34,6 +34,16 @@ Pictures and videos arrive after the board does. Big videos are written to a tem
 
 The host needs an address the others can reach: the same local network, a VPN like Tailscale or ZeroTier (no setup), or a port forward on the router. The host's firewall has to allow the app.
 
+### Steam (optional)
+
+If the Steam client is running and its library (`steam_api64.dll` / `libsteam_api.so`) sits next to the program, a **Connection** choice appears in the host and join windows: Direct, Steam, or (when hosting) both at once. Without Steam nothing changes and nothing about Steam is shown.
+
+- Connections go through Steam's relay network, so there is no port to open and no address to share. They are still encrypted and password protected exactly like direct ones.
+- A host can be **listed for everyone** using Inkwell on Steam (the join window shows these sessions, with a refresh button) or **unlisted**, where people need your Steam ID (shown when you host).
+- Hosting on both lets friends join through Steam and others by address in the same session.
+
+Inkwell does not ship or link the Steamworks SDK: the library is loaded only when present. The SDK (which contains `steam_api64.dll` in `redistributable_bin/win64` and `libsteam_api.so` in `redistributable_bin/linux64`) is downloaded from the [Steamworks SDK page](https://partner.steamgames.com/downloads/list), which needs a Steamworks partner account to sign in. To try it before it has its own Steam app id, use Steam's public test app: set `WB_STEAM_APPID=480` (or put `steam_appid.txt` containing `480` next to the program), start Steam, and run `inkwell --steam-selftest` to check the connection. `WB_STEAM=0` turns it off.
+
 ### Security
 
 Connections are encrypted with ChaCha20-Poly1305 ([Monocypher](https://monocypher.org)) over a fresh X25519 key exchange for every session, so recorded traffic can't be decrypted later. The key exchange can't tell who is on the other end, so the password is used for that: both sides prove they know it (Argon2id, bound to the key exchange), which stops someone in the middle from joining the two.

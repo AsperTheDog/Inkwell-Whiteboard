@@ -37,6 +37,7 @@ import wb.platform.window;
 import wb.render.canvas_renderer;
 import wb.render.image_store;
 import wb.session;
+import wb.steam;
 import wb.tools.tool;
 import wb.ui.context;
 import wb.ui.draw;
@@ -262,6 +263,8 @@ private:
 	void submitCollabDialog();
 	void startHosting();
 	void beginJoin();
+	void pollSteam();
+	[[nodiscard]] bool steamAvailable() const { return m_Steam && m_Steam->available(); }
 
 	// PDF import (app_pdf.cpp)
 	void startPdfImport(const std::filesystem::path& p_Path);
@@ -300,6 +303,7 @@ private:
 	debug::ImGuiLayer m_ImGui;
 	Editor m_Editor;
 	Session m_Session{ m_Editor };
+	std::unique_ptr<steam::Steam> m_Steam; // declared before m_Collab: the session's connections use it until they are gone
 	std::unique_ptr<net::CollabSession> m_Collab;
 	Settings m_Settings;
 	std::filesystem::path m_PrefDir;     // empty: nothing is persisted (smoke test, or no writable location)
@@ -445,8 +449,14 @@ private:
 		std::string address; // join: host or host:port
 		std::string port = "5000"; // host
 		std::string password;
+		// Steam (only offered when it is available): how to host or join, and the host's Steam ID typed or picked from the list
+		int transport = 0;  // 0 direct, 1 Steam, 2 (host only) both
+		int listing = 0;    // host, with Steam: 0 listed publicly, 1 unlisted
+		std::string steamId;
 	};
 	CollabForm m_CollabForm;
+	bool m_SteamHosting = false; // this session also accepts people through Steam
+	uint64_t m_SteamLobbiesSeen = ~0ull;
 	uint64_t m_CollabUsersSeen = ~0ull;
 	uint64_t m_CollabAssetsSeen = ~0ull;
 	uint32_t m_CollabFilesPending = 0;

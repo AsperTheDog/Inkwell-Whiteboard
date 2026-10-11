@@ -1,5 +1,7 @@
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <cstdlib>
 #include <memory>
 #include <thread>
@@ -18,7 +20,10 @@ import wb.app;
 import wb.gfx.context;
 import wb.io.blob;
 import wb.io.file;
+import wb.net.connection;
+import wb.net.stream;
 import wb.platform.input;
+import wb.steam;
 import wb.text.subtitles;
 import wb.video.media;
 
@@ -220,6 +225,128 @@ int videoStreamTest(const std::string& p_Path)
 	return l_Bad == 0 ? 0 : 1;
 }
 
+// --steam-selftest [steam id]: connects to a host through Steam (this very user by default) and sends a frame through the
+// encrypted connection and back, then lists the sessions other people advertise. Needs Steam running and signed in.
+int steamSelfTest(const std::string& p_HostId)
+{
+	wb::steam::Steam l_Steam;
+	if (!l_Steam.init())
+	{
+		spdlog::error("Steam is not available: {}", l_Steam.initNote());
+		return 1;
+	}
+	spdlog::info("Signed in as {} ({})", l_Steam.userName(), l_Steam.userId());
+	const uint64_t l_Host = p_HostId.empty() ? l_Steam.userId() : std::strtoull(p_HostId.c_str(), nullptr, 10);
+
+	std::unique_ptr<wb::net::Listener> l_Listener = l_Steam.listen();
+	if (!l_Listener)
+	{
+		spdlog::error("Could not open a listen socket");
+		return 1;
+	}
+	std::unique_ptr<wb::net::Stream> l_Accepted;
+	std::atomic<bool> l_Done{ false };
+	std::thread l_AcceptThread([&]
+	{
+		while (!l_Done.load() && !l_Accepted)
+			l_Accepted = l_Listener->accept(200);
+	});
+
+	std::atomic<bool> l_Cancel{ false };
+	std::string l_Error;
+	const auto l_Started = std::chrono::steady_clock::now();
+	std::unique_ptr<wb::net::Stream> l_Client = l_Steam.connector(l_Host)(l_Cancel, l_Error, [](const std::string& p_Line) { spdlog::info("  {}", p_Line); });
+	if (!l_Client)
+	{
+		spdlog::error("Connecting failed: {}", l_Error);
+		l_Done = true;
+		l_AcceptThread.join();
+		return 1;
+	}
+	spdlog::info("Connected in {:.2f} s", std::chrono::duration<double>(std::chrono::steady_clock::now() - l_Started).count());
+	while (!l_Accepted && std::chrono::steady_clock::now() - l_Started < std::chrono::seconds(20))
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	l_Done = true;
+	l_AcceptThread.join();
+	if (!l_Accepted)
+	{
+		spdlog::error("The listener never saw the connection");
+		return 1;
+	}
+	spdlog::info("The host side sees {}", l_Accepted->peerAddress());
+
+	using wb::net::Connection;
+	std::mutex l_Mutex;
+	std::vector<uint8_t> l_AtServer;
+	std::vector<uint8_t> l_AtClient;
+	Connection l_Server(std::move(l_Accepted), Connection::Role::Server, [&](wb::net::Frame p_Frame)
+	{
+		const std::lock_guard l_Lock(l_Mutex);
+		l_AtServer = p_Frame.payload;
+	}, [](const std::string&) {});
+	Connection l_ClientConnection(std::move(l_Client), Connection::Role::Client, [&](wb::net::Frame p_Frame)
+	{
+		const std::lock_guard l_Lock(l_Mutex);
+		l_AtClient = p_Frame.payload;
+	}, [](const std::string&) {});
+	l_Server.setMaxFrame(1u << 22);
+	l_ClientConnection.setMaxFrame(1u << 22);
+	l_Server.start();
+	l_ClientConnection.start();
+
+	std::vector<uint8_t> l_Payload(1u << 20);
+	for (size_t i = 0; i < l_Payload.size(); ++i)
+		l_Payload[i] = static_cast<uint8_t>(i * 31 + 7);
+	const auto l_Sent = std::chrono::steady_clock::now();
+	l_ClientConnection.send(7, l_Payload);
+	const auto l_WaitFor = [&](std::vector<uint8_t>& p_Target, const double p_Seconds)
+	{
+		const auto l_Until = std::chrono::steady_clock::now() + std::chrono::duration<double>(p_Seconds);
+		while (std::chrono::steady_clock::now() < l_Until)
+		{
+			{
+				const std::lock_guard l_Lock(l_Mutex);
+				if (!p_Target.empty())
+					return true;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return false;
+	};
+	bool l_Ok = l_WaitFor(l_AtServer, 30.0);
+	if (l_Ok)
+	{
+		const double l_Seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - l_Sent).count();
+		spdlog::info("1 MiB client -> host in {:.2f} s ({:.0f} KiB/s), intact: {}", l_Seconds, 1024.0 / l_Seconds, l_AtServer == l_Payload);
+		l_Ok = l_AtServer == l_Payload;
+		l_Server.send(8, l_AtServer);
+		l_Ok = l_WaitFor(l_AtClient, 30.0) && l_AtClient == l_Payload && l_Ok;
+		spdlog::info("host -> client echo: {}", l_AtClient == l_Payload ? "intact" : "MISSING OR CORRUPT");
+	}
+	else
+	{
+		spdlog::error("Nothing arrived at the host");
+	}
+	l_ClientConnection.close();
+	l_Server.close();
+
+	// Lobbies: list this session, then look for sessions
+	l_Steam.advertise(l_Steam.userName() + "'s self-test", false, 1);
+	l_Steam.refreshLobbies();
+	const auto l_LobbyStart = std::chrono::steady_clock::now();
+	while (std::chrono::steady_clock::now() - l_LobbyStart < std::chrono::seconds(8) && (l_Steam.searching() || l_Steam.busy()))
+	{
+		l_Steam.pump();
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+	spdlog::info("Lobby search finished: {} other session(s) listed", l_Steam.lobbies().size());
+	for (const wb::steam::Lobby& l_Lobby : l_Steam.lobbies())
+		spdlog::info("  {} (host {}, {} people{})", l_Lobby.name, l_Lobby.host, l_Lobby.users, l_Lobby.password ? ", password" : "");
+	l_Steam.stopAdvert();
+	spdlog::info(l_Ok ? "Steam self-test OK" : "Steam self-test FAILED");
+	return l_Ok ? 0 : 1;
+}
+
 wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 {
 	wb::AppOptions l_Options{};
@@ -247,6 +374,17 @@ wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 
 int main(int p_Argc, char** p_Argv)
 {
+	for (int i = 1; i < p_Argc; ++i)
+	{
+		if (std::string_view(p_Argv[i]) == "--steam-selftest")
+		{
+			SDL_SetMainReady();
+			SDL_Init(SDL_INIT_VIDEO);
+			const int l_Result = steamSelfTest(i + 1 < p_Argc ? p_Argv[i + 1] : "");
+			SDL_Quit();
+			return l_Result;
+		}
+	}
 	for (int i = 1; i + 1 < p_Argc; ++i)
 	{
 		if (std::string_view(p_Argv[i]) == "--video-streamtest")

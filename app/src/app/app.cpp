@@ -223,6 +223,7 @@ void App::init()
 void App::shutdown()
 {
 	m_Collab.reset(); // stops the network threads before anything they could touch goes away
+	m_Steam.reset();
 	m_Context.waitIdle();
 	for (SDL_Cursor*& l_Cursor : m_Cursors)
 	{

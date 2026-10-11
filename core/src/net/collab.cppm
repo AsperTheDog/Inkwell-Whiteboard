@@ -36,6 +36,7 @@ import wb.net.ops;
 import wb.net.protocol;
 import wb.net.replicator;
 import wb.net.socket;
+import wb.net.stream;
 
 export namespace wb::net
 {
@@ -86,10 +87,17 @@ public:
 	CollabSession(const CollabSession&) = delete;
 	CollabSession& operator=(const CollabSession&) = delete;
 
-	// Starts listening. False (with p_Error) when the port cannot be used.
+	// Starts listening on a TCP port. False (with p_Error) when the port cannot be used.
 	bool host(uint16_t p_Port, std::string p_Password, std::string p_Name, std::string& p_Error);
+	// Starts hosting without any way in yet: people can only join through listeners added with addListener (Steam, ...)
+	bool hostRemote(std::string p_Password, std::string p_Name);
+	// Hosts only: also accepts the connections p_Listener hands out. Any number of listeners can serve one session, so
+	// people on different transports share a board. p_Label names it in the log.
+	void addListener(std::unique_ptr<Listener> p_Listener, const std::string& p_Label);
 	// Connects in the background; progress and failure are reported through state() and the message hook
 	void join(std::string p_Host, uint16_t p_Port, std::string p_Password, std::string p_Name);
+	// The same over any transport: p_Connect makes the connection. p_Where names the host in the log.
+	void joinWith(Connector p_Connect, const std::string& p_Where, std::string p_Password, std::string p_Name);
 	void leave();
 
 	// Where big files that arrive are kept while they are received and played (they vanish when the program ends)
@@ -204,7 +212,7 @@ private:
 		};
 		Kind kind = Kind::FrameIn;
 		uint32_t conn = 0;
-		Socket socket;
+		std::unique_ptr<Stream> stream;
 		Frame frame;
 		std::string text;
 	};
@@ -288,7 +296,7 @@ private:
 	void clientFrame(Peer& p_Peer, Frame& p_Frame);
 	void clientSnapshot(Peer& p_Peer, const Frame& p_Frame);
 	void applyRemoteOps(std::span<const Op> p_Ops, uint32_t p_From);
-	std::unique_ptr<Connection> makeConnection(Socket p_Socket, Connection::Role p_Role, uint32_t p_Id);
+	std::unique_ptr<Connection> makeConnection(std::unique_ptr<Stream> p_Stream, Connection::Role p_Role, uint32_t p_Id);
 
 	// Pictures and videos: asking for the ones objects use but we lack, serving requests, receiving pieces
 	void wantAssets(Peer& p_Source, std::span<const ObjectId> p_Objects);
@@ -329,6 +337,7 @@ private:
 	void dropPeer(uint32_t p_Id, const std::string& p_Reason);
 	void reject(Peer& p_Peer, const std::string& p_Reason);
 	void failClient(const std::string& p_Reason);
+	void beginHosting(std::string& p_Password, std::string p_Name);
 	void stop(const std::string& p_Goodbye);
 	void rebuildUsers();
 	uint16_t pickSlot();
@@ -427,8 +436,8 @@ private:
 	std::mutex m_InboxMutex;
 	std::deque<Event> m_Inbox;
 
-	Socket m_Listener;
-	std::thread m_AcceptThread;
+	std::vector<std::unique_ptr<Listener>> m_Listeners;
+	std::vector<std::thread> m_AcceptThreads;
 	std::thread m_ConnectThread;
 	std::atomic<bool> m_Stop{ false };
 };

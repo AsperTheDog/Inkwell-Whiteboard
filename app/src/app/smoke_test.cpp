@@ -1542,6 +1542,17 @@ void App::driveSmokeTest()
 		removeFileQuiet(std::filesystem::temp_directory_path() / "wb_smoke.pdf");
 		return;
 	}
+	// ---- --smoke-ui=collab-host / collab-join: the collaboration dialog stays open for the screenshot (Steam options show when Steam is there)
+	case 49:
+	{
+		if (m_Options.smokeUi != "collab-host" && m_Options.smokeUi != "collab-join")
+			return;
+		spdlog::info("Smoke test: Steam is {}", steamAvailable() ? "available" : "not available");
+		if (steamAvailable() && m_Options.smokeUi == "collab-join")
+			m_CollabForm.transport = 1;
+		openCollabDialog(m_Options.smokeUi == "collab-host" ? CollabDialog::Host : CollabDialog::Join);
+		return;
+	}
 	default:
 		return;
 	}

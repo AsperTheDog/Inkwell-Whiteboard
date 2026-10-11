@@ -10,13 +10,15 @@ module;
 
 export module wb.net.socket;
 
+import wb.net.stream;
+
 export namespace wb::net
 {
-class Socket
+class Socket final : public Stream
 {
 public:
 	Socket() = default;
-	~Socket();
+	~Socket() override;
 	Socket(Socket&& p_Other) noexcept : m_Handle(p_Other.m_Handle) { p_Other.m_Handle = INVALID; }
 	Socket& operator=(Socket&& p_Other) noexcept;
 	Socket(const Socket&) = delete;
@@ -35,15 +37,15 @@ public:
 	// Waits up to p_TimeoutMs for a peer; an invalid socket comes back on timeout or error
 	[[nodiscard]] Socket accept(int p_TimeoutMs);
 	// Both return false when the connection broke or was closed
-	[[nodiscard]] bool sendAll(std::span<const uint8_t> p_Data);
-	[[nodiscard]] bool recvAll(std::span<uint8_t> p_Data);
+	[[nodiscard]] bool sendAll(std::span<const uint8_t> p_Data) override;
+	[[nodiscard]] bool recvAll(std::span<uint8_t> p_Data) override;
 
-	// Wakes a thread blocked in recvAll/sendAll on this socket (it then fails). The handle stays valid until close.
-	void shutdown();
-	void close();
+	// shutdown() wakes a thread blocked in recvAll/sendAll on this socket (it then fails). The handle stays valid until close.
+	void shutdown() override;
+	void close() override;
 
 	[[nodiscard]] uint16_t localPort() const;
-	[[nodiscard]] std::string peerAddress() const;
+	[[nodiscard]] std::string peerAddress() const override;
 
 private:
 	static constexpr uintptr_t INVALID = ~static_cast<uintptr_t>(0);

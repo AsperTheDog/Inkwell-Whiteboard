@@ -7,6 +7,7 @@ module;
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <exception>
 #include <span>
@@ -20,6 +21,7 @@ module wb.net.connection;
 import wb.net.crypto;
 import wb.net.protocol;
 import wb.net.socket;
+import wb.net.stream;
 
 namespace wb::net
 {
@@ -37,8 +39,13 @@ constexpr uint8_t OLD_CHALLENGE_TYPE = 1;
 constexpr size_t MAX_QUEUED_BYTES = size_t{ 2 } << 30;
 } // namespace
 
+Connection::Connection(std::unique_ptr<Stream> p_Stream, const Role p_Role, FrameHandler p_OnFrame, CloseHandler p_OnClose)
+	: m_Stream(std::move(p_Stream)), m_Role(p_Role), m_OnFrame(std::move(p_OnFrame)), m_OnClose(std::move(p_OnClose)), m_PeerAddress(m_Stream->peerAddress()), m_MaxFrame(MAX_HANDSHAKE_FRAME)
+{
+}
+
 Connection::Connection(Socket p_Socket, const Role p_Role, FrameHandler p_OnFrame, CloseHandler p_OnClose)
-	: m_Socket(std::move(p_Socket)), m_Role(p_Role), m_OnFrame(std::move(p_OnFrame)), m_OnClose(std::move(p_OnClose)), m_PeerAddress(m_Socket.peerAddress()), m_MaxFrame(MAX_HANDSHAKE_FRAME)
+	: Connection(std::make_unique<Socket>(std::move(p_Socket)), p_Role, std::move(p_OnFrame), std::move(p_OnClose))
 {
 }
 
@@ -79,7 +86,7 @@ void Connection::close(const std::string& p_Reason)
 {
 	if (m_Closed.exchange(true))
 		return;
-	m_Socket.shutdown();
+	m_Stream->shutdown();
 	{
 		const std::lock_guard l_Lock(m_Mutex);
 	}
@@ -127,7 +134,7 @@ void Connection::send(const uint8_t p_Type, std::vector<uint8_t> p_Payload, cons
 bool Connection::exchangeKeys()
 {
 	std::array<uint8_t, HEADER_BYTES> l_Header{};
-	if (!m_Socket.recvAll(l_Header))
+	if (!m_Stream->recvAll(l_Header))
 	{
 		close("Connection lost");
 		return false;
@@ -144,7 +151,7 @@ bool Connection::exchangeKeys()
 		return false;
 	}
 	crypto::Key l_PeerPublic{};
-	if (!m_Socket.recvAll(l_PeerPublic))
+	if (!m_Stream->recvAll(l_PeerPublic))
 	{
 		close("Connection lost");
 		return false;
@@ -180,7 +187,7 @@ void Connection::readLoop()
 	while (!m_Closed.load())
 	{
 		std::array<uint8_t, SEALED_HEADER_BYTES> l_Header{};
-		if (!m_Socket.recvAll(l_Header))
+		if (!m_Stream->recvAll(l_Header))
 			break;
 		uint32_t l_Size = 0;
 		std::memcpy(&l_Size, l_Header.data(), sizeof(l_Size));
@@ -191,7 +198,7 @@ void Connection::readLoop()
 		}
 		// type + payload + tag
 		std::vector<uint8_t> l_Body(size_t{ 1 } + l_Size + crypto::MAC_BYTES);
-		if (!m_Socket.recvAll(l_Body))
+		if (!m_Stream->recvAll(l_Body))
 			break;
 		crypto::Mac l_Mac{};
 		std::memcpy(l_Mac.data(), l_Body.data() + 1 + l_Size, crypto::MAC_BYTES);
@@ -260,7 +267,7 @@ void Connection::writeLoop()
 			std::memcpy(l_Packet.data(), &l_KeySize, sizeof(l_KeySize));
 			l_Packet[4] = m_KeyFrameType;
 			std::memcpy(l_Packet.data() + HEADER_BYTES, m_KeyFrame.data(), crypto::KEY_BYTES);
-			if (!m_Socket.sendAll(l_Packet))
+			if (!m_Stream->sendAll(l_Packet))
 			{
 				close("Connection lost");
 				return;
@@ -284,7 +291,7 @@ void Connection::writeLoop()
 		crypto::Mac l_Mac{};
 		m_Seal.seal(std::span<const uint8_t>(l_Packet.data(), SEALED_HEADER_BYTES), std::span<uint8_t>(l_Packet.data() + SEALED_HEADER_BYTES, size_t{ 1 } + l_Size), l_Mac);
 		std::memcpy(l_Packet.data() + SEALED_HEADER_BYTES + 1 + l_Size, l_Mac.data(), crypto::MAC_BYTES);
-		if (!m_Socket.sendAll(l_Packet))
+		if (!m_Stream->sendAll(l_Packet))
 		{
 			close("Connection lost");
 			return;

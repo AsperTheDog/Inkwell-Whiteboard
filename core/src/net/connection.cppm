@@ -1,4 +1,4 @@
-// One TCP connection speaking length-prefixed frames. A reader thread delivers frames through a callback, a writer thread
+// One connection (over any Stream: a TCP socket, a Steam link) speaking length-prefixed frames. A reader thread delivers frames through a callback, a writer thread
 // drains a priority queue, so a slow peer never blocks the editor or the other peers.
 //
 // Every connection is encrypted. The two ends first swap throwaway X25519 public keys (the only plaintext frames, never
@@ -13,6 +13,7 @@ module;
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -23,6 +24,7 @@ export module wb.net.connection;
 
 import wb.net.crypto;
 import wb.net.socket;
+import wb.net.stream;
 
 export namespace wb::net
 {
@@ -53,6 +55,7 @@ public:
 	// Called once, from whichever thread noticed, with a human readable reason
 	using CloseHandler = std::function<void(const std::string&)>;
 
+	Connection(std::unique_ptr<Stream> p_Stream, Role p_Role, FrameHandler p_OnFrame, CloseHandler p_OnClose);
 	Connection(Socket p_Socket, Role p_Role, FrameHandler p_OnFrame, CloseHandler p_OnClose);
 	~Connection();
 	Connection(const Connection&) = delete;
@@ -85,7 +88,7 @@ private:
 
 	bool exchangeKeys();
 
-	Socket m_Socket;
+	std::unique_ptr<Stream> m_Stream;
 	Role m_Role;
 	FrameHandler m_OnFrame;
 	CloseHandler m_OnClose;

@@ -34,6 +34,7 @@ import wb.net.ops;
 import wb.net.protocol;
 import wb.net.replicator;
 import wb.net.socket;
+import wb.net.stream;
 import wb.net.wire;
 
 namespace wb::net
@@ -91,6 +92,25 @@ std::vector<uint8_t> encodeOps(const std::span<const Op> p_Ops)
 		encodeOp(l_Writer, l_Op);
 	return l_Writer.take();
 }
+
+// A listening TCP socket as a Listener
+class TcpListener final : public Listener
+{
+public:
+	explicit TcpListener(Socket p_Socket) : m_Socket(std::move(p_Socket)) {}
+
+	std::unique_ptr<Stream> accept(const int p_TimeoutMs) override
+	{
+		Socket l_Peer = m_Socket.accept(p_TimeoutMs);
+		if (!l_Peer.valid())
+			return nullptr;
+		return std::make_unique<Socket>(std::move(l_Peer));
+	}
+	void close() override { m_Socket.close(); }
+
+private:
+	Socket m_Socket;
+};
 
 } // namespace
 
@@ -200,18 +220,35 @@ bool CollabSession::host(const uint16_t p_Port, std::string p_Password, std::str
 		stop("");
 	m_Log.clear();
 	std::vector<std::string> l_Trace;
-	m_Listener = Socket::listenTcp(p_Port, p_Error, &l_Trace);
+	Socket l_Socket = Socket::listenTcp(p_Port, p_Error, &l_Trace);
 	for (const std::string& l_Line : l_Trace)
 		note(l_Line);
-	if (!m_Listener.valid())
+	if (!l_Socket.valid())
 	{
 		if (p_Error.empty())
 			p_Error = "Could not open the port";
 		note("Could not host on port " + std::to_string(p_Port) + ": " + p_Error);
 		return false;
 	}
-	m_ListenPort = m_Listener.localPort();
+	const uint16_t l_Port = l_Socket.localPort();
+	beginHosting(p_Password, std::move(p_Name));
+	m_ListenPort = l_Port;
 	note("Hosting on port " + std::to_string(m_ListenPort) + ". Waiting for people to join");
+	addListener(std::make_unique<TcpListener>(std::move(l_Socket)), "TCP");
+	return true;
+}
+
+bool CollabSession::hostRemote(std::string p_Password, std::string p_Name)
+{
+	if (m_Role != Role::None)
+		stop("");
+	m_Log.clear();
+	beginHosting(p_Password, std::move(p_Name));
+	return true;
+}
+
+void CollabSession::beginHosting(std::string& p_Password, std::string p_Name)
+{
 	m_Role = Role::Host;
 	m_State = LinkState::Online;
 	// Everybody who joins proves the password against this key, which is slow to make, so it is made once
@@ -221,28 +258,51 @@ bool CollabSession::host(const uint16_t p_Port, std::string p_Password, std::str
 	m_Name = sanitizeName(p_Name);
 	m_LocalSlot = 0;
 	m_NextSlot = 1;
+	m_ListenPort = 0;
 	m_Document.setIdSlot(0);
 	m_Stop = false;
 	rebuildUsers();
 	setIdle(false);
-	m_AcceptThread = std::thread([this]
+}
+
+void CollabSession::addListener(std::unique_ptr<Listener> p_Listener, const std::string& p_Label)
+{
+	if (m_Role != Role::Host || !p_Listener)
+		return;
+	Listener* l_Raw = p_Listener.get();
+	m_Listeners.push_back(std::move(p_Listener));
+	note("Accepting " + p_Label + " connections");
+	m_AcceptThreads.emplace_back([this, l_Raw]
 	{
 		while (!m_Stop.load())
 		{
-			Socket l_Peer = m_Listener.accept(200);
-			if (l_Peer.valid())
+			std::unique_ptr<Stream> l_Peer = l_Raw->accept(200);
+			if (l_Peer)
 			{
 				Event l_Event;
 				l_Event.kind = Event::Kind::Accepted;
-				l_Event.socket = std::move(l_Peer);
+				l_Event.stream = std::move(l_Peer);
 				post(std::move(l_Event));
 			}
 		}
 	});
-	return true;
 }
 
 void CollabSession::join(std::string p_Host, const uint16_t p_Port, std::string p_Password, std::string p_Name)
+{
+	const std::string l_Where = p_Host + ":" + std::to_string(p_Port);
+	joinWith(
+		[l_Host = std::move(p_Host), p_Port](const std::atomic<bool>& p_Cancel, std::string& p_Error, const std::function<void(const std::string&)>& p_Trace) -> std::unique_ptr<Stream>
+		{
+			Socket l_Socket = Socket::connectTcp(l_Host, p_Port, CONNECT_TIMEOUT_MS, p_Cancel, p_Error, p_Trace);
+			if (!l_Socket.valid())
+				return nullptr;
+			return std::make_unique<Socket>(std::move(l_Socket));
+		},
+		l_Where, std::move(p_Password), std::move(p_Name));
+}
+
+void CollabSession::joinWith(Connector p_Connect, const std::string& p_Where, std::string p_Password, std::string p_Name)
 {
 	if (m_Role != Role::None)
 		stop("");
@@ -252,8 +312,8 @@ void CollabSession::join(std::string p_Host, const uint16_t p_Port, std::string 
 	m_Name = sanitizeName(p_Name);
 	m_Stop = false;
 	m_Log.clear();
-	note("Joining " + p_Host + ":" + std::to_string(p_Port) + " as \"" + m_Name + "\"");
-	m_ConnectThread = std::thread([this, l_Host = std::move(p_Host), p_Port]
+	note("Joining " + p_Where + " as \"" + m_Name + "\"");
+	m_ConnectThread = std::thread([this, l_Connect = std::move(p_Connect)]
 	{
 		std::string l_Error;
 		// Each step reaches the log as it happens, so a connection that hangs shows where
@@ -264,14 +324,14 @@ void CollabSession::join(std::string p_Host, const uint16_t p_Port, std::string 
 			l_Step.text = p_Line;
 			post(std::move(l_Step));
 		};
-		Socket l_Socket = Socket::connectTcp(l_Host, p_Port, CONNECT_TIMEOUT_MS, m_Stop, l_Error, l_Trace);
+		std::unique_ptr<Stream> l_Stream = l_Connect(m_Stop, l_Error, l_Trace);
 		if (m_Stop.load())
 			return;
 		Event l_Event;
-		if (l_Socket.valid())
+		if (l_Stream)
 		{
 			l_Event.kind = Event::Kind::Connected;
-			l_Event.socket = std::move(l_Socket);
+			l_Event.stream = std::move(l_Stream);
 		}
 		else
 		{
@@ -295,8 +355,12 @@ void CollabSession::stop(const std::string& p_Goodbye)
 	m_Stop = true;
 	if (m_ConnectThread.joinable())
 		m_ConnectThread.join();
-	if (m_AcceptThread.joinable())
-		m_AcceptThread.join();
+	for (std::thread& l_Thread : m_AcceptThreads)
+	{
+		if (l_Thread.joinable())
+			l_Thread.join();
+	}
+	m_AcceptThreads.clear();
 	if (m_PreviewThread.joinable())
 	{
 		{
@@ -310,7 +374,9 @@ void CollabSession::stop(const std::string& p_Goodbye)
 	}
 	m_PreviewActive.clear();
 	m_PreviewFailed.clear();
-	m_Listener.close();
+	for (const std::unique_ptr<Listener>& l_Listener : m_Listeners)
+		l_Listener->close();
+	m_Listeners.clear();
 
 	for (auto& [l_Id, l_Peer] : m_Peers)
 	{
@@ -573,10 +639,10 @@ void CollabSession::tick()
 	}
 }
 
-std::unique_ptr<Connection> CollabSession::makeConnection(Socket p_Socket, const Connection::Role p_Role, const uint32_t p_Id)
+std::unique_ptr<Connection> CollabSession::makeConnection(std::unique_ptr<Stream> p_Stream, const Connection::Role p_Role, const uint32_t p_Id)
 {
 	auto l_Connection = std::make_unique<Connection>(
-		std::move(p_Socket),
+		std::move(p_Stream),
 		p_Role,
 		[this, p_Id](Frame p_Frame)
 		{
@@ -628,7 +694,7 @@ void CollabSession::handleEvent(Event& p_Event)
 		l_Peer.id = m_NextPeerId++;
 		l_Peer.since = Clock::now();
 		const uint32_t l_Id = l_Peer.id;
-		l_Peer.connection = makeConnection(std::move(p_Event.socket), Connection::Role::Client, l_Id);
+		l_Peer.connection = makeConnection(std::move(p_Event.stream), Connection::Role::Client, l_Id);
 		m_State = LinkState::Joining;
 		l_Peer.connection->start();
 		m_Peers.emplace(l_Id, std::move(l_Peer));
@@ -686,16 +752,16 @@ void CollabSession::hostAccept(Event& p_Event)
 {
 	if (m_Peers.size() + 1 >= MAX_USERS)
 	{
-		note("Refused a connection from " + p_Event.socket.peerAddress() + ": the session is full");
+		note("Refused a connection from " + p_Event.stream->peerAddress() + ": the session is full");
 		return; // the socket closes as the event dies
 	}
 	Peer l_Peer;
 	l_Peer.id = m_NextPeerId++;
 	l_Peer.since = Clock::now();
-	l_Peer.address = p_Event.socket.peerAddress();
+	l_Peer.address = p_Event.stream->peerAddress();
 	note("Incoming connection from " + l_Peer.address);
 	const uint32_t l_Id = l_Peer.id;
-	l_Peer.connection = makeConnection(std::move(p_Event.socket), Connection::Role::Server, l_Id);
+	l_Peer.connection = makeConnection(std::move(p_Event.stream), Connection::Role::Server, l_Id);
 
 	Challenge l_Challenge;
 	l_Challenge.salt = m_Salt;

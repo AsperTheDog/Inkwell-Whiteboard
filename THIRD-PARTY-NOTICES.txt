@@ -766,3 +766,8 @@ Used for the encrypted collaboration channel (X25519, ChaCha20-Poly1305,
 BLAKE2b, Argon2id). Source in vendor/monocypher; see vendor/monocypher/LICENCE.md
 for the full licence texts. Copyright (c) 2017-2023, Loup Vaillant, Michael
 Savage, Fabio Scotoni.
+
+Steamworks: Inkwell can use the Steam client's networking and matchmaking when the Steam library (steam_api64.dll /
+libsteam_api.so) is present next to the program. The library and the Steamworks SDK are not part of Inkwell, are not
+included in its releases, and nothing from the SDK is compiled in: the few functions used are declared in
+app/src/steam/steam.cpp and loaded at run time.
