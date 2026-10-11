@@ -1,5 +1,5 @@
-// Optional Steam integration: P2P connections through Steam's relay network (ISteamNetworkingSockets) and lobbies to find
-// other people's sessions. Nothing here is required: the Steam client library is loaded at run time, and when it is
+// Optional Steam integration: P2P connections through Steam's relay network (ISteamNetworkingSockets), and Steam's own Join Game
+// and invite buttons for friends. Nothing here is required: the Steam client library is loaded at run time, and when it is
 // missing, Steam is not running, or the program was not started with an app id, available() stays false and the rest of
 // the application never mentions Steam.
 //
@@ -10,6 +10,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 export module wb.steam;
@@ -18,16 +19,6 @@ import wb.net.stream;
 
 export namespace wb::steam
 {
-// A session somebody advertises in a Steam lobby
-struct Lobby
-{
-	uint64_t id = 0;   // the lobby
-	uint64_t host = 0; // SteamID of the person hosting; connect to this
-	std::string name;
-	uint32_t users = 0;
-	bool password = false;
-};
-
 class Steam
 {
 public:
@@ -46,30 +37,25 @@ public:
 	// A line saying why init() did not work (for the log)
 	[[nodiscard]] const std::string& initNote() const { return m_InitNote; }
 
-	// Main thread, every loop iteration: collects the answers to lobby requests
+	// Main thread, every loop iteration: collects Steam's answers and join requests
 	void pump();
-	// A lobby request is on its way: the loop should come back soon
+	// A request to Steam is on its way: the loop should come back soon
 	[[nodiscard]] bool busy() const;
+
+	// ---- joining from Steam itself (friends list "Join Game", invites)
+	// While a session is hosted through Steam its host is joinable: friends get Join Game and the invite button works (a friends-only
+	// lobby and a rich presence string; nothing is listed publicly)
+	void setJoinable(bool p_Joinable);
+	// The host somebody asked to join (a click on Join Game or an accepted invite while running), 0 if none
+	[[nodiscard]] uint64_t takeJoinRequest();
+	// The host in a "+connect_steam <id>" string (what Steam also puts on the command line when it starts the program), 0 if none
+	[[nodiscard]] static uint64_t parseConnectString(std::string_view p_Text);
 
 	// ---- the P2P transport
 	// Accepts people connecting to this user through Steam (until the listener is closed or destroyed). One at a time.
 	[[nodiscard]] std::unique_ptr<net::Listener> listen();
 	// Connects to the Steam user p_Host, who is hosting
 	[[nodiscard]] net::Connector connector(uint64_t p_Host);
-
-	// ---- lobbies: finding sessions
-	// Lists the session lobbies that are public (compatible version only), when the answer arrives see lobbies()
-	void refreshLobbies();
-	[[nodiscard]] bool searching() const;
-	[[nodiscard]] const std::vector<Lobby>& lobbies() const;
-	// Bumps whenever the list or the searching state changes
-	[[nodiscard]] uint64_t lobbiesRevision() const;
-
-	// Lists this user's session so others find it. Replaces a previous listing.
-	void advertise(const std::string& p_Title, bool p_Password, uint32_t p_Users);
-	void setAdvertUsers(uint32_t p_Users);
-	void stopAdvert();
-	[[nodiscard]] bool advertising() const;
 
 	struct Impl; // internal
 

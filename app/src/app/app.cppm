@@ -69,6 +69,8 @@ struct AppOptions
 	std::string smokeUi;
 	// > 0: performance run: this many random strokes, a camera that pans and zooms for a few hundred frames, then a timing report
 	uint32_t perfStrokes = 0;
+	// Steam started the program to join a friend: the command line holds "+connect_steam <id>"
+	uint64_t steamJoinHost = 0;
 };
 
 class App
@@ -190,7 +192,7 @@ private:
 	void togglePopup(Popup p_Popup);
 	void pushRecentColor(Color p_Color);
 	[[nodiscard]] bool collabBusy() const { return m_Collab && (m_Collab->state() == net::LinkState::Connecting || m_Collab->state() == net::LinkState::Joining); }
-	[[nodiscard]] bool modalOpen() const { return m_PromptOpen || m_RecoveryOpen || m_MessageOpen || m_ShowExport || m_CollabDialog != CollabDialog::None || collabBusy(); }
+	[[nodiscard]] bool modalOpen() const { return m_ClearOpen || m_PromptOpen || m_RecoveryOpen || m_MessageOpen || m_ShowExport || m_CollabDialog != CollabDialog::None || collabBusy(); }
 	// Keyboard input that belongs to dialogs and popups; returns true when it was used
 	bool handleUiKey(const SDL_KeyboardEvent& p_Event);
 	// Colour grid shared by the pen popover and the selection bar. Returns true when a swatch was clicked.
@@ -263,6 +265,7 @@ private:
 	void submitCollabDialog();
 	void startHosting();
 	void beginJoin();
+	void offerSteamJoin(uint64_t p_Host); // a friend's Join Game or invite: the join window, ready for the password
 	void pollSteam();
 	[[nodiscard]] bool steamAvailable() const { return m_Steam && m_Steam->available(); }
 
@@ -429,6 +432,7 @@ private:
 
 	// Unsaved-changes / recovery / error dialogs and the file dialog hand-off (dialogs run on SDL's own threads)
 	Action m_PromptAction = Action::None;
+	bool m_ClearOpen = false; // confirmation for clearing the whole board
 	bool m_PromptOpen = false;
 	bool m_QuitDiscard = false;
 	std::optional<RecoveryInfo> m_Recovery;
@@ -451,12 +455,10 @@ private:
 		std::string password;
 		// Steam (only offered when it is available): how to host or join, and the host's Steam ID typed or picked from the list
 		int transport = 0;  // 0 direct, 1 Steam, 2 (host only) both
-		int listing = 0;    // host, with Steam: 0 listed publicly, 1 unlisted
 		std::string steamId;
 	};
 	CollabForm m_CollabForm;
 	bool m_SteamHosting = false; // this session also accepts people through Steam
-	uint64_t m_SteamLobbiesSeen = ~0ull;
 	uint64_t m_CollabUsersSeen = ~0ull;
 	uint64_t m_CollabAssetsSeen = ~0ull;
 	uint32_t m_CollabFilesPending = 0;

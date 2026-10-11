@@ -108,6 +108,8 @@ public:
 	void selectAll();
 	void clearSelection();
 	void deleteSelection();
+	// Removes every object, locked ones included (one undo step)
+	void clearBoard();
 	void duplicateSelection();
 	void copySelection();
 	void cutSelection();

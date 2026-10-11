@@ -362,6 +362,38 @@ void App::buildRemoteCursors()
 		const Vec2 l_Target{ l_Camera.worldToScreen(l_View.position) };
 		Vec2 l_At{ l_Camera.worldToScreen(l_Shown.position) };
 		l_Animating = l_Animating || glm::length(l_Target - l_At) > 0.3f || std::abs(l_TargetAlpha - l_Shown.alpha) > 0.01f || (l_View.visible && l_View.ageSeconds < IDLE_SECONDS + 1.0);
+
+		// Their laser pointer: the same glowing trail as the local one, in their colour
+		if (!l_View.trail.empty())
+		{
+			const Color l_Glow = Color::fromRgba8(l_User->color);
+			l_Draw.setOpacity(1.f);
+			const auto l_TrailFade = [&](const net::CollabSession::CursorView::TrailPoint& p_Point)
+			{
+				const float l_T = static_cast<float>(std::clamp(1.0 - (l_View.laser && &p_Point == &l_View.trail.back() ? 0.0 : p_Point.ageSeconds) / l_View.trailSeconds, 0.0, 1.0));
+				return l_T * l_T * (3.f - 2.f * l_T);
+			};
+			for (size_t i = 1; i < l_View.trail.size(); ++i)
+			{
+				if (l_View.trail[i].newStroke)
+					continue;
+				const float l_Alpha = std::min(l_TrailFade(l_View.trail[i]), l_TrailFade(l_View.trail[i - 1]));
+				if (l_Alpha <= 0.01f)
+					continue;
+				const Vec2 l_P0{ l_Camera.worldToScreen(l_View.trail[i - 1].position) };
+				const Vec2 l_P1{ l_Camera.worldToScreen(l_View.trail[i].position) };
+				l_Draw.line(l_P0, l_P1, (6.f + 12.f * l_Alpha) * l_Scale, ui::withAlpha(l_Glow, 0.16f * l_Alpha));
+				l_Draw.line(l_P0, l_P1, (2.f + 3.f * l_Alpha) * l_Scale, ui::withAlpha(l_Glow, 0.95f * l_Alpha));
+			}
+			if (l_View.laser)
+			{
+				const Vec2 l_Head{ l_Camera.worldToScreen(l_View.trail.back().position) };
+				l_Draw.circle(l_Head, 15.f * l_Scale, ui::withAlpha(l_Glow, 0.22f));
+				l_Draw.circle(l_Head, 8.f * l_Scale, ui::withAlpha(l_Glow, 0.9f));
+				l_Draw.circle(l_Head, 3.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f });
+			}
+			l_Animating = true;
+		}
 		if (l_Shown.alpha < 0.02f)
 			continue;
 

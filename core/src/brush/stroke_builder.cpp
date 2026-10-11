@@ -110,7 +110,32 @@ Vec2 OneEuroFilter::filter(const Vec2 p_Value, const double p_DeltaSeconds)
 	return m_Value;
 }
 
+void OneEuroFilter::remap(const Vec2 p_NewValue, const float p_Scale)
+{
+	if (!m_Initialized)
+		return;
+	m_Value = p_NewValue;
+	m_Derivative *= p_Scale;
+}
+
 // ------------------------------------------------------------------------------------------------ StrokeBuilder
+
+void StrokeBuilder::setCamera(const Camera& p_Camera)
+{
+	if (!m_Active)
+		return;
+	if (p_Camera.center() == m_Camera.center() && p_Camera.pixelsPerUnit() == m_Camera.pixelsPerUnit() && p_Camera.viewport() == m_Camera.viewport())
+		return;
+	const auto l_Map = [&](const Vec2 p_Screen) { return Vec2{ p_Camera.worldToScreen(m_Camera.screenToWorld(DVec2{ p_Screen })) }; };
+	for (Sample& l_Sample : m_Samples)
+		l_Sample.screen = l_Map(l_Sample.screen);
+	m_LastRawScreen = l_Map(m_LastRawScreen);
+	m_Rope = l_Map(m_Rope);
+	m_PositionFilter.remap(l_Map(m_PositionFilter.value()), static_cast<float>(p_Camera.pixelsPerUnit() / m_Camera.pixelsPerUnit()));
+	m_Camera = p_Camera;
+	rebuildTail();
+	++m_Revision;
+}
 
 void StrokeBuilder::begin(const StrokeInput& p_First, const bool p_HasPressure, const float p_SizePoints, const Color p_Color, const Camera& p_Camera, const BrushSettings& p_Settings)
 {

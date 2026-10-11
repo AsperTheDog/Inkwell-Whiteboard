@@ -28,7 +28,7 @@ import wb.net.crypto;
 
 export namespace wb::net
 {
-inline constexpr uint16_t PROTOCOL_VERSION = 3;
+inline constexpr uint16_t PROTOCOL_VERSION = 4;
 // Before the password has been checked a peer may only send tiny frames
 inline constexpr uint32_t MAX_HANDSHAKE_FRAME = 1024;
 // One frame: room for the largest single object plus its framing
@@ -129,6 +129,8 @@ struct CursorMessage
 	double x = 0.0;
 	double y = 0.0;
 	bool visible = false; // false: the pointer left the board
+	bool laser = false;   // the laser pointer is held down: the receiver draws a fading trail along the positions
+	float trailSeconds = 0.f; // how long a point of that trail stays visible
 };
 // A line being drawn, sent as it grows. The receiver keeps the first `base` points it already has of stroke `stroke`,
 // replaces the rest with `points` (the end of a stroke is provisional and changes), and drops the whole thing on `end`.

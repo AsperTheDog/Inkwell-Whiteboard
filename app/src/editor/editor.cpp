@@ -47,6 +47,7 @@ constexpr double KEY_ZOOM_STEP = 1.25;
 constexpr double WHEEL_PAN_POINTS = 60.0;   // per wheel notch
 constexpr double PAN_RATE = 14.0;           // 1/s; scroll easing
 constexpr double ANIMATION_RATE = 18.0;    // 1/s; higher = snappier camera animations
+constexpr double ZOOM_RATE = 9.0;          // 1/s; wheel/keyboard zoom easing (lower = smoother, but laggier)
 constexpr double FIT_MARGIN_POINTS = 48.0;
 constexpr double DUPLICATE_OFFSET_POINTS = 24.0;
 constexpr float NUDGE_POINTS = 1.f;
@@ -668,6 +669,18 @@ void Editor::deleteSelection()
 		return;
 	const std::vector<ObjectId> l_Ids = m_Selection.orderedIds();
 	deleteObjects(m_Document, m_History, l_Ids);
+}
+
+void Editor::clearBoard()
+{
+	if (m_ReadOnly || isBusy() || m_Document.empty())
+		return;
+	std::vector<ObjectId> l_Ids;
+	l_Ids.reserve(m_Document.size());
+	for (const auto& l_Object : m_Document.objects())
+		l_Ids.push_back(l_Object->id); // locked objects too
+	clearSelection();
+	m_History.execute(m_Document, std::make_unique<RemoveObjectsCommand>(std::move(l_Ids), "Clear board"));
 }
 
 Editor::LockState Editor::selectionLockState() const
@@ -1376,7 +1389,8 @@ bool Editor::updateCamera(const double p_DeltaSeconds)
 	if (m_Animation == CameraAnimation::ZoomAtAnchor)
 	{
 		const bool l_Done = std::abs(l_LogTarget - l_LogZoom) < 1e-4;
-		m_Camera.zoomAt(m_ZoomAnchor, l_Done ? m_TargetZoom : std::exp(l_LogZoom + (l_LogTarget - l_LogZoom) * l_T));
+		const double l_ZoomT = 1.0 - std::exp(-ZOOM_RATE * std::clamp(p_DeltaSeconds, 0.0, 0.1));
+		m_Camera.zoomAt(m_ZoomAnchor, l_Done ? m_TargetZoom : std::exp(l_LogZoom + (l_LogTarget - l_LogZoom) * l_ZoomT));
 		if (l_Done)
 			m_Animation = CameraAnimation::None;
 		return !l_Done;

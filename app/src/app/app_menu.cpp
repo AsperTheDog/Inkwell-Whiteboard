@@ -126,7 +126,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 13, 12, 2, 1 };
+	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 14, 12, 2, 1 };
 	static constexpr std::array<const char*, 5> TITLES{ "Board", "Edit", "View", "Collaborate", "Help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -243,6 +243,12 @@ void App::buildMenu()
 			if (l_Row(ui::Icon::SelectAll, "Select all", "Ctrl+A", l_Idle && !m_Editor.document().empty()))
 			{
 				m_Editor.selectAll();
+				l_Close = true;
+			}
+			// In a session only the host may wipe the board
+			if (l_Row(ui::Icon::Trash, "Clear board...", "", l_Idle && !m_Editor.document().empty() && !m_Editor.readOnly() && !(m_Collab && m_Collab->role() == net::Role::Client)))
+			{
+				m_ClearOpen = true;
 				l_Close = true;
 			}
 			if (l_Row(ui::Icon::Layers, "Group", "Ctrl+G", l_Idle && m_Editor.canGroupSelection()))
@@ -612,6 +618,7 @@ void App::buildDialogs()
 {
 	if (!modalOpen())
 	{
+		m_Ui.setAnim(ui::Context::id("dialog.clear", 1), 0.f);
 		m_Ui.setAnim(ui::Context::id("dialog.prompt", 1), 0.f);
 		m_Ui.setAnim(ui::Context::id("dialog.recovery", 1), 0.f);
 		m_Ui.setAnim(ui::Context::id("dialog.message", 1), 0.f);
@@ -642,6 +649,24 @@ void App::buildDialogs()
 	if (m_ShowExport)
 	{
 		buildExportDialog();
+		return;
+	}
+
+	if (m_ClearOpen)
+	{
+		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "Cancel", ui::ButtonStyle::Secondary }, DialogButton{ "Clear board", ui::ButtonStyle::Primary } };
+		const bool l_Shared = m_Collab && m_Collab->active();
+		const std::string l_Body = l_Shared ? "This removes everything from the board for everyone in the session. You can undo it afterwards." : "This removes everything from the board. You can undo it afterwards.";
+		const int l_Clicked = dialogCard(m_Ui, "dialog.clear", "Clear the board?", l_Body, BUTTONS);
+		if (l_Clicked >= 0)
+		{
+			m_ClearOpen = false;
+			if (l_Clicked == 1 && !(m_Collab && m_Collab->role() == net::Role::Client))
+			{
+				m_Editor.clearBoard();
+				showToast("Board cleared");
+			}
+		}
 		return;
 	}
 

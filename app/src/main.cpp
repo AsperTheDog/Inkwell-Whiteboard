@@ -330,19 +330,15 @@ int steamSelfTest(const std::string& p_HostId)
 	l_ClientConnection.close();
 	l_Server.close();
 
-	// Lobbies: list this session, then look for sessions
-	l_Steam.advertise(l_Steam.userName() + "'s self-test", false, 1);
-	l_Steam.refreshLobbies();
-	const auto l_LobbyStart = std::chrono::steady_clock::now();
-	while (std::chrono::steady_clock::now() - l_LobbyStart < std::chrono::seconds(8) && (l_Steam.searching() || l_Steam.busy()))
+	// Join Game / invites: the connect string others would see
+	l_Steam.setJoinable(true);
+	for (int i = 0; i < 20; ++i)
 	{
 		l_Steam.pump();
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
-	spdlog::info("Lobby search finished: {} other session(s) listed", l_Steam.lobbies().size());
-	for (const wb::steam::Lobby& l_Lobby : l_Steam.lobbies())
-		spdlog::info("  {} (host {}, {} people{})", l_Lobby.name, l_Lobby.host, l_Lobby.users, l_Lobby.password ? ", password" : "");
-	l_Steam.stopAdvert();
+	l_Steam.setJoinable(false);
+
 	spdlog::info(l_Ok ? "Steam self-test OK" : "Steam self-test FAILED");
 	return l_Ok ? 0 : 1;
 }
@@ -367,6 +363,8 @@ wb::AppOptions parseOptions(const int p_Argc, char** p_Argv)
 			l_Options.perfStrokes = static_cast<uint32_t>(std::strtoul(p_Argv[i] + 12, nullptr, 10));
 		else if (l_Arg == "--screenshot" && i + 1 < p_Argc)
 			l_Options.screenshotPath = p_Argv[++i];
+		else if (l_Arg == "+connect_steam" && i + 1 < p_Argc)
+			l_Options.steamJoinHost = wb::steam::Steam::parseConnectString(std::string("+connect_steam ") + p_Argv[++i]);
 	}
 	return l_Options;
 }
@@ -411,7 +409,7 @@ int main(int p_Argc, char** p_Argv)
 #endif
 
 	SDL_SetMainReady();
-	SDL_SetAppMetadata("Inkwell", "1.2.0", "dev.inkwell.app");
+	SDL_SetAppMetadata("Inkwell", "1.3.0", "dev.inkwell.app");
 	wb::platform::InputRouter::configureHints();
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{

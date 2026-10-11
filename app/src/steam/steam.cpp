@@ -21,6 +21,7 @@ module;
 #include <utility>
 #include <vector>
 #include <SDL3/SDL.h>
+#include <spdlog/spdlog.h>
 
 module wb.steam;
 
@@ -51,17 +52,17 @@ constexpr int STATE_CONNECTED = 3;
 constexpr int STATE_CLOSED_BY_PEER = 4;
 constexpr int STATE_PROBLEM = 5;
 constexpr int CALLBACK_API_CALL_COMPLETED = 703;
-constexpr int CALLBACK_LOBBY_MATCH_LIST = 510;
+constexpr const char* CONNECT_ARGUMENT = "+connect_steam"; // also what Steam passes on the command line when it starts the program for a join
+constexpr int CALLBACK_RICH_PRESENCE_JOIN = 337; // "Join Game" in the friends list, or an invite accepted
+constexpr int CALLBACK_LOBBY_JOIN = 333;         // Join Game / an invite for a session that is a Steam lobby
+constexpr int CALLBACK_LOBBY_ENTER = 504;
 constexpr int CALLBACK_LOBBY_CREATED = 513;
-constexpr int LOBBY_TYPE_PUBLIC = 2;
-constexpr int LOBBY_DISTANCE_WORLDWIDE = 3;
-constexpr int LOBBY_COMPARE_EQUAL = 0;
+constexpr int LOBBY_TYPE_FRIENDS_ONLY = 1; // seen by friends only, never in a search
 constexpr int LOBBY_MAX_MEMBERS = 64;
 constexpr int VIRTUAL_PORT = 0;
 constexpr size_t SEND_CHUNK = 64 * 1024; // well below the send buffer, so a full buffer is only a short wait
 constexpr int MAX_RECEIVE_BATCH = 64;
 constexpr auto CONNECT_TIMEOUT = std::chrono::seconds(30);
-constexpr const char* LOBBY_APP = "inkwell";
 
 struct NetIdentity
 {
@@ -139,11 +140,13 @@ struct LobbyCreated
 	int result;
 	uint64_t lobby;
 };
-struct LobbyMatchList
+struct JoinRequested
 {
-	uint32_t count;
+	uint64_t friendId;
+	char connect[256];
 };
 #pragma pack(pop)
+static_assert(sizeof(JoinRequested) == 264);
 static_assert(sizeof(LobbyCreated) == 12);
 
 using StatusCallback = void (*)(StatusChanged*);
@@ -168,6 +171,9 @@ struct Api
 
 	STEAM_FN(SteamId, ISteamUser_GetSteamID, Ptr)
 	STEAM_FN(const char*, ISteamFriends_GetPersonaName, Ptr)
+	STEAM_FN(bool, ISteamFriends_SetRichPresence, Ptr, const char*, const char*)
+	STEAM_FN(void, ISteamFriends_ClearRichPresence, Ptr)
+	STEAM_FN(const char*, ISteamFriends_GetFriendRichPresence, Ptr, SteamId, const char*)
 
 	STEAM_FN(void, ISteamNetworkingUtils_InitRelayNetworkAccess, Ptr)
 	STEAM_FN(void, ISteamNetworkingUtils_SetGlobalCallback_SteamNetConnectionStatusChanged, Ptr, StatusCallback)
@@ -191,11 +197,7 @@ struct Api
 	STEAM_FN(bool, ISteamMatchmaking_SetLobbyData, Ptr, SteamId, const char*, const char*)
 	STEAM_FN(const char*, ISteamMatchmaking_GetLobbyData, Ptr, SteamId, const char*)
 	STEAM_FN(void, ISteamMatchmaking_LeaveLobby, Ptr, SteamId)
-	STEAM_FN(void, ISteamMatchmaking_AddRequestLobbyListStringFilter, Ptr, const char*, const char*, int)
-	STEAM_FN(void, ISteamMatchmaking_AddRequestLobbyListDistanceFilter, Ptr, int)
-	STEAM_FN(void, ISteamMatchmaking_AddRequestLobbyListResultCountFilter, Ptr, int)
-	STEAM_FN(ApiCall, ISteamMatchmaking_RequestLobbyList, Ptr)
-	STEAM_FN(SteamId, ISteamMatchmaking_GetLobbyByIndex, Ptr, int)
+	STEAM_FN(ApiCall, ISteamMatchmaking_JoinLobby, Ptr, SteamId)
 
 	Ptr sockets = nullptr;
 	Ptr utils = nullptr;
@@ -246,6 +248,9 @@ std::string loadApi(Api& p_Api)
 	STEAM_LOAD(GetHSteamPipe)
 	STEAM_LOAD(ISteamUser_GetSteamID)
 	STEAM_LOAD(ISteamFriends_GetPersonaName)
+	STEAM_LOAD(ISteamFriends_SetRichPresence)
+	STEAM_LOAD(ISteamFriends_ClearRichPresence)
+	STEAM_LOAD(ISteamFriends_GetFriendRichPresence)
 	STEAM_LOAD(ISteamNetworkingUtils_InitRelayNetworkAccess)
 	STEAM_LOAD(ISteamNetworkingUtils_SetGlobalCallback_SteamNetConnectionStatusChanged)
 	STEAM_LOAD(SteamNetworkingIdentity_SetSteamID64)
@@ -266,11 +271,7 @@ std::string loadApi(Api& p_Api)
 	STEAM_LOAD(ISteamMatchmaking_SetLobbyData)
 	STEAM_LOAD(ISteamMatchmaking_GetLobbyData)
 	STEAM_LOAD(ISteamMatchmaking_LeaveLobby)
-	STEAM_LOAD(ISteamMatchmaking_AddRequestLobbyListStringFilter)
-	STEAM_LOAD(ISteamMatchmaking_AddRequestLobbyListDistanceFilter)
-	STEAM_LOAD(ISteamMatchmaking_AddRequestLobbyListResultCountFilter)
-	STEAM_LOAD(ISteamMatchmaking_RequestLobbyList)
-	STEAM_LOAD(ISteamMatchmaking_GetLobbyByIndex)
+	STEAM_LOAD(ISteamMatchmaking_JoinLobby)
 	if (!l_Missing.empty())
 		return "the Steam library is too old or too new, missing:" + l_Missing;
 	return {};
@@ -336,16 +337,15 @@ struct Steam::Impl : std::enable_shared_from_this<Steam::Impl>
 		int callback = 0;
 	};
 	std::vector<Pending> pending;
-	std::vector<Lobby> lobbies;
-	uint64_t lobbiesRevision = 0;
-	bool searching = false;
 	SteamId lobby = 0;       // our own, once created
-	bool lobbyWanted = false; // advertise() was called and stopAdvert() was not
+	bool lobbyWanted = false; // setJoinable(true) and not yet false
 	bool lobbyCreating = false;
-	std::string title;
-	bool password = false;
-	uint32_t users = 1;
 	std::string userIdText;
+
+	// Friends joining through Steam's own buttons (main thread)
+	bool joinable = false;
+	std::deque<uint64_t> joinRequests;
+	void lobbyJoinRequested(SteamId p_Lobby);
 
 	void startPump();
 	void pumpLoop();
@@ -356,7 +356,6 @@ struct Steam::Impl : std::enable_shared_from_this<Steam::Impl>
 	void closeLink(const std::shared_ptr<Link>& p_Link);
 	void publishLobby();
 	void collect(ApiCall p_Call, int p_Callback);
-	void readLobbies(uint32_t p_Count);
 	void shutdown();
 };
 
@@ -652,33 +651,8 @@ void Steam::Impl::publishLobby()
 {
 	if (lobby == 0)
 		return;
-	const auto set = [&](const char* p_Key, const std::string& p_Value) { api.ISteamMatchmaking_SetLobbyData(api.matchmaking, lobby, p_Key, p_Value.c_str()); };
-	set("app", LOBBY_APP);
-	set("ver", std::to_string(net::PROTOCOL_VERSION));
-	set("host", userIdText);
-	set("name", title);
-	set("pw", password ? "1" : "0");
-	set("users", std::to_string(users));
-}
-
-void Steam::Impl::readLobbies(const uint32_t p_Count)
-{
-	lobbies.clear();
-	for (uint32_t i = 0; i < p_Count; ++i)
-	{
-		const SteamId l_Id = api.ISteamMatchmaking_GetLobbyByIndex(api.matchmaking, static_cast<int>(i));
-		if (l_Id == 0 || l_Id == lobby)
-			continue;
-		const auto get = [&](const char* p_Key) { const char* l_Value = api.ISteamMatchmaking_GetLobbyData(api.matchmaking, l_Id, p_Key); return l_Value != nullptr ? std::string(l_Value) : std::string(); };
-		Lobby l_Entry;
-		l_Entry.id = l_Id;
-		l_Entry.host = std::strtoull(get("host").c_str(), nullptr, 10);
-		l_Entry.name = get("name");
-		l_Entry.users = static_cast<uint32_t>(std::strtoul(get("users").c_str(), nullptr, 10));
-		l_Entry.password = get("pw") == "1";
-		if (l_Entry.host != 0 && l_Entry.host != std::strtoull(userIdText.c_str(), nullptr, 10))
-			lobbies.push_back(std::move(l_Entry));
-	}
+	// What a Join Game or an accepted invite needs to find the host (a lobby's data is only readable from inside it)
+	api.ISteamMatchmaking_SetLobbyData(api.matchmaking, lobby, "host", userIdText.c_str());
 }
 
 // An asynchronous request finished
@@ -693,13 +667,24 @@ void Steam::Impl::collect(const ApiCall p_Call, const int p_Callback)
 	bool l_Failed = false;
 	const bool l_Got = api.ManualDispatch_GetAPICallResult(pipe, p_Call, l_Buffer, sizeof(l_Buffer), l_Expected, &l_Failed);
 	(void)p_Callback;
-	if (l_Expected == CALLBACK_LOBBY_MATCH_LIST)
+	if (l_Expected == CALLBACK_LOBBY_ENTER)
 	{
-		searching = false;
-		lobbies.clear();
-		if (l_Got && !l_Failed)
-			readLobbies(reinterpret_cast<const LobbyMatchList*>(l_Buffer)->count);
-		++lobbiesRevision;
+		if (!l_Got || l_Failed)
+		{
+			spdlog::warn("steam: joining the lobby failed");
+			return;
+		}
+		SteamId l_Entered = 0;
+		uint32_t l_Response = 0;
+		std::memcpy(&l_Entered, l_Buffer, sizeof(l_Entered));
+		std::memcpy(&l_Response, l_Buffer + 16, sizeof(l_Response)); // after the id, the permissions and the locked flag
+		const char* l_Host = api.ISteamMatchmaking_GetLobbyData(api.matchmaking, l_Entered, "host");
+		const uint64_t l_HostId = l_Host != nullptr ? std::strtoull(l_Host, nullptr, 10) : 0;
+		spdlog::info("steam: lobby {} answered {} with host {}", l_Entered, l_Response, l_HostId);
+		if (l_Entered != lobby)
+			api.ISteamMatchmaking_LeaveLobby(api.matchmaking, l_Entered);
+		if (l_HostId != 0)
+			joinRequests.push_back(l_HostId);
 	}
 	else if (l_Expected == CALLBACK_LOBBY_CREATED)
 	{
@@ -841,8 +826,97 @@ void Steam::pump()
 			const auto* l_Done = reinterpret_cast<const ApiCallCompleted*>(l_Message.param);
 			l_Impl.collect(l_Done->call, l_Done->callback);
 		}
+		else if (l_Message.callback == CALLBACK_LOBBY_JOIN && l_Message.size >= 8)
+		{
+			SteamId l_Lobby = 0;
+			std::memcpy(&l_Lobby, l_Message.param, sizeof(l_Lobby));
+			spdlog::info("steam: join request through lobby {}", l_Lobby);
+			l_Impl.lobbyJoinRequested(l_Lobby);
+		}
+		if (l_Message.callback == CALLBACK_RICH_PRESENCE_JOIN && l_Message.size >= static_cast<int>(sizeof(JoinRequested)))
+		{
+			// The connect string is what joinable() published: "+connect_steam <host steam id>"
+			auto* l_Join = reinterpret_cast<JoinRequested*>(l_Message.param);
+			l_Join->connect[sizeof(l_Join->connect) - 1] = '\0';
+			spdlog::info("steam: join request from {} with '{}'", l_Join->friendId, l_Join->connect);
+			if (const uint64_t l_Host = parseConnectString(l_Join->connect); l_Host != 0)
+				l_Impl.joinRequests.push_back(l_Host);
+		}
 		l_Impl.api.ManualDispatch_FreeLastCallback(l_Impl.pipe);
 	}
+}
+
+// The session behind a lobby is hosted by the Steam user named in the lobby's data. That is only readable from inside the
+// lobby, so it is joined for a moment (what Steam expects of a program answering Join Game) and left again.
+void Steam::Impl::lobbyJoinRequested(const SteamId p_Lobby)
+{
+	const ApiCall l_Call = api.ISteamMatchmaking_JoinLobby(api.matchmaking, p_Lobby);
+	if (l_Call == 0)
+	{
+		spdlog::warn("steam: could not join lobby {} to find its host", p_Lobby);
+		return;
+	}
+	pending.push_back({ l_Call, CALLBACK_LOBBY_ENTER });
+}
+
+void Steam::setJoinable(const bool p_Joinable)
+{
+	if (!m_Available || m_Impl->joinable == p_Joinable)
+		return;
+	Impl& l_Impl = *m_Impl;
+	l_Impl.joinable = p_Joinable;
+	// Steam shows "Join Game" for friends, and lets this user invite them, while a connect string is published and a
+	// friends-only lobby exists (it is what Steam hands to this program when someone joins that way)
+	if (p_Joinable)
+	{
+		const bool l_Set = l_Impl.api.ISteamFriends_SetRichPresence(l_Impl.api.friends, "connect", (std::string(CONNECT_ARGUMENT) + " " + l_Impl.userIdText).c_str());
+		const char* l_Read = l_Impl.api.ISteamFriends_GetFriendRichPresence(l_Impl.api.friends, m_UserId, "connect");
+		spdlog::info("steam: friends can join now (rich presence connect: set {}, reads back '{}')", l_Set ? "ok" : "REFUSED", l_Read != nullptr ? l_Read : "");
+		l_Impl.lobbyWanted = true;
+		if (l_Impl.lobby == 0 && !l_Impl.lobbyCreating)
+		{
+			const ApiCall l_Call = l_Impl.api.ISteamMatchmaking_CreateLobby(l_Impl.api.matchmaking, LOBBY_TYPE_FRIENDS_ONLY, LOBBY_MAX_MEMBERS);
+			if (l_Call != 0)
+			{
+				l_Impl.pending.push_back({ l_Call, CALLBACK_LOBBY_CREATED });
+				l_Impl.lobbyCreating = true;
+			}
+		}
+	}
+	else
+	{
+		l_Impl.api.ISteamFriends_ClearRichPresence(l_Impl.api.friends);
+		l_Impl.lobbyWanted = false;
+		if (l_Impl.lobby != 0)
+		{
+			l_Impl.api.ISteamMatchmaking_LeaveLobby(l_Impl.api.matchmaking, l_Impl.lobby);
+			l_Impl.lobby = 0;
+		}
+		spdlog::info("steam: friends can no longer join");
+	}
+}
+
+uint64_t Steam::takeJoinRequest()
+{
+	if (!m_Available || m_Impl->joinRequests.empty())
+		return 0;
+	const uint64_t l_Host = m_Impl->joinRequests.back(); // the latest click wins
+	m_Impl->joinRequests.clear();
+	return l_Host;
+}
+
+uint64_t Steam::parseConnectString(const std::string_view p_Text)
+{
+	const size_t l_At = p_Text.find(CONNECT_ARGUMENT);
+	if (l_At == std::string_view::npos)
+		return 0;
+	uint64_t l_Id = 0;
+	size_t i = l_At + std::string_view(CONNECT_ARGUMENT).size();
+	while (i < p_Text.size() && !(p_Text[i] >= '0' && p_Text[i] <= '9'))
+		++i;
+	for (; i < p_Text.size() && p_Text[i] >= '0' && p_Text[i] <= '9'; ++i)
+		l_Id = l_Id * 10 + static_cast<uint64_t>(p_Text[i] - '0');
+	return l_Id;
 }
 
 bool Steam::busy() const
@@ -919,87 +993,4 @@ net::Connector Steam::connector(const uint64_t p_Host)
 	};
 }
 
-void Steam::refreshLobbies()
-{
-	if (!m_Available || m_Impl->searching)
-		return;
-	Impl& l_Impl = *m_Impl;
-	Api& l_Api = l_Impl.api;
-	l_Api.ISteamMatchmaking_AddRequestLobbyListStringFilter(l_Api.matchmaking, "app", LOBBY_APP, LOBBY_COMPARE_EQUAL);
-	l_Api.ISteamMatchmaking_AddRequestLobbyListStringFilter(l_Api.matchmaking, "ver", std::to_string(net::PROTOCOL_VERSION).c_str(), LOBBY_COMPARE_EQUAL);
-	l_Api.ISteamMatchmaking_AddRequestLobbyListDistanceFilter(l_Api.matchmaking, LOBBY_DISTANCE_WORLDWIDE);
-	l_Api.ISteamMatchmaking_AddRequestLobbyListResultCountFilter(l_Api.matchmaking, 100);
-	const ApiCall l_Call = l_Api.ISteamMatchmaking_RequestLobbyList(l_Api.matchmaking);
-	if (l_Call == 0)
-		return;
-	l_Impl.pending.push_back({ l_Call, CALLBACK_LOBBY_MATCH_LIST });
-	l_Impl.searching = true;
-	++l_Impl.lobbiesRevision;
-}
-
-bool Steam::searching() const
-{
-	return m_Available && m_Impl->searching;
-}
-
-const std::vector<Lobby>& Steam::lobbies() const
-{
-	static const std::vector<Lobby> s_None;
-	return m_Available ? m_Impl->lobbies : s_None;
-}
-
-uint64_t Steam::lobbiesRevision() const
-{
-	return m_Available ? m_Impl->lobbiesRevision : 0;
-}
-
-void Steam::advertise(const std::string& p_Title, const bool p_Password, const uint32_t p_Users)
-{
-	if (!m_Available)
-		return;
-	Impl& l_Impl = *m_Impl;
-	l_Impl.title = p_Title;
-	l_Impl.password = p_Password;
-	l_Impl.users = p_Users;
-	l_Impl.lobbyWanted = true;
-	if (l_Impl.lobby != 0)
-	{
-		l_Impl.publishLobby();
-		return;
-	}
-	if (l_Impl.lobbyCreating)
-		return;
-	const ApiCall l_Call = l_Impl.api.ISteamMatchmaking_CreateLobby(l_Impl.api.matchmaking, LOBBY_TYPE_PUBLIC, LOBBY_MAX_MEMBERS);
-	if (l_Call == 0)
-		return;
-	l_Impl.pending.push_back({ l_Call, CALLBACK_LOBBY_CREATED });
-	l_Impl.lobbyCreating = true;
-}
-
-void Steam::setAdvertUsers(const uint32_t p_Users)
-{
-	if (!m_Available || m_Impl->users == p_Users)
-		return;
-	m_Impl->users = p_Users;
-	if (m_Impl->lobby != 0)
-		m_Impl->api.ISteamMatchmaking_SetLobbyData(m_Impl->api.matchmaking, m_Impl->lobby, "users", std::to_string(p_Users).c_str());
-}
-
-void Steam::stopAdvert()
-{
-	if (!m_Available)
-		return;
-	Impl& l_Impl = *m_Impl;
-	l_Impl.lobbyWanted = false;
-	if (l_Impl.lobby != 0)
-	{
-		l_Impl.api.ISteamMatchmaking_LeaveLobby(l_Impl.api.matchmaking, l_Impl.lobby);
-		l_Impl.lobby = 0;
-	}
-}
-
-bool Steam::advertising() const
-{
-	return m_Available && m_Impl->lobbyWanted;
-}
 } // namespace wb::steam

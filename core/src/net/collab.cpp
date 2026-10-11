@@ -1018,13 +1018,15 @@ void CollabSession::applyRemoteOps(const std::span<const Op> p_Ops, const uint32
 
 // ------------------------------------------------------------------------------------------------ pointers
 
-void CollabSession::setLocalCursor(const DVec2 p_World, const bool p_Visible)
+void CollabSession::setLocalCursor(const DVec2 p_World, const bool p_Visible, const bool p_Laser, const float p_TrailSeconds)
 {
-	if (p_Visible == m_LocalCursorVisible && (!p_Visible || (p_World.x == m_LocalCursor.x && p_World.y == m_LocalCursor.y)))
+	if (p_Visible == m_LocalCursorVisible && p_Laser == m_LocalLaser && (!p_Visible || (p_World.x == m_LocalCursor.x && p_World.y == m_LocalCursor.y)))
 		return;
 	if (p_Visible)
 		m_LocalCursor = p_World; // a hidden pointer keeps its last place, so it fades out where it was
 	m_LocalCursorVisible = p_Visible;
+	m_LocalLaser = p_Laser;
+	m_LocalTrailSeconds = p_TrailSeconds;
 	m_CursorDirty = true;
 }
 
@@ -1032,7 +1034,7 @@ void CollabSession::sendCursor()
 {
 	m_CursorDirty = false;
 	m_LastCursorSent = Clock::now();
-	const std::vector<uint8_t> l_Payload = encode(CursorMessage{ .slot = m_LocalSlot, .x = m_LocalCursor.x, .y = m_LocalCursor.y, .visible = m_LocalCursorVisible });
+	const std::vector<uint8_t> l_Payload = encode(CursorMessage{ .slot = m_LocalSlot, .x = m_LocalCursor.x, .y = m_LocalCursor.y, .visible = m_LocalCursorVisible, .laser = m_LocalLaser, .trailSeconds = m_LocalTrailSeconds });
 	for (auto& [l_Id, l_Peer] : m_Peers)
 	{
 		if (l_Peer.state == PeerState::Joined)
@@ -1075,6 +1077,17 @@ void CollabSession::cursorReceived(Peer& p_Peer, const Frame& p_Frame)
 		l_Remote.position = DVec2{ l_Cursor.x, l_Cursor.y };
 	l_Remote.visible = l_Cursor.visible;
 	l_Remote.updated = l_Now;
+	// The laser pointer's trail is built from the positions that arrive while it is held down
+	const bool l_Lasering = l_Cursor.laser && l_Cursor.visible;
+	l_Remote.trailSeconds = std::clamp(l_Cursor.trailSeconds, 0.2f, 6.f);
+	if (l_Lasering || (l_Remote.laser && l_Cursor.visible))
+		l_Remote.trail.push_back({ .position = DVec2{ l_Cursor.x, l_Cursor.y }, .time = l_Now, .newStroke = !l_Remote.laser });
+	l_Remote.laser = l_Lasering;
+	const Clock::duration l_Life = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(l_Remote.trailSeconds));
+	while (!l_Remote.trail.empty() && l_Now - l_Remote.trail.front().time > l_Life)
+		l_Remote.trail.pop_front();
+	if (l_Remote.trail.size() > 4096)
+		l_Remote.trail.pop_front();
 	++m_CursorsRevision;
 }
 
@@ -1351,7 +1364,16 @@ std::vector<CollabSession::CursorView> CollabSession::cursors() const
 	const Clock::time_point l_Now = Clock::now();
 	l_Views.reserve(m_Cursors.size());
 	for (const auto& [l_Slot, l_Cursor] : m_Cursors)
-		l_Views.push_back(CursorView{ .slot = l_Slot, .position = l_Cursor.position, .visible = l_Cursor.visible, .ageSeconds = std::chrono::duration<double>(l_Now - l_Cursor.updated).count() });
+	{
+		CursorView l_View{ .slot = l_Slot, .position = l_Cursor.position, .visible = l_Cursor.visible, .ageSeconds = std::chrono::duration<double>(l_Now - l_Cursor.updated).count(), .laser = l_Cursor.laser, .trailSeconds = l_Cursor.trailSeconds };
+		for (const RemoteCursor::TrailPoint& l_Point : l_Cursor.trail)
+		{
+			const double l_Age = std::chrono::duration<double>(l_Now - l_Point.time).count();
+			if (l_Age <= l_Cursor.trailSeconds || (l_Cursor.laser && &l_Point == &l_Cursor.trail.back())) // held still: the dot stays
+				l_View.trail.push_back({ .position = l_Point.position, .ageSeconds = l_Age, .newStroke = l_Point.newStroke });
+		}
+		l_Views.push_back(std::move(l_View));
+	}
 	return l_Views;
 }
 

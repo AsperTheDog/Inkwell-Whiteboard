@@ -198,6 +198,12 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 			m_ShowExport = false;
 		return true;
 	}
+	if (m_ClearOpen)
+	{
+		if (!p_Event.repeat && l_Escape)
+			m_ClearOpen = false;
+		return true;
+	}
 	if (m_PromptOpen)
 	{
 		if (!p_Event.repeat && l_Escape)

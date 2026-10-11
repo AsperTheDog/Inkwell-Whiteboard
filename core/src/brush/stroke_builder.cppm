@@ -29,6 +29,9 @@ public:
 	void configure(float p_MinCutoffHz, float p_Beta, float p_DerivativeCutoffHz);
 	void reset();
 	[[nodiscard]] Vec2 filter(Vec2 p_Value, double p_DeltaSeconds);
+	// Moves the filter state to another screen space: positions are mapped, velocities only scaled
+	void remap(Vec2 p_NewValue, float p_Scale);
+	[[nodiscard]] Vec2 value() const { return m_Value; }
 
 private:
 	float m_MinCutoff = 1.f;
@@ -78,6 +81,8 @@ public:
 	// p_SizePoints is the stroke width in logical points on screen (constant on-screen size at any zoom)
 	void begin(const StrokeInput& p_First, bool p_HasPressure, float p_SizePoints, Color p_Color, const Camera& p_Camera, const BrushSettings& p_Settings);
 	void add(const StrokeInput& p_Input);
+	// Call when the view changed mid-stroke (zoom/pan): keeps the samples already taken on the same world positions
+	void setCamera(const Camera& p_Camera);
 	// Finishes the stroke. Points are relative to origin(); place the object with Affine2::translate(origin()).
 	[[nodiscard]] StrokeData finish(const StrokeInput* p_Last);
 	void cancel();

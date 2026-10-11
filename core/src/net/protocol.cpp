@@ -269,6 +269,8 @@ std::vector<uint8_t> encode(const CursorMessage& p_Message)
 	l_Writer.f64(p_Message.x);
 	l_Writer.f64(p_Message.y);
 	l_Writer.boolean(p_Message.visible);
+	l_Writer.boolean(p_Message.laser);
+	l_Writer.f32(p_Message.trailSeconds);
 	return l_Writer.take();
 }
 
@@ -279,8 +281,10 @@ bool decode(const std::span<const uint8_t> p_Payload, CursorMessage& p_Message)
 	p_Message.x = l_Reader.f64();
 	p_Message.y = l_Reader.f64();
 	p_Message.visible = l_Reader.boolean();
+	p_Message.laser = l_Reader.boolean();
+	p_Message.trailSeconds = l_Reader.f32();
 	constexpr double LIMIT = 1e12;
-	return finished(l_Reader) && std::isfinite(p_Message.x) && std::isfinite(p_Message.y) && std::abs(p_Message.x) <= LIMIT && std::abs(p_Message.y) <= LIMIT;
+	return finished(l_Reader) && std::isfinite(p_Message.trailSeconds) && std::isfinite(p_Message.x) && std::isfinite(p_Message.y) && std::abs(p_Message.x) <= LIMIT && std::abs(p_Message.y) <= LIMIT;
 }
 
 std::vector<uint8_t> encode(const VideoStateMessage& p_Message)

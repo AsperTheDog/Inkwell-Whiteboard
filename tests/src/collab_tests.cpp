@@ -667,6 +667,18 @@ TEST(Collab, PointersAreSharedAndAttributedToTheirOwner)
 		l_Ana.session->setLocalCursor({ static_cast<double>(i), 0.0 }, true);
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return find(l_Bo, l_AnaSlot)->position.x == 50.0; }));
 
+	// A held laser pointer leaves a trail on the other side, which ends when it is lifted
+	l_Ana.session->setLocalCursor({ 60.0, 0.0 }, true, true, 2.f);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return find(l_Bo, l_AnaSlot)->laser; }));
+	l_Ana.session->setLocalCursor({ 70.0, 5.0 }, true, true, 2.f);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return find(l_Bo, l_AnaSlot)->trail.size() >= 2; }));
+	EXPECT_TRUE(find(l_Bo, l_AnaSlot)->trail.front().newStroke);
+	EXPECT_EQ(find(l_Bo, l_AnaSlot)->trail.back().position.x, 70.0);
+	EXPECT_EQ(find(l_Bo, l_AnaSlot)->trailSeconds, 2.0);
+	l_Ana.session->setLocalCursor({ 70.0, 5.0 }, true, false, 2.f);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return !find(l_Bo, l_AnaSlot)->laser; }));
+	EXPECT_FALSE(find(l_Host, l_AnaSlot)->trail.empty());
+
 	// Leaving the board hides it; leaving the session removes it
 	l_Ana.session->setLocalCursor({ 50.0, 0.0 }, false);
 	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return !find(l_Bo, l_AnaSlot)->visible; }));

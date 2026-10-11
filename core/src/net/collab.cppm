@@ -144,7 +144,8 @@ public:
 	// ---- pointers of the other people
 	// Where this user's pointer is, in board coordinates (visible false: it is not over the board). Sent at most about 30
 	// times a second, always the latest.
-	void setLocalCursor(DVec2 p_World, bool p_Visible);
+	// `p_Laser`: the laser pointer is held down; the others see a trail that fades after `p_TrailSeconds`.
+	void setLocalCursor(DVec2 p_World, bool p_Visible, bool p_Laser = false, float p_TrailSeconds = 0.f);
 	// A local update is waiting for its turn to be sent: call tick() again soon
 	[[nodiscard]] bool cursorPending() const { return m_CursorDirty && m_State == LinkState::Online; }
 	struct CursorView
@@ -153,6 +154,15 @@ public:
 		DVec2 position{ 0.0 };
 		bool visible = false;
 		double ageSeconds = 0.0; // since the last update
+		bool laser = false;      // the laser pointer is held down (the last point of the trail is where it is)
+		double trailSeconds = 0.0;
+		struct TrailPoint
+		{
+			DVec2 position{ 0.0 };
+			double ageSeconds = 0.0;
+			bool newStroke = false; // not joined to the previous point
+		};
+		std::vector<TrailPoint> trail; // oldest first; only points still within trailSeconds
 	};
 	[[nodiscard]] std::vector<CursorView> cursors() const;
 	// Bumps whenever a pointer position arrives
@@ -262,6 +272,15 @@ private:
 		DVec2 position{ 0.0 };
 		bool visible = false;
 		std::chrono::steady_clock::time_point updated;
+		bool laser = false;
+		float trailSeconds = 0.f;
+		struct TrailPoint
+		{
+			DVec2 position{ 0.0 };
+			std::chrono::steady_clock::time_point time;
+			bool newStroke = false;
+		};
+		std::deque<TrailPoint> trail;
 	};
 	// A file we asked a peer for. Nothing is allocated until its pieces arrive.
 	struct Download
@@ -405,6 +424,8 @@ private:
 	uint64_t m_CursorsRevision = 0;
 	DVec2 m_LocalCursor{ 0.0 };
 	bool m_LocalCursorVisible = false;
+	bool m_LocalLaser = false;
+	float m_LocalTrailSeconds = 0.f;
 	bool m_CursorDirty = false;
 	std::chrono::steady_clock::time_point m_LastCursorSent;
 

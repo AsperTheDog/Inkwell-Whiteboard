@@ -35,6 +35,7 @@ import wb.net.socket;
 import wb.net.stream;
 import wb.session;
 import wb.steam;
+import wb.tools.laser;
 import wb.ui.context;
 import wb.ui.draw;
 import wb.ui.font;
@@ -84,25 +85,51 @@ Rect2 openCard(ui::Context& p_Ui, const std::string_view p_Key, const float p_He
 	return l_Card;
 }
 
-// A Steam ID is a plain number
+// A Steam ID as people meet it: the 64 bit number, a friend code (the account number), [U:1:n], STEAM_x:y:z, or a
+// steamcommunity.com/profiles/<number> link. Custom profile names (/id/name) can only be resolved through Steam's web API.
 bool parseSteamId(const std::string& p_Text, uint64_t& p_Id)
 {
-	size_t l_Begin = 0;
-	size_t l_End = p_Text.size();
-	while (l_Begin < l_End && p_Text[l_Begin] == ' ')
-		++l_Begin;
-	while (l_End > l_Begin && p_Text[l_End - 1] == ' ')
-		--l_End;
-	if (l_End == l_Begin || l_End - l_Begin > 19)
+	constexpr uint64_t INDIVIDUAL = 76561197960265728ull; // universe public, type individual, desktop instance
+	constexpr uint64_t ACCOUNT_LIMIT = 1ull << 32;
+	const auto l_Numbers = [](const std::string& p_From, std::vector<uint64_t>& p_Out)
+	{
+		// Every run of digits, in order (with a cap on length so nothing overflows)
+		for (size_t i = 0; i < p_From.size();)
+		{
+			if (p_From[i] < '0' || p_From[i] > '9')
+			{
+				++i;
+				continue;
+			}
+			uint64_t l_Value = 0;
+			size_t l_Digits = 0;
+			for (; i < p_From.size() && p_From[i] >= '0' && p_From[i] <= '9'; ++i, ++l_Digits)
+				l_Value = l_Digits < 19 ? l_Value * 10 + static_cast<uint64_t>(p_From[i] - '0') : l_Value;
+			if (l_Digits > 19)
+				return false;
+			p_Out.push_back(l_Value);
+		}
+		return true;
+	};
+	std::string l_Text = p_Text;
+	std::erase_if(l_Text, [](const char p_Char) { return p_Char == ' ' || p_Char == '\t' || p_Char == '\r' || p_Char == '\n'; });
+	std::vector<uint64_t> l_Parts;
+	if (l_Text.empty() || l_Text.size() > 200 || !l_Numbers(l_Text, l_Parts) || l_Parts.empty())
 		return false;
 	uint64_t l_Value = 0;
-	for (size_t i = l_Begin; i < l_End; ++i)
-	{
-		if (p_Text[i] < '0' || p_Text[i] > '9')
-			return false;
-		l_Value = l_Value * 10 + static_cast<uint64_t>(p_Text[i] - '0');
-	}
-	if (l_Value == 0)
+	if (l_Text.starts_with("[U:") && l_Parts.size() == 2)
+		l_Value = INDIVIDUAL + l_Parts[1];
+	else if ((l_Text.starts_with("STEAM_") || l_Text.starts_with("steam_")) && l_Parts.size() == 3)
+		l_Value = INDIVIDUAL + l_Parts[2] * 2 + (l_Parts[1] & 1);
+	else if (l_Text.find("/profiles/") != std::string::npos)
+		l_Value = l_Parts.back();
+	else if (l_Parts.size() == 1 && l_Text.find_first_not_of("0123456789") == std::string::npos)
+		l_Value = l_Parts[0];
+	else
+		return false;
+	if (l_Value != 0 && l_Value < ACCOUNT_LIMIT)
+		l_Value += INDIVIDUAL; // a friend code
+	if (l_Value < INDIVIDUAL)
 		return false;
 	p_Id = l_Value;
 	return true;
@@ -279,22 +306,17 @@ void App::pollSteam()
 	if (!steamAvailable())
 		return;
 	m_Steam->pump();
+	if (m_Options.steamJoinHost != 0)
+	{
+		const uint64_t l_Host = std::exchange(m_Options.steamJoinHost, 0); // Steam started the program for this
+		offerSteamJoin(l_Host);
+	}
+	if (const uint64_t l_Host = m_Steam->takeJoinRequest(); l_Host != 0)
+		offerSteamJoin(l_Host);
 	const bool l_Hosting = m_Collab && m_Collab->active() && m_Collab->role() == net::Role::Host;
+	m_Steam->setJoinable(l_Hosting && m_SteamHosting);
 	if (!l_Hosting)
-	{
 		m_SteamHosting = false;
-		if (m_Steam->advertising())
-			m_Steam->stopAdvert(); // the session ended: take it off the list
-	}
-	else if (m_SteamHosting && m_Steam->advertising())
-	{
-		m_Steam->setAdvertUsers(static_cast<uint32_t>(m_Collab->users().size()));
-	}
-	if (m_Steam->lobbiesRevision() != m_SteamLobbiesSeen)
-	{
-		m_SteamLobbiesSeen = m_Steam->lobbiesRevision();
-		requestRedraw();
-	}
 	if (m_Steam->busy())
 		requestRedraw(1); // an answer from Steam is on its way
 }
@@ -318,7 +340,7 @@ void App::pollCollab()
 		// Where my pointer is on the board, for the others. It stays in sync over the toolbar and panels too; it is only
 		// hidden when it leaves the window.
 		const bool l_InWindow = m_PointerInWindow && m_LastPointer.has_value();
-		m_Collab->setLocalCursor(l_InWindow ? m_Editor.camera().screenToWorld(DVec2{ m_LastPointer->position }) : DVec2{ 0.0 }, l_InWindow);
+		m_Collab->setLocalCursor(l_InWindow ? m_Editor.camera().screenToWorld(DVec2{ m_LastPointer->position }) : DVec2{ 0.0 }, l_InWindow, m_Editor.laser().pressed(), m_Editor.laser().trailSeconds());
 	}
 	if (m_Collab->online())
 	{
@@ -381,8 +403,6 @@ void App::pollCollab()
 void App::openCollabDialog(const CollabDialog p_Kind)
 {
 	m_CollabDialog = p_Kind;
-	if (p_Kind == CollabDialog::Join && steamAvailable() && m_CollabForm.transport == 1)
-		m_Steam->refreshLobbies();
 	requestRedraw();
 }
 
@@ -418,14 +438,25 @@ void App::startHosting()
 		}
 		m_Collab->addListener(std::move(l_Listener), "Steam");
 		m_SteamHosting = true;
-		if (m_CollabForm.listing == 0)
-			m_Steam->advertise(m_CollabForm.name + "'s board", !m_CollabForm.password.empty(), 1);
 	}
 	m_CollabDialog = CollabDialog::None;
 	if (l_Steam && !l_Direct)
-		showToast(m_CollabForm.listing == 0 ? "Hosting through Steam, listed for everyone" : "Hosting through Steam, unlisted");
+		showToast("Hosting through Steam");
 	else
 		showToast("Hosting on port " + std::to_string(m_Collab->listenPort()) + (l_Steam ? " and through Steam" : ""));
+}
+
+void App::offerSteamJoin(const uint64_t p_Host)
+{
+	if (p_Host == m_Steam->userId())
+		return; // one's own session
+	m_CollabForm.transport = 1;
+	m_CollabForm.steamId = std::to_string(p_Host);
+	m_CollabForm.password.clear();
+	m_CollabDialog = CollabDialog::Join;
+	SDL_RaiseWindow(m_Window.handle());
+	showToast("A friend invited you: enter the password to join");
+	requestRedraw();
 }
 
 void App::beginJoin()
@@ -435,7 +466,7 @@ void App::beginJoin()
 		uint64_t l_Host = 0;
 		if (!parseSteamId(m_CollabForm.steamId, l_Host))
 		{
-			showMessage("That is not a valid Steam ID.");
+			showMessage("That is not a valid Steam ID. Use the 17 digit number, a friend code, or a steamcommunity.com/profiles/ link. Custom profile names do not work.");
 			return;
 		}
 		m_Collab->joinWith(m_Steam->connector(l_Host), "Steam user " + std::to_string(l_Host), m_CollabForm.password, m_CollabForm.name);
@@ -615,7 +646,7 @@ void App::buildCollabDialog()
 	if (l_Host && l_UseSteam)
 	{
 		l_Note = std::string(l_UseDirect ? "People can join through Steam or with your address and this port. " : "People join through Steam's relay network, so no port needs to be opened. ")
-		         + (m_CollabForm.listing == 0 ? "Your session shows up in the list of everyone using Inkwell on Steam. " : "Only people you give your Steam ID to can join: " + std::to_string(m_Steam->userId()) + ". ")
+		         + "Friends can use Join Game or an invite from Steam, or anyone can join with your Steam ID: " + std::to_string(m_Steam->userId()) + ". "
 		         + "The connection is encrypted and the password also proves who is who. Everyone with the password can edit this board, unless you make them read-only from the session window.";
 	}
 	else if (l_Host)
@@ -628,21 +659,14 @@ void App::buildCollabDialog()
 	}
 	const std::vector<std::string> l_NoteLines = m_Ui.font().wrap(l_Note, l_NotePx, l_InnerWidth);
 
-	// Sessions on Steam (join): a few rows to pick from
-	const bool l_ShowLobbies = !l_Host && l_UseSteam;
-	const std::vector<steam::Lobby>& l_Lobbies = m_Steam ? m_Steam->lobbies() : std::vector<steam::Lobby>{};
-	const size_t l_LobbyRows = std::min<size_t>(l_Lobbies.size(), 4);
-	const float l_LobbyRow = m_Ui.px(32.f);
-	const float l_LobbyBlock = m_Ui.px(22.f) + l_LobbyRow * static_cast<float>(std::max<size_t>(l_LobbyRows, 1)) + m_Ui.px(14.f);
-
 	float l_Blocks = 2.f; // name, password
 	if (l_HasSteam)
 		l_Blocks += 1.f; // how to connect
 	if (l_Host)
-		l_Blocks += (l_UseDirect ? 1.f : 0.f) + (l_UseSteam ? 1.f : 0.f);
+		l_Blocks += l_UseDirect ? 1.f : 0.f; // the port
 	else
 		l_Blocks += 1.f; // address, or Steam ID
-	float l_Height = l_Pad + l_TitleBlock + l_Blocks * l_FieldBlock + (l_ShowLobbies ? l_LobbyBlock : 0.f) + l_NoteLine * static_cast<float>(l_NoteLines.size()) + m_Ui.px(16.f) + l_ButtonHeight + l_Pad;
+	float l_Height = l_Pad + l_TitleBlock + l_Blocks * l_FieldBlock + l_NoteLine * static_cast<float>(l_NoteLines.size()) + m_Ui.px(16.f) + l_ButtonHeight + l_Pad;
 	float l_Fade = 1.f;
 	const Rect2 l_Card = openCard(m_Ui, "dialog.collab", l_Height, l_Fade);
 	const float l_Left = l_Card.min.x + l_Pad;
@@ -673,8 +697,6 @@ void App::buildCollabDialog()
 		if (m_Ui.segmented("collab.transport", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_InnerWidth, m_Ui.px(38.f) }), l_Labels, {}, l_Selected))
 		{
 			m_CollabForm.transport = l_Selected;
-			if (!l_Host && l_Selected == 1 && m_Steam->lobbies().empty())
-				m_Steam->refreshLobbies();
 		}
 		l_Y += m_Ui.px(38.f) + m_Ui.px(14.f);
 	}
@@ -683,38 +705,10 @@ void App::buildCollabDialog()
 	{
 		if (l_UseDirect)
 			l_Field("collab.port", "Port", m_CollabForm.port, "5000", "0123456789", 5);
-		if (l_UseSteam)
-		{
-			l_Caption("On Steam");
-			const std::array<std::string_view, 2> l_Listing{ "Listed for everyone", "Unlisted" };
-			m_Ui.segmented("collab.listing", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_InnerWidth, m_Ui.px(38.f) }), l_Listing, {}, m_CollabForm.listing);
-			l_Y += m_Ui.px(38.f) + m_Ui.px(14.f);
-		}
 	}
-	else if (l_ShowLobbies)
+	else if (l_UseSteam)
 	{
-		l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(11.f) }, "Sessions on Steam", m_Ui.fontPx(13.f), l_Theme.textMuted);
-		const float l_RefreshWidth = m_Ui.px(84.f);
-		if (m_Ui.button("collab.refresh", Rect2::fromPosSize(Vec2{ l_Left + l_InnerWidth - l_RefreshWidth, l_Y - m_Ui.px(4.f) }, Vec2{ l_RefreshWidth, m_Ui.px(26.f) }), "Refresh", ui::ButtonStyle::Secondary, !m_Steam->searching()))
-			m_Steam->refreshLobbies();
-		l_Y += m_Ui.px(22.f);
-		if (l_Lobbies.empty())
-		{
-			l_Draw.text(Vec2{ l_Left, l_Y + l_LobbyRow * 0.5f }, m_Steam->searching() ? "Looking for sessions..." : "No public sessions right now. Use a Steam ID below for an unlisted one.", m_Ui.fontPx(12.5f), l_Theme.textMuted);
-			l_Y += l_LobbyRow;
-		}
-		for (size_t i = 0; i < l_LobbyRows; ++i)
-		{
-			const steam::Lobby& l_Lobby = l_Lobbies[i];
-			const std::string l_Label = fitText(m_Ui, l_Lobby.name, m_Ui.fontPx(14.f), l_InnerWidth - m_Ui.px(130.f));
-			const std::string l_Detail = std::to_string(l_Lobby.users) + (l_Lobby.users == 1 ? " person" : " people") + (l_Lobby.password ? ", password" : "");
-			const bool l_Picked = m_CollabForm.steamId == std::to_string(l_Lobby.host);
-			if (m_Ui.menuRow("collab.lobby." + std::to_string(i), Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_InnerWidth, l_LobbyRow }), ui::Icon::Layers, l_Label, l_Detail, true, l_Picked))
-				m_CollabForm.steamId = std::to_string(l_Lobby.host);
-			l_Y += l_LobbyRow;
-		}
-		l_Y += m_Ui.px(14.f);
-		l_Field("collab.steamid", "Steam ID of the host", m_CollabForm.steamId, "Picked from the list, or typed for an unlisted session", "0123456789", 20);
+		l_Field("collab.steamid", "Steam ID of the host", m_CollabForm.steamId, "The host's Steam ID", {}, 200);
 	}
 	else
 	{

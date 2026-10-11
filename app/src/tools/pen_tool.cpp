@@ -72,7 +72,10 @@ void PenTool::onPointer(const platform::PointerEvent& p_Event, ToolContext& p_Co
 
 	case platform::PointerPhase::Move:
 		if (m_Builder.isActive() && p_Event.device == m_Device)
+		{
+			m_Builder.setCamera(p_Context.camera);
 			m_Builder.add(snapped(p_Event, p_Context));
+		}
 		return;
 
 	case platform::PointerPhase::Up:
@@ -90,6 +93,7 @@ void PenTool::onPointer(const platform::PointerEvent& p_Event, ToolContext& p_Co
 
 void PenTool::commit(const platform::PointerEvent* p_Last, ToolContext& p_Context)
 {
+	m_Builder.setCamera(p_Context.camera);
 	const StrokeInput l_Last = p_Last != nullptr ? snapped(*p_Last, p_Context) : StrokeInput{};
 	const DVec2 l_Origin = m_Builder.origin();
 	StrokeData l_Stroke = m_Builder.finish(p_Last != nullptr ? &l_Last : nullptr);

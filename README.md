@@ -9,10 +9,10 @@ Windows and Linux.
 
 - Pen with pressure and tilt (Windows Ink, Wacom, Huion, XP-Pen), highlighter, shapes, ruler, stroke smoothing
 - Text, pictures, animated GIFs, videos with sound, PDF import. Videos play straight from their file, so size doesn't matter.
-- Select, move, scale, rotate, align, lock, duplicate, z-order
+- Select, move, scale, rotate, align, lock, duplicate, z-order, clear board
 - Save any picture or video on the board back to disk
 - Video sound track and subtitle selection (SRT, WebVTT, ASS)
-- Laser pointer
+- Laser pointer (visible to everyone in a session)
 - Undo/redo, autosave with recovery, save files, PNG export
 - Light and dark themes
 - Live collaboration over the network (encrypted)
@@ -39,7 +39,7 @@ The host needs an address the others can reach: the same local network, a VPN li
 If the Steam client is running and its library (`steam_api64.dll` / `libsteam_api.so`) sits next to the program, a **Connection** choice appears in the host and join windows: Direct, Steam, or (when hosting) both at once. Without Steam nothing changes and nothing about Steam is shown.
 
 - Connections go through Steam's relay network, so there is no port to open and no address to share. They are still encrypted and password protected exactly like direct ones.
-- A host can be **listed for everyone** using Inkwell on Steam (the join window shows these sessions, with a refresh button) or **unlisted**, where people need your Steam ID (shown when you host).
+- People join with your Steam ID (shown when you host), or from Steam: **Join Game** in the friends list, or an invite. They still need the password.
 - Hosting on both lets friends join through Steam and others by address in the same session.
 
 Inkwell does not ship or link the Steamworks SDK: the library is loaded only when present. The SDK (which contains `steam_api64.dll` in `redistributable_bin/win64` and `libsteam_api.so` in `redistributable_bin/linux64`) is downloaded from the [Steamworks SDK page](https://partner.steamgames.com/downloads/list), which needs a Steamworks partner account to sign in. Nothing is set up for you: copy `steam_api64.dll` (or `libsteam_api.so`) next to the program and create a text file named `steam_appid.txt` there that contains your Steam app id (just the number, no extra characters), then start Steam and the program. `inkwell --steam-selftest` checks the connection, and the console says why Steam is unavailable if it is. `WB_STEAM=0` turns it off.
