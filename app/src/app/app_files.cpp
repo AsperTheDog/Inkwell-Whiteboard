@@ -14,6 +14,7 @@ module;
 
 module wb.app;
 
+import wb.doc.document;
 import wb.brush.shapes;
 import wb.brush.stroke_builder;
 import wb.doc.commands;

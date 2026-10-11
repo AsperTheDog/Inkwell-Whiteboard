@@ -21,6 +21,7 @@ module;
 
 module wb.app;
 
+import wb.doc.document;
 import wb.doc.object;
 import wb.editor;
 import wb.image.codec;

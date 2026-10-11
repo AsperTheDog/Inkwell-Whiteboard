@@ -26,6 +26,7 @@ import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.image;
 import wb.gfx.swapchain;
+import wb.io.file;
 import wb.io.settings;
 import wb.math;
 import wb.net.collab;

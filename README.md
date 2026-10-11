@@ -9,7 +9,9 @@ Windows and Linux.
 
 - Pen with pressure and tilt (Windows Ink, Wacom, Huion, XP-Pen), highlighter, shapes, ruler, adjustable stroke smoothing
 - Text, pictures, animated GIFs, videos (with sound, of any size: a video is played straight from its file, never loaded into memory), PDF import
-- Select, move, scale, rotate, align, group lock, duplicate, z-order
+- Select, move, scale, rotate, align, group lock, duplicate, z-order; the selection bar groups its actions into Transform and File popovers
+- Save any picture or video on the board back to your computer
+- Video sound track and text subtitle selection, with SRT, WebVTT and ASS subtitle files
 - Laser pointer with a fading trail
 - Undo/redo, autosave with recovery, save file export/import, PNG export
 - Light and dark themes
@@ -22,7 +24,8 @@ One person hosts, the others join. Open **Collaborate** in the top bar.
 - **Host a session...** picks a port (default 5000), a password and your display name. Others reach you at `your-address:port`.
 - **Join a session...** takes the host's `address:port`, the password and your name.
 - Everybody edits the same board: strokes, shapes, text, pictures, GIFs, videos and PDF pages. You see the others' pointers (in their colour, with their name), the people list at the top, and the lines they are drawing as they draw them. Undo only undoes your own edits.
-- Pictures and videos stream after the board arrives; until a file is there you see a thumbnail with a spinner. A big video is written to a temporary file as it arrives and starts playing as soon as the beginning is there (a video whose index sits at the end of the file has to arrive first). Saving skips files that have not finished arriving and saves the rest.
+- Pictures and videos stream after the board arrives; you see a thumbnail with a spinner while it loads. A big video is written to a temporary file as it arrives and starts playing as soon as the beginning is there (a video whose index sits at the end of the file has to arrive first).
+- Anyone can save a picture or video from the shared board to their own computer.
 - Video play/pause and the playhead are shared; loop, mute, volume and which sound track and subtitles you watch with are your own. Anyone can add a subtitle file (SRT, WebVTT or ASS, from the video bar or by dropping it on the video) and it appears in everybody's list.
 
 **Reaching the host.** The host needs an address the others can reach: the same local network, a VPN such as Tailscale or ZeroTier (easiest, nothing to open), or a router port forward to the chosen port. The host's firewall must allow the app.

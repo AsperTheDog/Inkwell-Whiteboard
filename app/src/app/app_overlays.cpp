@@ -1,5 +1,6 @@
 // App: things drawn over the board that are not part of it: the ruler and the laser pointer's trail.
 module;
+#include <span>
 #include <algorithm>
 #include <array>
 #include <cmath>

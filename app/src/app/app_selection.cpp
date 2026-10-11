@@ -19,6 +19,7 @@ module;
 
 module wb.app;
 
+import wb.doc.document;
 import wb.doc.commands;
 import wb.doc.object;
 import wb.render.canvas_renderer;

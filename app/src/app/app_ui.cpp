@@ -21,6 +21,7 @@ module;
 
 module wb.app;
 
+import wb.net.protocol;
 import wb.doc.commands;
 import wb.doc.gizmo;
 import wb.editor;
