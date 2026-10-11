@@ -131,8 +131,19 @@ struct VideoData
 	int8_t audioTrack = -1;    // position among the file's sound tracks; -1: the file's own choice
 	int8_t subtitleTrack = -1; // among the file's own text subtitle tracks, then subtitleFiles; -1: none
 	std::vector<SubtitleFile> subtitleFiles; // shared: added by anyone, listed for everyone
+	// Cropping works as it does for pictures: the part of the frame that is shown, as a fraction of the whole frame
+	Vec2 cropMin{ 0.f };
+	Vec2 cropMax{ 1.f };
 
 	[[nodiscard]] Rect localBounds() const { return Rect::fromCenter(DVec2{ 0.0 }, DVec2{ size } * 0.5); }
+	[[nodiscard]] bool cropped() const { return cropMin != Vec2{ 0.f } || cropMax != Vec2{ 1.f }; }
+	// The whole frame in object-local space (the shown part is localBounds())
+	[[nodiscard]] Rect fullLocalBounds() const
+	{
+		const DVec2 l_Full = DVec2{ size } / (DVec2{ cropMax } - DVec2{ cropMin });
+		const DVec2 l_Min = -DVec2{ size } * 0.5 - DVec2{ cropMin } * l_Full;
+		return Rect::fromPoints(l_Min, l_Min + l_Full);
+	}
 
 	bool operator==(const VideoData&) const = default;
 };

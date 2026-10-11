@@ -1,4 +1,4 @@
-// App: the floating action bar next to the selection (duplicate, delete, order, recolour).
+// App: the floating action bar next to the selection (duplicate, delete, lock, transform, recolour).
 module;
 #include <algorithm>
 #include <array>
@@ -41,7 +41,7 @@ void App::buildSelectionBar()
 {
 	if (!m_Editor.hasSelection() || m_Editor.isBusy() || modalOpen() || m_Editor.textEditing() || m_Editor.cropping())
 	{
-		if (m_Popup == Popup::SelectionColor || m_Popup == Popup::Align)
+		if (m_Popup == Popup::SelectionColor || m_Popup == Popup::Arrange || m_Popup == Popup::Media)
 			closePopup("selection bar hidden");
 		m_SelectionBarRect = ui::Rect2{};
 		return;
@@ -54,6 +54,7 @@ void App::buildSelectionBar()
 	bool l_HasStrokes = false;
 	bool l_HasText = false;
 	size_t l_Pictures = 0;
+	size_t l_Videos = 0;
 	size_t l_Animated = 0;
 	size_t l_AnimatedPlaying = 0;
 	AssetId l_MediaAsset = INVALID_ASSET_ID;
@@ -67,7 +68,10 @@ void App::buildSelectionBar()
 		if (l_Object->text() != nullptr)
 			l_HasText = true;
 		if (const VideoData* l_Video = l_Object->video())
+		{
 			l_MediaAsset = l_Video->asset;
+			++l_Videos;
+		}
 		if (const ImageData* l_Image = l_Object->image())
 		{
 			l_MediaAsset = l_Image->asset;
@@ -88,24 +92,23 @@ void App::buildSelectionBar()
 	const std::string l_Count = std::to_string(m_Editor.selection().size());
 	const float l_CountWidth = m_Ui.font().measure(l_Count, l_CountPx) + m_Ui.px(22.f);
 
-	// duplicate, delete, front, back, flip horizontally, flip vertically, lock, then the extras
-	size_t l_Buttons = 7;
+	// duplicate, delete, lock, arrange, then the extras. Order, flips and alignment live in the Transform popover
+	size_t l_Buttons = 4;
 	const bool l_CanAlign = m_Editor.selection().size() >= 2;
-	l_Buttons += l_CanAlign ? 1 : 0;
 	l_Buttons += l_HasStrokes ? 1 : 0; // smoothing
 	l_Buttons += l_Animated > 0 ? 1 : 0;
-	l_Buttons += l_Pictures > 0 ? 1 : 0;
-	const bool l_CanCrop = m_Editor.selection().size() == 1 && l_Pictures == 1;
-	l_Buttons += l_CanCrop ? 1 : 0;
+	const bool l_CanCrop = m_Editor.selection().size() == 1 && l_Pictures + l_Videos == 1;
 	// One picture or video selected: its file can be saved on its own
 	const bool l_CanSaveFile = m_Editor.selection().size() == 1 && l_MediaAsset != INVALID_ASSET_ID;
-	l_Buttons += l_CanSaveFile ? 1 : 0;
+	// Shrinking and saving share a popover; either one alone stays on the bar
+	const bool l_CanShrink = l_Pictures > l_Animated; // animated pictures cannot be recompressed
+	const bool l_FilePopover = l_CanShrink && l_CanSaveFile;
+	l_Buttons += l_FilePopover ? 1 : (l_CanShrink ? 1 : 0) + (l_CanSaveFile ? 1 : 0);
 	l_Buttons += l_HasText ? 1 : 0;
 	const bool l_Tilted = m_Editor.selectionIsTilted();
-	l_Buttons += l_Tilted ? 1 : 0;
 	// A single stroke can switch between its own axes and the board's (text and pictures always use their own)
 	const bool l_SpaceToggle = m_Editor.selection().size() == 1 && l_HasStrokes;
-	l_Buttons += l_SpaceToggle ? 1 : 0;
+	m_SelectionActions = SelectionActions{ l_CanAlign, l_Tilted, l_SpaceToggle, l_CanCrop, l_CanShrink, l_CanSaveFile, l_MediaAsset };
 	const bool l_CanGroup = m_Editor.canGroupSelection();
 	const bool l_HasGroup = m_Editor.selectionHasGroup();
 	l_Buttons += l_CanGroup || l_HasGroup ? 1 : 0;
@@ -146,14 +149,8 @@ void App::buildSelectionBar()
 		m_Editor.deleteSelection();
 	if (!m_Editor.hasSelection())
 		return; // deleted: the rest of the bar is gone
-	if (m_Ui.iconButton("selbar.front", l_Next(), ui::Icon::BringToFront, false, l_Editable, "Bring to front (Ctrl+Shift+])"))
-		m_Editor.reorderSelection(ZOrderMove::ToFront);
-	if (m_Ui.iconButton("selbar.back", l_Next(), ui::Icon::SendToBack, false, l_Editable, "Send to back (Ctrl+Shift+[)"))
-		m_Editor.reorderSelection(ZOrderMove::ToBack);
-	if (m_Ui.iconButton("selbar.fliph", l_Next(), ui::Icon::FlipH, false, l_Editable, "Flip horizontally"))
-		m_Editor.flipSelection(true);
-	if (m_Ui.iconButton("selbar.flipv", l_Next(), ui::Icon::FlipV, false, l_Editable, "Flip vertically"))
-		m_Editor.flipSelection(false);
+	if (m_Ui.iconButton("selbar.transform", l_Next(), ui::Icon::Move, m_Popup == Popup::Arrange, true, l_CanAlign ? "Transform: order, flip, crop, reset rotation, align and space out" : "Transform: order, flip, crop and reset rotation"))
+		togglePopup(Popup::Arrange);
 	if (m_Ui.iconButton("selbar.lock", l_Next(), l_Lock == Editor::LockState::None ? ui::Icon::Lock : ui::Icon::Unlock, l_Lock != Editor::LockState::None, true, l_Lock == Editor::LockState::None ? "Lock: nothing can move or erase it (Ctrl+L)" : "Unlock (Ctrl+L)"))
 		m_Editor.toggleSelectionLock();
 	if (l_CanGroup || l_HasGroup)
@@ -172,27 +169,6 @@ void App::buildSelectionBar()
 		if (m_Ui.iconButton("selbar.smooth", l_Next(), ui::Icon::Spline, false, l_Editable, "Smooth the strokes. Click again for more"))
 			m_Editor.smoothSelection();
 	}
-	if (l_CanAlign)
-	{
-		if (m_Ui.iconButton("selbar.align", l_Next(), ui::Icon::AlignObjects, m_Popup == Popup::Align, l_Editable, "Align and space out the selection"))
-			togglePopup(Popup::Align);
-	}
-	else if (m_Popup == Popup::Align)
-	{
-		closePopup("fewer than two objects selected");
-	}
-	if (l_SpaceToggle)
-	{
-		tools::SelectState& l_Select = m_Editor.selectState();
-		const bool l_Local = l_Select.space == tools::TransformSpace::Local;
-		if (m_Ui.iconButton("selbar.space", l_Next(), ui::Icon::TransformSpace, l_Local, true, l_Local ? "Transform box follows the object. Click for the board's axes" : "Transform box uses the board's axes. Click to follow the object"))
-			l_Select.space = l_Local ? tools::TransformSpace::Global : tools::TransformSpace::Local;
-	}
-	if (l_Tilted)
-	{
-		if (m_Ui.iconButton("selbar.reset", l_Next(), ui::Icon::ResetTransform, false, true, "Make upright: remove rotation and flips"))
-			m_Editor.resetSelectionTransform();
-	}
 	if (l_HasText)
 	{
 		const ui::Rect2 l_TextRect = l_Next();
@@ -200,18 +176,21 @@ void App::buildSelectionBar()
 		if (m_Ui.iconButton("selbar.text", l_TextRect, ui::Icon::Type, m_Popup == Popup::Text, true, "Font, size and alignment of the selected text"))
 			openTextPopup(false);
 	}
-	if (l_CanCrop)
+	if (l_FilePopover)
 	{
-		if (m_Ui.iconButton("selbar.crop", l_Next(), ui::Icon::Crop, false, l_Editable, "Crop the picture (or double-click it). The file is not changed: the crop can be widened again"))
-			m_Editor.beginCropSelected();
+		if (m_Ui.iconButton("selbar.file", l_Next(), ui::Icon::ShrinkImage, m_Popup == Popup::Media, true, "File: reduce its size or save it to your computer"))
+			togglePopup(Popup::Media);
 	}
-	if (l_Pictures > 0)
+	else if (m_Popup == Popup::Media)
+	{
+		closePopup("nothing to group in the file popover");
+	}
+	if (l_CanShrink && !l_FilePopover)
 	{
 		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
 			compressSelectedPictures();
 	}
-
-	if (l_CanSaveFile)
+	if (l_CanSaveFile && !l_FilePopover)
 	{
 		const ImageAsset* l_HereAsset = m_Editor.document().findAsset(l_MediaAsset);
 		const bool l_Here = l_HereAsset != nullptr && l_HereAsset->complete();

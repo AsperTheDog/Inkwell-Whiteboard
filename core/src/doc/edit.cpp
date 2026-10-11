@@ -184,35 +184,54 @@ void editImages(Document& p_Document, History& p_History, const std::span<const 
 		p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), p_Name));
 }
 
+namespace
+{
+// Pictures and videos crop the same way: p_Data is the object's ImageData or VideoData
+template <typename Command>
+bool cropMedia(Document& p_Document, History& p_History, const Object& p_Object, const auto& p_Data, const Vec2 p_CropMin, const Vec2 p_CropMax, const char* p_Name)
+{
+	constexpr float MIN_FRACTION = 0.005f;
+	const Vec2 l_Min = glm::clamp(p_CropMin, Vec2{ 0.f }, Vec2{ 1.f - MIN_FRACTION });
+	const Vec2 l_Max = glm::clamp(p_CropMax, l_Min + Vec2{ MIN_FRACTION }, Vec2{ 1.f });
+	if (l_Min == p_Data.cropMin && l_Max == p_Data.cropMax)
+		return false;
+
+	// The whole picture keeps its place and scale on the board; only the window onto it moves
+	const Rect l_Full = p_Data.fullLocalBounds();
+	const DVec2 l_FullSize = l_Full.size();
+	auto l_After = p_Data;
+	l_After.cropMin = l_Min;
+	l_After.cropMax = l_Max;
+	l_After.size = Vec2{ (DVec2{ l_Max } - DVec2{ l_Min }) * l_FullSize };
+	const DVec2 l_Center = l_Full.min + (DVec2{ l_Min } + DVec2{ l_Max }) * 0.5 * l_FullSize;
+
+	typename Command::Entry l_Entry{ .id = p_Object.id, .before = p_Data, .after = l_After };
+	l_Entry.setTransform = true;
+	l_Entry.transformBefore = p_Object.transform;
+	l_Entry.transformAfter = p_Object.transform * Affine2::translate(l_Center);
+	std::vector<typename Command::Entry> l_Entries;
+	l_Entries.push_back(l_Entry);
+	p_History.execute(p_Document, std::make_unique<Command>(std::move(l_Entries), p_Name));
+	return true;
+}
+} // namespace
+
 bool cropImage(Document& p_Document, History& p_History, const ObjectId p_Id, const Vec2 p_CropMin, const Vec2 p_CropMax)
 {
 	const Object* l_Object = p_Document.find(p_Id);
 	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
 	if (l_Image == nullptr || l_Object->locked)
 		return false;
-	constexpr float MIN_FRACTION = 0.005f;
-	const Vec2 l_Min = glm::clamp(p_CropMin, Vec2{ 0.f }, Vec2{ 1.f - MIN_FRACTION });
-	const Vec2 l_Max = glm::clamp(p_CropMax, l_Min + Vec2{ MIN_FRACTION }, Vec2{ 1.f });
-	if (l_Min == l_Image->cropMin && l_Max == l_Image->cropMax)
+	return cropMedia<SetImageDataCommand>(p_Document, p_History, *l_Object, *l_Image, p_CropMin, p_CropMax, "Crop picture");
+}
+
+bool cropVideo(Document& p_Document, History& p_History, const ObjectId p_Id, const Vec2 p_CropMin, const Vec2 p_CropMax)
+{
+	const Object* l_Object = p_Document.find(p_Id);
+	const VideoData* l_Video = l_Object != nullptr ? l_Object->video() : nullptr;
+	if (l_Video == nullptr || l_Object->locked)
 		return false;
-
-	// The whole picture keeps its place and scale on the board; only the window onto it moves
-	const Rect l_Full = l_Image->fullLocalBounds();
-	const DVec2 l_FullSize = l_Full.size();
-	ImageData l_After = *l_Image;
-	l_After.cropMin = l_Min;
-	l_After.cropMax = l_Max;
-	l_After.size = Vec2{ (DVec2{ l_Max } - DVec2{ l_Min }) * l_FullSize };
-	const DVec2 l_Center = l_Full.min + (DVec2{ l_Min } + DVec2{ l_Max }) * 0.5 * l_FullSize;
-
-	SetImageDataCommand::Entry l_Entry{ .id = p_Id, .before = *l_Image, .after = l_After };
-	l_Entry.setTransform = true;
-	l_Entry.transformBefore = l_Object->transform;
-	l_Entry.transformAfter = l_Object->transform * Affine2::translate(l_Center);
-	std::vector<SetImageDataCommand::Entry> l_Entries;
-	l_Entries.push_back(l_Entry);
-	p_History.execute(p_Document, std::make_unique<SetImageDataCommand>(std::move(l_Entries), "Crop picture"));
-	return true;
+	return cropMedia<SetVideoDataCommand>(p_Document, p_History, *l_Object, *l_Video, p_CropMin, p_CropMax, "Crop video");
 }
 
 void editVideos(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)

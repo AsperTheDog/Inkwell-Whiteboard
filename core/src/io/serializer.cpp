@@ -67,7 +67,7 @@ constexpr size_t VIDEO_BODY_BASE_BYTES = 6 * sizeof(double) + sizeof(uint64_t) +
 
 size_t videoBodyBytes(const VideoData& p_Video)
 {
-	size_t l_Bytes = VIDEO_BODY_BASE_BYTES + 1; // and the number of subtitle files
+	size_t l_Bytes = VIDEO_BODY_BASE_BYTES + 1 + 4 * sizeof(float); // and the number of subtitle files, and the crop after them
 	for (const SubtitleFile& l_File : p_Video.subtitleFiles)
 		l_Bytes += 2 * sizeof(uint32_t) + l_File.name.size() + l_File.text.size();
 	return l_Bytes;
@@ -409,6 +409,10 @@ void writeVideo(Writer& p_Writer, const Object& p_Object, const VideoData& p_Vid
 		p_Writer.string(p_Video.subtitleFiles[i].name);
 		p_Writer.string(p_Video.subtitleFiles[i].text);
 	}
+	p_Writer.f32(p_Video.cropMin.x);
+	p_Writer.f32(p_Video.cropMin.y);
+	p_Writer.f32(p_Video.cropMax.x);
+	p_Writer.f32(p_Video.cropMax.y);
 }
 
 bool readVideo(Reader& p_Reader, Object& p_Object)
@@ -446,6 +450,18 @@ bool readVideo(Reader& p_Reader, Object& p_Object)
 			if (!p_Reader.ok())
 				return false;
 			l_Video.subtitleFiles.push_back(std::move(l_File));
+		}
+		if (p_Reader.remaining() >= 4 * sizeof(float)) // boards saved before video cropping end here
+		{
+			l_Video.cropMin.x = p_Reader.f32();
+			l_Video.cropMin.y = p_Reader.f32();
+			l_Video.cropMax.x = p_Reader.f32();
+			l_Video.cropMax.y = p_Reader.f32();
+			const bool l_Valid = finite(l_Video.cropMin.x) && finite(l_Video.cropMin.y) && finite(l_Video.cropMax.x) && finite(l_Video.cropMax.y)
+				&& l_Video.cropMin.x >= 0.f && l_Video.cropMin.y >= 0.f && l_Video.cropMax.x <= 1.f && l_Video.cropMax.y <= 1.f
+				&& l_Video.cropMin.x < l_Video.cropMax.x && l_Video.cropMin.y < l_Video.cropMax.y;
+			if (!l_Valid)
+				return false;
 		}
 	}
 	if (!p_Reader.ok() || l_Video.asset == INVALID_ASSET_ID || !finite(l_Video.size.x) || !finite(l_Video.size.y) || l_Video.size.x <= 0.f || l_Video.size.y <= 0.f)

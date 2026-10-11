@@ -236,6 +236,10 @@ public:
 		ObjectId id = INVALID_OBJECT_ID;
 		VideoData before{};
 		VideoData after{};
+		// Cropping changes how big the shown part is, so the object moves with it
+		bool setTransform = false;
+		Affine2 transformBefore{};
+		Affine2 transformAfter{};
 	};
 
 	SetVideoDataCommand(std::vector<Entry> p_Entries, std::string p_Name);

@@ -117,7 +117,8 @@ private:
 		Menu,
 		SelectionColor,
 		Text,
-		Align,
+		Arrange,
+		Media,
 		Highlighter,
 		Shape,
 		Laser,
@@ -179,6 +180,7 @@ private:
 	void showInsertPictureDialog();
 	void handleDroppedFile(const SDL_DropEvent& p_Event);
 	void compressSelectedPictures();
+	void pollReducedPictures();
 	void toggleSelectedPlayback();
 	[[nodiscard]] render::ImageClock imageClock() const { return render::ImageClock{ .seconds = m_AnimSeconds, .playing = m_PlayAnimations }; }
 	void openPopup(Popup p_Popup);
@@ -326,6 +328,23 @@ private:
 
 	gfx::Buffer m_ScreenshotBuffer;
 	std::future<platform::PdfImport> m_PdfJob;
+	// "Reduce the file size" of pictures runs on a worker; the result lands once it is done (app_images.cpp)
+	struct ReducedPicture
+	{
+		AssetId from = 0;
+		std::vector<uint8_t> bytes;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		std::string name;
+		uint64_t beforeBytes = 0;
+	};
+	struct ReduceResult
+	{
+		std::vector<ReducedPicture> pictures;
+		std::vector<ObjectId> objects; // the pictures it was asked for
+		std::string reason;            // why the last one that failed did
+	};
+	std::future<ReduceResult> m_ReduceJob;
 	std::string m_PdfName;
 	bool m_ShowExport = false;
 	ExportOptions m_ExportOptions;
@@ -358,6 +377,17 @@ private:
 	ui::Rect2 m_ToolbarRect{};
 	ui::Rect2 m_MenuAnchor{};
 	ui::Rect2 m_SelectionBarRect{};
+	// What the selection bar offers, shared with the Transform and File popovers it opens
+	struct SelectionActions
+	{
+		bool canAlign = false;
+		bool tilted = false;
+		bool spaceToggle = false;
+		bool canCrop = false;
+		bool pictures = false;
+		bool canSaveFile = false;
+		AssetId mediaAsset = INVALID_ASSET_ID;
+	} m_SelectionActions;
 	// Text
 	ui::Rect2 m_TextBarRect{};
 	ui::Rect2 m_TextAnchor{};            // the button of the bar that opened the text popover

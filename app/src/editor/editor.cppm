@@ -153,6 +153,8 @@ public:
 	void editVideo(ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 	// Edits the selected pictures (one undo step); p_Edit returns false to leave a picture alone
 	void editSelectedImages(const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
+	// The same for given pictures, whether they are selected or not (one undo step)
+	void editImages(std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit);
 	// ---- cropping. Shows the whole picture with the hidden part darkened; dragging the frame's handles (or the frame
 	// itself) chooses what is shown. Each drag is one undo step, and the file is never changed, so a crop can always be
 	// widened again. Enter / Escape, or a click outside the picture, ends it.

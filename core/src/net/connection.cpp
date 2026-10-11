@@ -102,7 +102,6 @@ void Connection::send(const uint8_t p_Type, std::vector<uint8_t> p_Payload, cons
 
 void Connection::readLoop()
 {
-	std::vector<uint8_t> l_Payload;
 	while (!m_Closed.load())
 	{
 		std::array<uint8_t, HEADER_BYTES> l_Header{};

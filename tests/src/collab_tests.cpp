@@ -763,6 +763,38 @@ TEST(Collab, ClientPicturesReachEveryone)
 	EXPECT_EQ(l_Bo.session->assetProgress().files, 0u);
 }
 
+// Reducing a picture swaps its file for a smaller one: everybody gets the new file, and putting the old one back (undo) works too
+TEST(Collab, ASwappedPictureFileReachesEveryoneAndSwapsBack)
+{
+	Node l_Host;
+	Node l_Ana;
+	Node l_Bo;
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Hosty", l_Error)) << l_Error;
+	l_Ana.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Ana");
+	l_Bo.session->join("127.0.0.1", l_Host.session->listenPort(), "secret", "Bo");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return joinedAndOnline(l_Ana) && joinedAndOnline(l_Bo); }));
+
+	const std::vector<uint8_t> l_Big = noise(1u << 20, 5);
+	const wb::ObjectId l_Id = addPicture(l_Ana.doc, l_Big, "photo.png");
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return assetOf(l_Host.doc, l_Id) != nullptr && assetOf(l_Bo.doc, l_Id) != nullptr; }, 20000));
+	const wb::AssetId l_OldAsset = l_Ana.doc.find(l_Id)->image()->asset;
+
+	const std::vector<uint8_t> l_Small = noise(40u << 10, 6);
+	wb::ImageAsset l_New;
+	l_New.bytes = l_Small;
+	l_New.width = 40;
+	l_New.height = 30;
+	l_New.name = "photo.jpg";
+	const wb::AssetId l_NewAsset = l_Ana.doc.addAsset(std::move(l_New));
+	l_Ana.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.image()->asset = l_NewAsset; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return assetOf(l_Host.doc, l_Id) != nullptr && assetOf(l_Host.doc, l_Id)->bytes == l_Small && assetOf(l_Bo.doc, l_Id) != nullptr && assetOf(l_Bo.doc, l_Id)->bytes == l_Small; }, 20000));
+	EXPECT_EQ(assetOf(l_Bo.doc, l_Id)->name, "photo.jpg");
+
+	l_Ana.doc.modify(l_Id, [&](wb::Object& p_Object) { p_Object.image()->asset = l_OldAsset; }, wb::ObjectChange::Geometry | wb::ObjectChange::Style);
+	ASSERT_TRUE(pumpUntil({ &l_Host, &l_Ana, &l_Bo }, [&] { return assetOf(l_Host.doc, l_Id) != nullptr && assetOf(l_Host.doc, l_Id)->bytes == l_Big && assetOf(l_Bo.doc, l_Id) != nullptr && assetOf(l_Bo.doc, l_Id)->bytes == l_Big; }, 20000));
+}
+
 // A client cannot make the host store a file under an id that belongs to somebody else
 TEST(Collab, ClientsCannotPlantFilesUnderOthersIds)
 {

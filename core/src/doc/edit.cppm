@@ -49,6 +49,9 @@ void editImages(Document& p_Document, History& p_History, std::span<const Object
 // the object is not an unlocked picture or nothing changes.
 bool cropImage(Document& p_Document, History& p_History, ObjectId p_Id, Vec2 p_CropMin, Vec2 p_CropMax);
 
+// Same for videos
+bool cropVideo(Document& p_Document, History& p_History, ObjectId p_Id, Vec2 p_CropMin, Vec2 p_CropMax);
+
 // Same for video objects (loop, sound)
 void editVideos(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit);
 

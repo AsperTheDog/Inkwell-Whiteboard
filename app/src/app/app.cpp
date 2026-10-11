@@ -127,6 +127,7 @@ void App::run()
 			pollCollab();
 			pollExport();
 			pollPdfImport();
+			pollReducedPictures();
 			pollSave();
 			updateTitle();
 			if (!l_CanRender || m_Window.isMinimized() || m_Window.pixelSize().isZero())

@@ -113,6 +113,29 @@ TEST(Video, EditsAreUndoable)
 	EXPECT_FALSE(l_Doc.find(l_Id)->video()->loop);
 }
 
+TEST(Video, CropKeepsTheShownPartInPlaceAndSurvivesSaveAndLoad)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_Id = addVideo(l_Doc, addFile(l_Doc, 1), { 0.0, 0.0 });
+	ASSERT_TRUE(wb::cropVideo(l_Doc, l_History, l_Id, { 0.5f, 0.f }, { 1.f, 1.f }));
+	const wb::Object* l_Object = l_Doc.find(l_Id);
+	EXPECT_EQ(l_Object->video()->size, (wb::Vec2{ 80.f, 90.f }));
+	EXPECT_NEAR(l_Object->transform.apply(wb::DVec2{ 0.0 }).x, 40.0, 1e-9); // the right half stays where it was
+	EXPECT_FALSE(wb::cropVideo(l_Doc, l_History, l_Id, { 0.5f, 0.f }, { 1.f, 1.f }));
+
+	wb::Document l_Loaded;
+	wb::BoardMeta l_Meta;
+	ASSERT_TRUE(wb::deserializeBoard(wb::serializeBoard(l_Doc, {}), l_Loaded, l_Meta).ok);
+	ASSERT_NE(l_Loaded.find(l_Id), nullptr);
+	EXPECT_EQ(l_Loaded.find(l_Id)->video()->cropMin, (wb::Vec2{ 0.5f, 0.f }));
+	EXPECT_EQ(l_Loaded.find(l_Id)->video()->size, (wb::Vec2{ 80.f, 90.f }));
+
+	l_History.undo(l_Doc);
+	EXPECT_FALSE(l_Doc.find(l_Id)->video()->cropped());
+	EXPECT_NEAR(l_Doc.find(l_Id)->transform.apply(wb::DVec2{ 0.0 }).x, 0.0, 1e-9);
+}
+
 TEST(Video, BigFilesAreWrittenFromTheDocumentWithoutCopying)
 {
 	wb::Document l_Doc;

@@ -268,13 +268,25 @@ SetVideoDataCommand::SetVideoDataCommand(std::vector<Entry> p_Entries, std::stri
 void SetVideoDataCommand::apply(Document& p_Document)
 {
 	for (const Entry& l_Entry : m_Entries)
-		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (VideoData* l_Video = p_Object.video()) *l_Video = l_Entry.after; }, ObjectChange::Geometry | ObjectChange::Style);
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (VideoData* l_Video = p_Object.video())
+				*l_Video = l_Entry.after;
+			if (l_Entry.setTransform)
+				p_Object.transform = l_Entry.transformAfter;
+		}, ObjectChange::Geometry | ObjectChange::Style);
 }
 
 void SetVideoDataCommand::revert(Document& p_Document)
 {
 	for (const Entry& l_Entry : m_Entries)
-		p_Document.modify(l_Entry.id, [&](Object& p_Object) { if (VideoData* l_Video = p_Object.video()) *l_Video = l_Entry.before; }, ObjectChange::Geometry | ObjectChange::Style);
+		p_Document.modify(l_Entry.id, [&](Object& p_Object)
+		{
+			if (VideoData* l_Video = p_Object.video())
+				*l_Video = l_Entry.before;
+			if (l_Entry.setTransform)
+				p_Object.transform = l_Entry.transformBefore;
+		}, ObjectChange::Geometry | ObjectChange::Style);
 }
 
 SetStrokeColorCommand::SetStrokeColorCommand(std::vector<ObjectId> p_Ids, const Color p_Color, std::string p_Name)

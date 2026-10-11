@@ -24,12 +24,14 @@ module wb.app;
 
 import wb.brush.shapes;
 import wb.brush.stroke_builder;
+import wb.doc.commands;
 import wb.doc.edit;
 import wb.doc.object;
 import wb.editor;
 import wb.math;
 import wb.session;
 import wb.tools.laser;
+import wb.tools.select;
 import wb.tools.tool;
 import wb.ui.context;
 import wb.ui.draw;
@@ -145,7 +147,7 @@ void App::buildPopover()
 	const tools::ToolKind l_Tool = m_Editor.deviceTool(m_PopupDevice);
 	if ((m_Popup == Popup::Text && m_TextPopupFromToolbar && l_Tool != tools::ToolKind::Text) || (m_Popup == Popup::Text && !m_TextPopupFromToolbar && !m_Editor.currentText()) || (m_Popup == Popup::Pen && l_Tool != tools::ToolKind::Pen) || (m_Popup == Popup::Highlighter && l_Tool != tools::ToolKind::Highlighter) || (m_Popup == Popup::Shape && l_Tool != tools::ToolKind::Shape) || (m_Popup == Popup::Laser && l_Tool != tools::ToolKind::Laser) || (m_Popup == Popup::Eraser && l_Tool != tools::ToolKind::Eraser) || (m_Popup == Popup::Select && l_Tool != tools::ToolKind::Select))
 		closePopup("its device switched tools");
-	if ((m_Popup == Popup::SelectionColor || m_Popup == Popup::Align) && !m_Editor.hasSelection())
+	if ((m_Popup == Popup::SelectionColor || m_Popup == Popup::Arrange || m_Popup == Popup::Media) && !m_Editor.hasSelection())
 		closePopup("selection gone");
 
 	switch (m_Popup)
@@ -205,7 +207,7 @@ void App::buildPopover()
 		endPopover(m_Ui);
 		break;
 	}
-	case Popup::Align:
+	case Popup::Arrange:
 	{
 		struct Entry
 		{
@@ -221,11 +223,79 @@ void App::buildPopover()
 			{ ui::Icon::AlignCenterY, AlignMode::CenterY, "Centre vertically" },
 			{ ui::Icon::AlignBottomEdges, AlignMode::Bottom, "Align bottom edges" },
 		} };
+		const SelectionActions& l_Actions = m_SelectionActions;
+		const bool l_Editable = m_Editor.selectionLockState() != Editor::LockState::All;
 		const float l_Pad = m_Ui.px(8.f);
 		const float l_Button = m_Ui.px(38.f);
 		const float l_Gap = m_Ui.px(2.f);
 		const float l_Separator = m_Ui.px(13.f);
+		const float l_RowGap = m_Ui.px(4.f);
 		const float l_Width = l_Pad * 2.f + 8.f * l_Button + 7.f * l_Gap + l_Separator;
+		const float l_Height = l_Pad * 2.f + l_Button + (l_Actions.canAlign ? l_RowGap + l_Button : 0.f);
+		const bool l_Below = m_SelectionBarRect.min.y < m_Ui.viewport().y * 0.45f;
+		const Rect2 l_Rect = beginPopover(m_Ui, m_SelectionBarRect, l_Width, l_Height, l_Below);
+		m_Ui.panel(l_Rect, m_Ui.px(18.f));
+		float l_X = l_Rect.min.x + l_Pad;
+		float l_Top = l_Rect.min.y + l_Pad;
+		const auto l_Place = [&] { const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_X, l_Top }, Vec2{ l_Button }); l_X += l_Button + l_Gap; return l_Slot; };
+		// Order and orientation
+		if (m_Ui.iconButton("arrange.front", l_Place(), ui::Icon::BringToFront, false, l_Editable, "Bring to front (Ctrl+Shift+])"))
+			m_Editor.reorderSelection(ZOrderMove::ToFront);
+		if (m_Ui.iconButton("arrange.back", l_Place(), ui::Icon::SendToBack, false, l_Editable, "Send to back (Ctrl+Shift+[)"))
+			m_Editor.reorderSelection(ZOrderMove::ToBack);
+		if (m_Ui.iconButton("arrange.fliph", l_Place(), ui::Icon::FlipH, false, l_Editable, "Flip horizontally"))
+			m_Editor.flipSelection(true);
+		if (m_Ui.iconButton("arrange.flipv", l_Place(), ui::Icon::FlipV, false, l_Editable, "Flip vertically"))
+			m_Editor.flipSelection(false);
+		if (l_Actions.tilted)
+		{
+			if (m_Ui.iconButton("arrange.reset", l_Place(), ui::Icon::ResetTransform, false, true, "Make upright: remove rotation and flips"))
+				m_Editor.resetSelectionTransform();
+		}
+		if (l_Actions.spaceToggle)
+		{
+			tools::SelectState& l_Select = m_Editor.selectState();
+			const bool l_Local = l_Select.space == tools::TransformSpace::Local;
+			if (m_Ui.iconButton("arrange.space", l_Place(), ui::Icon::TransformSpace, l_Local, true, l_Local ? "Transform box follows the object. Click for the board's axes" : "Transform box uses the board's axes. Click to follow the object"))
+				l_Select.space = l_Local ? tools::TransformSpace::Global : tools::TransformSpace::Local;
+		}
+		if (l_Actions.canCrop)
+		{
+			if (m_Ui.iconButton("arrange.crop", l_Place(), ui::Icon::Crop, false, l_Editable, "Crop the picture or video (a picture also by double-click). The file is not changed: the crop can be widened again"))
+			{
+				closePopup("crop started");
+				m_Editor.beginCropSelected();
+			}
+		}
+		// Alignment of several objects
+		if (l_Actions.canAlign)
+		{
+			l_X = l_Rect.min.x + l_Pad;
+			l_Top += l_Button + l_RowGap;
+			for (const Entry& l_Entry : ALIGN)
+			{
+				if (m_Ui.iconButton(std::string("align.") + l_Entry.tip, l_Place(), l_Entry.icon, false, l_Editable, l_Entry.tip))
+					m_Editor.alignSelection(l_Entry.mode);
+			}
+			l_X += -l_Gap + l_Separator * 0.5f;
+			m_Ui.draw().line(Vec2{ l_X, l_Top + m_Ui.px(12.f) }, Vec2{ l_X, l_Top + l_Button - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
+			l_X += l_Separator * 0.5f + l_Gap;
+			const bool l_Enough = m_Editor.selection().size() >= 3 && l_Editable;
+			if (m_Ui.iconButton("align.spacex", l_Place(), ui::Icon::DistributeX, false, l_Enough, "Space evenly across"))
+				m_Editor.alignSelection(AlignMode::DistributeX);
+			if (m_Ui.iconButton("align.spacey", l_Place(), ui::Icon::DistributeY, false, l_Enough, "Space evenly down"))
+				m_Editor.alignSelection(AlignMode::DistributeY);
+		}
+		endPopover(m_Ui);
+		break;
+	}
+	case Popup::Media:
+	{
+		const SelectionActions& l_Actions = m_SelectionActions;
+		const float l_Pad = m_Ui.px(8.f);
+		const float l_Button = m_Ui.px(38.f);
+		const float l_Gap = m_Ui.px(2.f);
+		const float l_Width = l_Pad * 2.f + 2.f * l_Button + l_Gap;
 		const float l_Height = l_Button + l_Pad * 2.f;
 		const bool l_Below = m_SelectionBarRect.min.y < m_Ui.viewport().y * 0.45f;
 		const Rect2 l_Rect = beginPopover(m_Ui, m_SelectionBarRect, l_Width, l_Height, l_Below);
@@ -233,19 +303,15 @@ void App::buildPopover()
 		float l_X = l_Rect.min.x + l_Pad;
 		const float l_Top = l_Rect.min.y + l_Pad;
 		const auto l_Place = [&] { const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_X, l_Top }, Vec2{ l_Button }); l_X += l_Button + l_Gap; return l_Slot; };
-		for (const Entry& l_Entry : ALIGN)
+		if (m_Ui.iconButton("media.shrink", l_Place(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
+			compressSelectedPictures();
+		const ImageAsset* l_Asset = m_Editor.document().findAsset(l_Actions.mediaAsset);
+		const bool l_Here = l_Asset != nullptr && l_Asset->complete();
+		if (m_Ui.iconButton("media.savefile", l_Place(), ui::Icon::SaveAs, false, l_Here, l_Here ? "Save this file to your computer" : "Still arriving: it can be saved when it has finished"))
 		{
-			if (m_Ui.iconButton(std::string("align.") + l_Entry.tip, l_Place(), l_Entry.icon, false, true, l_Entry.tip))
-				m_Editor.alignSelection(l_Entry.mode);
+			closePopup("save dialog");
+			showSaveMediaDialog(l_Actions.mediaAsset);
 		}
-		l_X += -l_Gap + l_Separator * 0.5f;
-		m_Ui.draw().line(Vec2{ l_X, l_Rect.min.y + m_Ui.px(12.f) }, Vec2{ l_X, l_Rect.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
-		l_X += l_Separator * 0.5f + l_Gap;
-		const bool l_Enough = m_Editor.selection().size() >= 3;
-		if (m_Ui.iconButton("align.spacex", l_Place(), ui::Icon::DistributeX, false, l_Enough, "Space evenly across"))
-			m_Editor.alignSelection(AlignMode::DistributeX);
-		if (m_Ui.iconButton("align.spacey", l_Place(), ui::Icon::DistributeY, false, l_Enough, "Space evenly down"))
-			m_Editor.alignSelection(AlignMode::DistributeY);
 		endPopover(m_Ui);
 		break;
 	}

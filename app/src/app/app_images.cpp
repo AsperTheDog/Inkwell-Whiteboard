@@ -7,11 +7,13 @@ module;
 #include <cstdio>
 #include <deque>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -324,44 +326,112 @@ void App::compressSelectedPictures()
 {
 	if (m_Editor.isBusy())
 		return;
+	if (m_ReduceJob.valid())
+	{
+		showToast("Pictures are still being reduced");
+		return;
+	}
 	Document& l_Document = m_Editor.document();
-	std::unordered_map<AssetId, AssetId> l_Replacements;
-	size_t l_Before = 0;
-	size_t l_After = 0;
-	std::string l_Reason;
+	// Each file once, whatever number of objects show it. The worker gets its own copy of the bytes (or the stream, for a big file).
+	std::vector<std::pair<AssetId, std::shared_ptr<const ByteSource>>> l_Files;
+	std::unordered_map<AssetId, std::string> l_Names;
+	std::vector<ObjectId> l_Objects;
 	for (const ObjectId l_Id : m_Editor.selection().ids())
 	{
 		const Object* l_Object = l_Document.find(l_Id);
 		const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
-		if (l_Image == nullptr || l_Replacements.contains(l_Image->asset))
+		if (l_Image == nullptr || m_Canvas.images().animated(l_Image->asset))
 			continue;
 		const ImageAsset* l_Asset = l_Document.findAsset(l_Image->asset);
 		if (l_Asset == nullptr || !l_Asset->complete())
 			continue;
-		std::string l_Error;
-		const std::vector<uint8_t> l_Original = l_Asset->load(MAX_PICTURE_BYTES);
-		std::optional<image::Recompressed> l_Result = l_Original.empty() ? std::nullopt : image::recompress(l_Original, 4096, 85, l_Error);
-		if (!l_Result)
+		l_Objects.push_back(l_Id);
+		if (l_Names.emplace(l_Image->asset, l_Asset->name).second)
+			l_Files.emplace_back(l_Image->asset, l_Asset->source());
+	}
+	if (l_Files.empty())
+	{
+		showToast("Nothing to reduce in the selection");
+		return;
+	}
+
+	m_ReduceJob = std::async(std::launch::async, [l_Files = std::move(l_Files), l_Names = std::move(l_Names), l_Objects = std::move(l_Objects)]() mutable
+	{
+		ReduceResult l_Out;
+		l_Out.objects = std::move(l_Objects);
+		for (const auto& [l_AssetId, l_Source] : l_Files)
 		{
-			l_Reason = l_Error;
-			continue;
+			std::string l_Error;
+			const std::vector<uint8_t> l_Original = readAllBytes(*l_Source, MAX_PICTURE_BYTES);
+			std::optional<image::Recompressed> l_Result = l_Original.empty() ? std::nullopt : image::recompress(l_Original, 4096, 85, l_Error);
+			if (!l_Result)
+			{
+				l_Out.reason = l_Error;
+				continue;
+			}
+			ReducedPicture l_Picture;
+			l_Picture.from = l_AssetId;
+			l_Picture.width = l_Result->width;
+			l_Picture.height = l_Result->height;
+			l_Picture.name = pathToUtf8(pathFromUtf8(l_Names[l_AssetId]).stem()) + "." + l_Result->extension;
+			l_Picture.beforeBytes = l_Original.size();
+			l_Picture.bytes = std::move(l_Result->bytes);
+			l_Out.pictures.push_back(std::move(l_Picture));
 		}
+		return l_Out;
+	});
+	showToast("Reducing the pictures...");
+}
+
+// Once per loop: puts the reduced files on the board. Editing the objects is a normal edit, so everybody in a shared board gets
+// the new file the way they get any other change of a picture, and undo brings the old one back.
+void App::pollReducedPictures()
+{
+	if (!m_ReduceJob.valid())
+		return;
+	if (m_ReduceJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+	{
+		requestRedraw(1); // keeps the loop awake so the result is noticed
+		return;
+	}
+	if (m_Editor.isBusy())
+	{
+		requestRedraw(1); // something is being drawn right now: land it a moment later
+		return;
+	}
+	ReduceResult l_Result = m_ReduceJob.get();
+
+	// Only the files that are still shown by one of the pictures (they may have been deleted or edited meanwhile)
+	Document& l_Document = m_Editor.document();
+	std::unordered_set<AssetId> l_Shown;
+	for (const ObjectId l_Id : l_Result.objects)
+	{
+		if (const Object* l_Object = l_Document.find(l_Id); l_Object != nullptr && l_Object->image() != nullptr)
+			l_Shown.insert(l_Object->image()->asset);
+	}
+	std::unordered_map<AssetId, AssetId> l_Replacements;
+	size_t l_Before = 0;
+	size_t l_After = 0;
+	for (ReducedPicture& l_Picture : l_Result.pictures)
+	{
+		if (!l_Shown.contains(l_Picture.from))
+			continue;
 		ImageAsset l_New;
-		l_New.width = l_Result->width;
-		l_New.height = l_Result->height;
-		l_New.name = pathToUtf8(pathFromUtf8(l_Asset->name).stem()) + "." + l_Result->extension;
-		l_Before += l_Asset->size();
-		l_After += l_Result->bytes.size();
-		l_New.bytes = std::move(l_Result->bytes);
-		l_Replacements[l_Image->asset] = l_Document.addAsset(std::move(l_New));
+		l_New.width = l_Picture.width;
+		l_New.height = l_Picture.height;
+		l_New.name = std::move(l_Picture.name);
+		l_Before += l_Picture.beforeBytes;
+		l_After += l_Picture.bytes.size();
+		l_New.bytes = std::move(l_Picture.bytes);
+		l_Replacements[l_Picture.from] = l_Document.addAsset(std::move(l_New));
 	}
 
 	if (l_Replacements.empty())
 	{
-		showToast(l_Reason.empty() ? "Nothing to reduce in the selection" : l_Reason);
+		showToast(l_Result.reason.empty() ? "Nothing to reduce in the selection" : l_Result.reason);
 		return;
 	}
-	m_Editor.editSelectedImages("Reduce picture size", [&](ImageData& p_Image)
+	m_Editor.editImages(l_Result.objects, "Reduce picture size", [&](ImageData& p_Image)
 	{
 		const auto l_It = l_Replacements.find(p_Image.asset);
 		if (l_It == l_Replacements.end())
@@ -370,6 +440,7 @@ void App::compressSelectedPictures()
 		return true;
 	});
 	showToast("Reduced from " + formatSize(l_Before) + " to " + formatSize(l_After));
+	requestRedraw();
 }
 
 void App::toggleSelectedPlayback()

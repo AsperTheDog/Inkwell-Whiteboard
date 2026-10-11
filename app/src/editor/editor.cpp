@@ -896,7 +896,14 @@ void Editor::editSelectedImages(const char* p_Name, const std::function<bool(Ima
 {
 	if (isBusy() || m_Selection.empty())
 		return;
-	editImages(m_Document, m_History, m_Selection.orderedIds(), p_Name, p_Edit);
+	wb::editImages(m_Document, m_History, m_Selection.orderedIds(), p_Name, p_Edit);
+}
+
+void Editor::editImages(const std::span<const ObjectId> p_Ids, const char* p_Name, const std::function<bool(ImageData&)>& p_Edit)
+{
+	if (isBusy() || p_Ids.empty())
+		return;
+	wb::editImages(m_Document, m_History, p_Ids, p_Name, p_Edit);
 }
 
 void Editor::editVideo(const ObjectId p_Id, const char* p_Name, const std::function<bool(VideoData&)>& p_Edit)
@@ -1129,10 +1136,31 @@ DVec2 Editor::cropHandlePoint(const Rect& p_Shown, const int p_Handle)
 	return p_Shown.center() + DVec2{ CROP_HANDLE_X[p_Handle] * l_Half.x, CROP_HANDLE_Y[p_Handle] * l_Half.y };
 }
 
+namespace
+{
+// What the crop frame works on: the shown part and the whole picture or frame, in object space
+struct CropTarget
+{
+	Rect shown;
+	Rect full;
+};
+
+std::optional<CropTarget> cropTargetOf(const Object* p_Object)
+{
+	if (p_Object == nullptr)
+		return std::nullopt;
+	if (const ImageData* l_Image = p_Object->image())
+		return CropTarget{ l_Image->localBounds(), l_Image->fullLocalBounds() };
+	if (const VideoData* l_Video = p_Object->video())
+		return CropTarget{ l_Video->localBounds(), l_Video->fullLocalBounds() };
+	return std::nullopt;
+}
+} // namespace
+
 bool Editor::beginCrop(const ObjectId p_Id)
 {
 	const Object* l_Object = m_Document.find(p_Id);
-	if (l_Object == nullptr || l_Object->image() == nullptr || l_Object->locked || !l_Object->transform.isInvertible() || isBusy())
+	if (!cropTargetOf(l_Object) || l_Object->locked || !l_Object->transform.isInvertible() || isBusy())
 		return false;
 	m_TextSession.end();
 	const ObjectId l_Only[]{ p_Id };
@@ -1160,14 +1188,14 @@ void Editor::endCrop()
 std::optional<Editor::CropView> Editor::cropView() const
 {
 	const Object* l_Object = cropping() ? m_Document.find(m_CropId) : nullptr;
-	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
-	if (l_Image == nullptr)
+	const std::optional<CropTarget> l_Target = cropTargetOf(l_Object);
+	if (!l_Target)
 		return std::nullopt;
 	return CropView{
 		.id = m_CropId,
 		.transform = l_Object->transform,
-		.full = l_Image->fullLocalBounds(),
-		.shown = m_CropDrag >= 0 ? m_CropShown : l_Image->localBounds(),
+		.full = l_Target->full,
+		.shown = m_CropDrag >= 0 ? m_CropShown : l_Target->shown,
 		.hovered = m_CropDrag >= 0 ? m_CropDrag : m_CropHover,
 		.dragging = m_CropDrag >= 0,
 	};
@@ -1196,13 +1224,13 @@ int Editor::cropHandleAt(const Object& p_Object, const Rect& p_Shown, const DVec
 bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec2 p_World)
 {
 	const Object* l_Object = m_Document.find(m_CropId);
-	const ImageData* l_Image = l_Object != nullptr ? l_Object->image() : nullptr;
-	if (l_Image == nullptr || l_Object->locked || !l_Object->transform.isInvertible())
+	const std::optional<CropTarget> l_Target = cropTargetOf(l_Object);
+	if (!l_Target || l_Object->locked || !l_Object->transform.isInvertible())
 	{
 		endCrop();
 		return false;
 	}
-	const Rect l_Full = l_Image->fullLocalBounds();
+	const Rect l_Full = l_Target->full;
 	const DVec2 l_FullSize = l_Full.size();
 	const DVec2 l_Screen{ p_Event.position };
 	const DVec2 l_Local = l_Object->transform.inverse().apply(p_World);
@@ -1212,12 +1240,12 @@ bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec
 	{
 		if (p_Event.phase == Phase::Move)
 		{
-			const DVec2 l_Target = l_Local - m_CropGrab; // where the grabbed point of the frame should be
+			const DVec2 l_Goal = l_Local - m_CropGrab; // where the grabbed point of the frame should be
 			Rect l_Frame = m_CropStart;
 			if (m_CropDrag == CROP_HANDLE_MOVE)
 			{
 				const DVec2 l_Size = m_CropStart.size();
-				const DVec2 l_Min = glm::clamp(l_Target, l_Full.min, l_Full.max - l_Size);
+				const DVec2 l_Min = glm::clamp(l_Goal, l_Full.min, l_Full.max - l_Size);
 				l_Frame = Rect::fromPoints(l_Min, l_Min + l_Size);
 			}
 			else
@@ -1228,13 +1256,13 @@ bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec
 				// An edge stops a little short of the opposite one (or where it already is, for a frame that is thinner already)
 				const auto l_Limit = [](const double p_Value, const double p_Low, const double p_High) { return std::clamp(p_Value, p_Low, std::max(p_Low, p_High)); };
 				if (l_X < 0)
-					l_Frame.min.x = l_Limit(l_Target.x, l_Full.min.x, l_Frame.max.x - l_MinSize.x);
+					l_Frame.min.x = l_Limit(l_Goal.x, l_Full.min.x, l_Frame.max.x - l_MinSize.x);
 				else if (l_X > 0)
-					l_Frame.max.x = std::min(l_Full.max.x, std::max(l_Target.x, l_Frame.min.x + std::min(l_MinSize.x, l_Frame.size().x)));
+					l_Frame.max.x = std::min(l_Full.max.x, std::max(l_Goal.x, l_Frame.min.x + std::min(l_MinSize.x, l_Frame.size().x)));
 				if (l_Y < 0)
-					l_Frame.min.y = l_Limit(l_Target.y, l_Full.min.y, l_Frame.max.y - l_MinSize.y);
+					l_Frame.min.y = l_Limit(l_Goal.y, l_Full.min.y, l_Frame.max.y - l_MinSize.y);
 				else if (l_Y > 0)
-					l_Frame.max.y = std::min(l_Full.max.y, std::max(l_Target.y, l_Frame.min.y + std::min(l_MinSize.y, l_Frame.size().y)));
+					l_Frame.max.y = std::min(l_Full.max.y, std::max(l_Goal.y, l_Frame.min.y + std::min(l_MinSize.y, l_Frame.size().y)));
 			}
 			m_CropShown = l_Frame;
 		}
@@ -1246,7 +1274,7 @@ bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec
 			{
 				const DVec2 l_Min = (l_Frame.min - l_Full.min) / l_FullSize;
 				const DVec2 l_Max = (l_Frame.max - l_Full.min) / l_FullSize;
-				cropImage(m_Document, m_History, m_CropId, Vec2{ l_Min }, Vec2{ l_Max });
+				(l_Object->video() != nullptr ? cropVideo : cropImage)(m_Document, m_History, m_CropId, Vec2{ l_Min }, Vec2{ l_Max });
 			}
 		}
 		return true;
@@ -1254,12 +1282,12 @@ bool Editor::handleCropPointer(const platform::PointerEvent& p_Event, const DVec
 
 	if (p_Event.phase == Phase::Move)
 	{
-		m_CropHover = cropHandleAt(*l_Object, l_Image->localBounds(), l_Screen);
+		m_CropHover = cropHandleAt(*l_Object, l_Target->shown, l_Screen);
 		return true;
 	}
 	if (p_Event.phase == Phase::Down && p_Event.button == platform::PointerButton::Primary)
 	{
-		const Rect l_Shown = l_Image->localBounds();
+		const Rect l_Shown = l_Target->shown;
 		const int l_Handle = cropHandleAt(*l_Object, l_Shown, l_Screen);
 		if (l_Handle >= 0)
 		{

@@ -503,8 +503,22 @@ void CanvasRenderer::prepare(const gfx::GraphicsContext& p_Context, gfx::FrameSc
 			{
 				const VideoLookup l_Lookup = m_Videos.lookup(*m_Document, l_Object->id, *l_Video);
 				m_VisibleVideos.push_back(l_Object->id);
+				const Affine2 l_LocalToScreen = l_WorldToScreen * l_Object->transform;
+				if (l_Object->id == l_CropId)
+				{
+					// The whole frame, darkened; then the part that will be shown, in full light
+					const Rect l_Full = l_Video->fullLocalBounds();
+					const DVec2 l_FullSize = l_Full.size();
+					const DVec2 l_UvMin = (m_CropShown.min - l_Full.min) / l_FullSize;
+					const DVec2 l_UvMax = (m_CropShown.max - l_Full.min) / l_FullSize;
+					m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+					m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen * Affine2::translate(l_Full.center()), .size = Vec2{ l_FullSize }, .dim = 0.35f });
+					m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
+					m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen * Affine2::translate(m_CropShown.center()), .size = Vec2{ m_CropShown.size() }, .uvRect = Vec4{ l_UvMin.x, l_UvMin.y, l_UvMax.x, l_UvMax.y } });
+					continue;
+				}
 				m_Draws.push_back(Draw{ .image = static_cast<uint32_t>(m_ImageDraws.size()) });
-				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_WorldToScreen * l_Object->transform, .size = l_Video->size });
+				m_ImageDraws.push_back(ImageDraw{ .set = l_Lookup.set, .layer = l_Lookup.layer, .localToScreen = l_LocalToScreen, .size = l_Video->size, .uvRect = Vec4{ l_Video->cropMin.x, l_Video->cropMin.y, l_Video->cropMax.x, l_Video->cropMax.y } });
 				continue;
 			}
 			if (const TextData* l_Text = l_Object->text())
