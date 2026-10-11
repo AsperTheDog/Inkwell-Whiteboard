@@ -31,6 +31,7 @@ import wb.doc.object;
 import wb.doc.document;
 import wb.io.blob;
 import wb.net.connection;
+import wb.net.crypto;
 import wb.net.ops;
 import wb.net.protocol;
 import wb.net.replicator;
@@ -214,7 +215,6 @@ private:
 		std::unique_ptr<Connection> connection;
 		PeerState state = PeerState::Handshake;
 		std::chrono::steady_clock::time_point since;
-		std::array<uint8_t, 16> nonce{};
 		std::string address;
 		UserInfo info; // host side: who this peer is once joined
 		bool challenged = false; // client side: the Hello has been sent
@@ -283,7 +283,7 @@ private:
 	void clientFrame(Peer& p_Peer, Frame& p_Frame);
 	void clientSnapshot(Peer& p_Peer, const Frame& p_Frame);
 	void applyRemoteOps(std::span<const Op> p_Ops, uint32_t p_From);
-	std::unique_ptr<Connection> makeConnection(Socket p_Socket, uint32_t p_Id);
+	std::unique_ptr<Connection> makeConnection(Socket p_Socket, Connection::Role p_Role, uint32_t p_Id);
 
 	// Pictures and videos: asking for the ones objects use but we lack, serving requests, receiving pieces
 	void wantAssets(Peer& p_Source, std::span<const ObjectId> p_Objects);
@@ -339,7 +339,9 @@ private:
 
 	Role m_Role = Role::None;
 	LinkState m_State = LinkState::Offline;
-	std::string m_Password;
+	std::string m_Password; // client side: until the host's Challenge arrives and the key is made from it
+	crypto::Salt m_Salt{};  // host side: sent to everybody who connects
+	crypto::PasswordKey m_PasswordKey;
 	std::string m_Name;
 	uint16_t m_LocalSlot = 0;
 	uint16_t m_ListenPort = 0;

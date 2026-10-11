@@ -1,9 +1,12 @@
 // The messages two Inkwell instances exchange. Every message is one frame: u32 payload size, u8 type, payload (little
 // endian). Everything that arrives is untrusted: sizes are capped before anything is allocated.
 //
-//   host -> client   Challenge  (nonce)
-//   client -> host   Hello      (version, name, SHA-256(nonce + password))
-//   host -> client   Welcome    (your slot, the users)   or   Reject (reason)
+// All of it travels inside the encrypted channel of wb.net.connection, which swaps its own two key frames first. These
+// are the messages after that:
+//
+//   host -> client   Challenge  (the salt of the password key)
+//   client -> host   Hello      (version, name, proof of the password bound to the key exchange)
+//   host -> client   Welcome    (your slot, the users, the host's own proof)   or   Reject (reason)
 //   host -> client   Snapshot*  (the board, in chunks; the last one is flagged)
 //   both ways        Ops        (a batch of edits, in order)
 //   host -> clients  UserJoined / UserLeft
@@ -21,11 +24,11 @@ export module wb.net.protocol;
 import wb.doc.object;
 import wb.net.ops;
 import wb.net.wire;
-import wb.util.sha256;
+import wb.net.crypto;
 
 export namespace wb::net
 {
-inline constexpr uint16_t PROTOCOL_VERSION = 1;
+inline constexpr uint16_t PROTOCOL_VERSION = 2;
 // Before the password has been checked a peer may only send tiny frames
 inline constexpr uint32_t MAX_HANDSHAKE_FRAME = 1024;
 // One frame: room for the largest single object plus its framing
@@ -79,18 +82,19 @@ struct UserInfo
 
 struct Challenge
 {
-	std::array<uint8_t, 16> nonce{};
+	crypto::Salt salt{}; // fixed for the whole session
 };
 struct Hello
 {
 	uint16_t version = PROTOCOL_VERSION;
 	std::string name;
-	Sha256Digest proof{};
+	crypto::Digest proof{};
 };
 struct Welcome
 {
 	uint16_t slot = 0;
 	std::vector<UserInfo> users; // everybody including the receiver, the host first
+	crypto::Digest proof{};      // the host shows it knows the password too
 };
 struct Reject
 {
@@ -166,8 +170,6 @@ struct AssetChunk
 	std::vector<uint8_t> bytes;
 };
 
-// SHA-256 of the nonce followed by the UTF-8 password
-[[nodiscard]] Sha256Digest passwordProof(const std::array<uint8_t, 16>& p_Nonce, const std::string& p_Password);
 // Trims, drops control characters and cuts at MAX_NAME_BYTES without splitting a UTF-8 sequence; never empty
 [[nodiscard]] std::string sanitizeName(const std::string& p_Name);
 

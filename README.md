@@ -15,7 +15,7 @@ Windows and Linux.
 - Laser pointer with a fading trail
 - Undo/redo, autosave with recovery, save file export/import, PNG export
 - Light and dark themes
-- Live collaboration over the network: shared editing, remote pointers, people list, live pen strokes, shared video playback
+- Live collaboration over the network, encrypted: shared editing, remote pointers, people list, live pen strokes, shared video playback
 
 ## Collaborating
 
@@ -30,7 +30,12 @@ One person hosts, the others join. Open **Collaborate** in the top bar.
 
 **Reaching the host.** The host needs an address the others can reach: the same local network, a VPN such as Tailscale or ZeroTier (easiest, nothing to open), or a router port forward to the chosen port. The host's firewall must allow the app.
 
-**Security, plainly.** Traffic is plain TCP and is **not encrypted**. The password is never sent as text (it is used in a challenge-response), but anyone who can watch the connection can read the board. Use a local network or a VPN, and treat the password as a door lock, not a vault. The host checks everything clients send (sizes, ids, locks, rates) and treats them as untrusted, but anybody with the password can edit and delete anything on the board that is not locked. Anything you load or receive passes through the same validation as opening a file.
+**Security, plainly.** Every connection is encrypted and tamper-proof: each side makes a throwaway X25519 key pair, the traffic is sealed with ChaCha20-Poly1305 (via [Monocypher](https://monocypher.org)), and the keys are never reused, so a recording of the traffic stays unreadable even if a password leaks later. The key exchange alone cannot tell who is on the other end, so the **password** does that: both sides prove they know it (stretched with Argon2id and tied to this exact key exchange), which stops anybody sitting between you and the host from joining the two. That has consequences worth knowing:
+- Choose a password that is hard to guess. Somebody who intercepts the connection cannot read it, but can try guesses against what they saw; a long password makes that hopeless, a short one does not.
+- A session with an **empty password** is still encrypted against eavesdroppers, but cannot be told apart from an impostor in the middle.
+- Hosts and clients need the same Inkwell version; older versions cannot talk to encrypted sessions.
+
+The host checks everything clients send (sizes, ids, locks, rates) and treats them as untrusted, but anybody with the password can edit and delete anything on the board that is not locked. Anything you load or receive passes through the same validation as opening a file.
 
 **Limits worth knowing.** Up to 64 people; files of any size that fit on the disk (a big one arrives in a temporary file on the receiving computer, which needs the room); interrupted file transfers restart from the beginning; the host's machine is the hub, so the session ends for everybody when the host stops.
 

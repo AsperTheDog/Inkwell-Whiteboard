@@ -2,6 +2,7 @@
 
 add_library(wb_core STATIC)
 target_link_libraries(wb_core PUBLIC GLM)
+target_link_libraries(wb_core PRIVATE Monocypher)
 
 file(GLOB_RECURSE wb_core_SOURCES_0 CONFIGURE_DEPENDS
     "src/*.cpp"
@@ -15,7 +16,7 @@ target_sources(wb_core PUBLIC
         ${wb_core_MODULES_1}
 )
 if(WIN32)
-    target_link_libraries(wb_core PUBLIC ws2_32)
+    target_link_libraries(wb_core PUBLIC ws2_32 bcrypt)
 endif()
 target_compile_options(wb_core PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:MSVC>>:/W4>")
 target_compile_options(wb_core PRIVATE "$<$<BOOL:$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wall;-Wextra;-Wpedantic>")

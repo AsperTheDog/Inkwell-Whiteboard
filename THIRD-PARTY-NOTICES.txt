@@ -757,3 +757,12 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
+
+------------------------------------------------------------------------------
+Monocypher (BSD-2-Clause or CC0)  https://monocypher.org
+------------------------------------------------------------------------------
+
+Used for the encrypted collaboration channel (X25519, ChaCha20-Poly1305,
+BLAKE2b, Argon2id). Source in vendor/monocypher; see vendor/monocypher/LICENCE.md
+for the full licence texts. Copyright (c) 2017-2023, Loup Vaillant, Michael
+Savage, Fabio Scotoni.

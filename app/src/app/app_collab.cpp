@@ -482,7 +482,7 @@ void App::buildCollabDialog()
 	}
 
 	const bool l_Host = l_Kind == CollabDialog::Host;
-	const std::string l_Note = l_Host ? "Share your address and this port with the people who should join. Nothing is encrypted: use a trusted network or a VPN. Everyone with the password can edit this board."
+	const std::string l_Note = l_Host ? "Share your address and this port with the people who should join. The connection is encrypted; the password also proves who is who, so choose one that is hard to guess. Everyone with the password can edit this board."
 	                                  : "Joining replaces the board you have open with the host's.";
 	const std::vector<std::string> l_NoteLines = m_Ui.font().wrap(l_Note, l_NotePx, l_InnerWidth);
 	const float l_Height = l_Pad + l_TitleBlock + 3.f * l_FieldBlock + l_NoteLine * static_cast<float>(l_NoteLines.size()) + m_Ui.px(16.f) + l_ButtonHeight + l_Pad;

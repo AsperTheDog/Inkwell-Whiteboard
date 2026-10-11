@@ -14,7 +14,7 @@ module wb.net.protocol;
 import wb.doc.object;
 import wb.net.ops;
 import wb.net.wire;
-import wb.util.sha256;
+import wb.net.crypto;
 
 namespace wb::net
 {
@@ -44,13 +44,6 @@ bool finished(const ByteReader& p_Reader)
 }
 } // namespace
 
-Sha256Digest passwordProof(const std::array<uint8_t, 16>& p_Nonce, const std::string& p_Password)
-{
-	std::vector<uint8_t> l_Input(p_Nonce.begin(), p_Nonce.end());
-	l_Input.insert(l_Input.end(), p_Password.begin(), p_Password.end());
-	return sha256(l_Input);
-}
-
 std::string sanitizeName(const std::string& p_Name)
 {
 	std::string l_Clean;
@@ -77,7 +70,7 @@ std::string sanitizeName(const std::string& p_Name)
 std::vector<uint8_t> encode(const Challenge& p_Message)
 {
 	ByteWriter l_Writer;
-	l_Writer.raw(p_Message.nonce.data(), p_Message.nonce.size());
+	l_Writer.raw(p_Message.salt.data(), p_Message.salt.size());
 	return l_Writer.take();
 }
 
@@ -97,6 +90,7 @@ std::vector<uint8_t> encode(const Welcome& p_Message)
 	l_Writer.u32(static_cast<uint32_t>(p_Message.users.size()));
 	for (const UserInfo& l_User : p_Message.users)
 		writeUser(l_Writer, l_User);
+	l_Writer.raw(p_Message.proof.data(), p_Message.proof.size());
 	return l_Writer.take();
 }
 
@@ -141,10 +135,10 @@ std::vector<uint8_t> encode(const UserLeft& p_Message)
 bool decode(const std::span<const uint8_t> p_Payload, Challenge& p_Message)
 {
 	ByteReader l_Reader(p_Payload);
-	const std::span<const uint8_t> l_Nonce = l_Reader.take(p_Message.nonce.size());
+	const std::span<const uint8_t> l_Salt = l_Reader.take(p_Message.salt.size());
 	if (!l_Reader.ok())
 		return false;
-	std::copy(l_Nonce.begin(), l_Nonce.end(), p_Message.nonce.begin());
+	std::copy(l_Salt.begin(), l_Salt.end(), p_Message.salt.begin());
 	return finished(l_Reader);
 }
 
@@ -175,6 +169,10 @@ bool decode(const std::span<const uint8_t> p_Payload, Welcome& p_Message)
 			return false;
 		p_Message.users.push_back(std::move(l_User));
 	}
+	const std::span<const uint8_t> l_Proof = l_Reader.take(p_Message.proof.size());
+	if (!l_Reader.ok())
+		return false;
+	std::copy(l_Proof.begin(), l_Proof.end(), p_Message.proof.begin());
 	return finished(l_Reader);
 }
 

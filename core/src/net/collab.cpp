@@ -12,7 +12,6 @@ module;
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <span>
 #include <string>
 #include <thread>
@@ -30,12 +29,12 @@ import wb.doc.document;
 import wb.io.blob;
 import wb.io.serializer;
 import wb.net.connection;
+import wb.net.crypto;
 import wb.net.ops;
 import wb.net.protocol;
 import wb.net.replicator;
 import wb.net.socket;
 import wb.net.wire;
-import wb.util.sha256;
 
 namespace wb::net
 {
@@ -93,13 +92,6 @@ std::vector<uint8_t> encodeOps(const std::span<const Op> p_Ops)
 	return l_Writer.take();
 }
 
-bool sameDigest(const Sha256Digest& p_A, const Sha256Digest& p_B)
-{
-	uint8_t l_Diff = 0;
-	for (size_t i = 0; i < p_A.size(); ++i)
-		l_Diff |= static_cast<uint8_t>(p_A[i] ^ p_B[i]);
-	return l_Diff == 0;
-}
 } // namespace
 
 CollabSession::CollabSession(Document& p_Document, CollabHooks p_Hooks)
@@ -193,7 +185,10 @@ bool CollabSession::host(const uint16_t p_Port, std::string p_Password, std::str
 	note("Hosting on port " + std::to_string(m_ListenPort) + ". Waiting for people to join");
 	m_Role = Role::Host;
 	m_State = LinkState::Online;
-	m_Password = std::move(p_Password);
+	// Everybody who joins proves the password against this key, which is slow to make, so it is made once
+	crypto::randomBytes(m_Salt);
+	m_PasswordKey = crypto::PasswordKey(p_Password, m_Salt);
+	crypto::wipe({ reinterpret_cast<uint8_t*>(p_Password.data()), p_Password.size() });
 	m_Name = sanitizeName(p_Name);
 	m_LocalSlot = 0;
 	m_NextSlot = 1;
@@ -324,6 +319,7 @@ void CollabSession::stop(const std::string& p_Goodbye)
 	++m_UsersRevision;
 	m_Failures.clear();
 	m_Password.clear();
+	m_PasswordKey = {};
 	m_Role = Role::None;
 	m_State = LinkState::Offline;
 	m_ListenPort = 0;
@@ -548,10 +544,11 @@ void CollabSession::tick()
 	}
 }
 
-std::unique_ptr<Connection> CollabSession::makeConnection(Socket p_Socket, const uint32_t p_Id)
+std::unique_ptr<Connection> CollabSession::makeConnection(Socket p_Socket, const Connection::Role p_Role, const uint32_t p_Id)
 {
 	auto l_Connection = std::make_unique<Connection>(
 		std::move(p_Socket),
+		p_Role,
 		[this, p_Id](Frame p_Frame)
 		{
 			Event l_Event;
@@ -602,7 +599,7 @@ void CollabSession::handleEvent(Event& p_Event)
 		l_Peer.id = m_NextPeerId++;
 		l_Peer.since = Clock::now();
 		const uint32_t l_Id = l_Peer.id;
-		l_Peer.connection = makeConnection(std::move(p_Event.socket), l_Id);
+		l_Peer.connection = makeConnection(std::move(p_Event.socket), Connection::Role::Client, l_Id);
 		m_State = LinkState::Joining;
 		l_Peer.connection->start();
 		m_Peers.emplace(l_Id, std::move(l_Peer));
@@ -637,8 +634,12 @@ void CollabSession::handleEvent(Event& p_Event)
 		const std::string l_Why = " (" + p_Event.text + ")";
 		if (m_State == LinkState::Online)
 			failClient("Disconnected from the host" + l_Why);
-		else if (!l_Peer.challenged && p_Event.text == "Message too large")
+		else if (p_Event.text == "Incompatible version")
+			failClient("This host runs an older version of Inkwell without encrypted sessions. Both sides need the same version.");
+		else if (!l_Peer.challenged && (p_Event.text == "Not an Inkwell peer" || p_Event.text == "Invalid key exchange"))
 			failClient("Reached something on that address and port, but it is not an Inkwell host: it sent data Inkwell does not understand (a web server, a router page or another program is using this port?)");
+		else if (p_Event.text == "Corrupted or tampered data")
+			failClient("The connection to the host delivered data that failed its integrity check, so it was cut. Somebody may be tampering with it.");
 		else if (!l_Peer.challenged)
 			failClient("The connection was accepted but closed before the login started" + l_Why + ". Whatever is on that port is not an Inkwell host, or a router/firewall cut the connection.");
 		else if (!l_Peer.welcomed)
@@ -665,13 +666,10 @@ void CollabSession::hostAccept(Event& p_Event)
 	l_Peer.address = p_Event.socket.peerAddress();
 	note("Incoming connection from " + l_Peer.address);
 	const uint32_t l_Id = l_Peer.id;
-	l_Peer.connection = makeConnection(std::move(p_Event.socket), l_Id);
+	l_Peer.connection = makeConnection(std::move(p_Event.socket), Connection::Role::Server, l_Id);
 
-	std::random_device l_Random;
 	Challenge l_Challenge;
-	for (uint8_t& l_Byte : l_Challenge.nonce)
-		l_Byte = static_cast<uint8_t>(l_Random());
-	l_Peer.nonce = l_Challenge.nonce;
+	l_Challenge.salt = m_Salt;
 	l_Peer.connection->start();
 	l_Peer.connection->send(type(MsgType::Challenge), encode(l_Challenge));
 	m_Peers.emplace(l_Id, std::move(l_Peer));
@@ -734,7 +732,7 @@ void CollabSession::hostHello(Peer& p_Peer, const Frame& p_Frame)
 		reject(p_Peer, "This host runs an incompatible version of Inkwell");
 		return;
 	}
-	if (!sameDigest(l_Hello.proof, passwordProof(p_Peer.nonce, m_Password)))
+	if (!crypto::equal(l_Hello.proof, m_PasswordKey.proof(false, p_Peer.connection->transcript())))
 	{
 		l_Failures.count = l_Now - l_Failures.last < ATTEMPT_WINDOW ? l_Failures.count + 1 : 1;
 		l_Failures.last = l_Now;
@@ -769,6 +767,7 @@ void CollabSession::hostHello(Peer& p_Peer, const Frame& p_Frame)
 	l_Welcome.slot = l_Slot;
 	l_Welcome.users = m_Users;
 	l_Welcome.users.push_back(p_Peer.info);
+	l_Welcome.proof = m_PasswordKey.proof(true, p_Peer.connection->transcript());
 	p_Peer.connection->send(type(MsgType::Welcome), encode(l_Welcome));
 	for (size_t l_Offset = 0; l_Offset < l_Board.size(); l_Offset += SNAPSHOT_CHUNK)
 	{
@@ -1863,10 +1862,13 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		// The host answers the Hello with Welcome and the board straight away. The reader thread would reject those big
 		// frames before the main thread handled Welcome, so the limit has to be raised before the Hello goes out.
 		p_Peer.connection->setMaxFrame(MAX_FRAME);
-		note("Host started the login, sending the name and password proof");
+		note("Encrypted channel ready. Sending the name and password proof");
+		m_PasswordKey = crypto::PasswordKey(m_Password, l_Challenge.salt);
+		crypto::wipe({ reinterpret_cast<uint8_t*>(m_Password.data()), m_Password.size() });
+		m_Password.clear();
 		Hello l_Hello;
 		l_Hello.name = m_Name;
-		l_Hello.proof = passwordProof(l_Challenge.nonce, m_Password);
+		l_Hello.proof = m_PasswordKey.proof(false, p_Peer.connection->transcript());
 		p_Peer.connection->send(type(MsgType::Hello), encode(l_Hello));
 		return;
 	}
@@ -1883,6 +1885,12 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		Welcome l_Welcome;
 		if (!p_Peer.challenged || p_Peer.welcomed || !decode(p_Frame.payload, l_Welcome))
 			return l_Protocol();
+		// Only the real host (or somebody who knows the password) can show this for exactly this key exchange
+		if (!crypto::equal(l_Welcome.proof, m_PasswordKey.proof(true, p_Peer.connection->transcript())))
+		{
+			failClient("The host could not prove it knows the password for this connection. Somebody may be intercepting it.");
+			return;
+		}
 		p_Peer.welcomed = true;
 		note("Password accepted. Receiving the board");
 		m_LocalSlot = l_Welcome.slot;

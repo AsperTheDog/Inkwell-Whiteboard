@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -19,6 +20,8 @@ import wb.doc.history;
 import wb.io.blob;
 import wb.io.serializer;
 import wb.net.collab;
+import wb.net.connection;
+import wb.net.crypto;
 import wb.net.ops;
 import wb.net.protocol;
 import wb.net.socket;
@@ -197,7 +200,7 @@ TEST(Protocol, MessagesRoundTripAndRejectDamage)
 	using namespace wb::net;
 	Hello l_Hello;
 	l_Hello.name = "Ana";
-	l_Hello.proof = wb::sha256(std::span<const uint8_t>{});
+	l_Hello.proof = wb::net::crypto::Digest{ 1, 2, 3 };
 	Hello l_HelloBack;
 	ASSERT_TRUE(decode(encode(l_Hello), l_HelloBack));
 	EXPECT_EQ(l_HelloBack.name, "Ana");
@@ -230,13 +233,16 @@ TEST(Protocol, MessagesRoundTripAndRejectDamage)
 	OpsMessage l_Ops;
 	EXPECT_FALSE(decode(l_Writer.take(), l_Ops));
 
-	// The proof depends on both the nonce and the password
-	std::array<uint8_t, 16> l_NonceA{};
-	std::array<uint8_t, 16> l_NonceB{};
-	l_NonceB[0] = 1;
-	EXPECT_NE(passwordProof(l_NonceA, "pw"), passwordProof(l_NonceB, "pw"));
-	EXPECT_NE(passwordProof(l_NonceA, "pw"), passwordProof(l_NonceA, "pW"));
-	EXPECT_EQ(passwordProof(l_NonceA, "pw"), passwordProof(l_NonceA, "pw"));
+	// The host proof rides along in Welcome
+	l_Welcome.proof[5] = 0x42;
+	ASSERT_TRUE(decode(encode(l_Welcome), l_WelcomeBack));
+	EXPECT_EQ(l_WelcomeBack.proof, l_Welcome.proof);
+
+	Challenge l_Challenge;
+	l_Challenge.salt[3] = 9;
+	Challenge l_ChallengeBack;
+	ASSERT_TRUE(decode(encode(l_Challenge), l_ChallengeBack));
+	EXPECT_EQ(l_ChallengeBack.salt, l_Challenge.salt);
 }
 
 TEST(Protocol, NamesAreCleaned)
@@ -1109,4 +1115,117 @@ TEST(Collab, ClientsCannotForgeIdsOrWipeTheBoard)
 	pumpUntil({ &l_Host, &l_Ana }, [] { return false; }, 400);
 	EXPECT_EQ(l_Host.doc.size(), 1u);
 	EXPECT_EQ(l_Host.doc.find(0x1234), nullptr);
+}
+
+namespace
+{
+// Somebody between a client and a host who completes a key exchange with each (they can read and change everything on
+// the way) but does not know the password
+struct ManInTheMiddle
+{
+	wb::net::Socket listener;
+	std::unique_ptr<wb::net::Connection> towardClient;
+	std::unique_ptr<wb::net::Connection> towardHost;
+	std::atomic<int> forwarded{ 0 };
+	std::string hostSaid;
+
+	bool start(const uint16_t p_HostPort)
+	{
+		using wb::net::Connection;
+		std::string l_Error;
+		listener = wb::net::Socket::listenTcp(0, l_Error);
+		if (!listener.valid())
+			return false;
+		std::atomic<bool> l_Cancel{ false };
+		wb::net::Socket l_ToHost = wb::net::Socket::connectTcp("127.0.0.1", p_HostPort, 3000, l_Cancel, l_Error);
+		if (!l_ToHost.valid())
+			return false;
+		towardHost = std::make_unique<Connection>(std::move(l_ToHost), Connection::Role::Client, [this](wb::net::Frame p_Frame)
+		{
+			++forwarded;
+			if (p_Frame.type == static_cast<uint8_t>(wb::net::MsgType::Reject))
+			{
+				wb::net::Reject l_Reject;
+				if (wb::net::decode(p_Frame.payload, l_Reject))
+					hostSaid = l_Reject.reason;
+			}
+			if (towardClient)
+				towardClient->send(p_Frame.type, std::move(p_Frame.payload));
+		}, [](const std::string&) {});
+		towardHost->setMaxFrame(1u << 24);
+		return true;
+	}
+	void accept()
+	{
+		using wb::net::Connection;
+		wb::net::Socket l_FromClient = listener.accept(3000);
+		ASSERT_TRUE(l_FromClient.valid());
+		towardClient = std::make_unique<Connection>(std::move(l_FromClient), Connection::Role::Server, [this](wb::net::Frame p_Frame)
+		{
+			++forwarded;
+			towardHost->send(p_Frame.type, std::move(p_Frame.payload));
+		}, [](const std::string&) {});
+		towardClient->setMaxFrame(1u << 24);
+		towardClient->start();
+		towardHost->start();
+	}
+};
+} // namespace
+
+TEST(Collab, SomebodyInTheMiddleWhoDoesNotKnowThePasswordCannotJoinThemIn)
+{
+	Node l_Host;
+	Node l_Ana;
+	l_Host.doc.insert(makeStroke(l_Host.doc, 1.f));
+	std::string l_Error;
+	ASSERT_TRUE(l_Host.session->host(0, "secret", "Host", l_Error));
+
+	ManInTheMiddle l_Mallory;
+	ASSERT_TRUE(l_Mallory.start(l_Host.session->listenPort()));
+	l_Ana.session->join("127.0.0.1", l_Mallory.listener.localPort(), "secret", "Ana"); // the right password, the wrong road
+	std::thread l_Accept([&] { l_Mallory.accept(); });
+	const bool l_Failed = pumpUntil({ &l_Host, &l_Ana }, [&] { return !l_Ana.session->active(); });
+	l_Accept.join();
+	ASSERT_TRUE(l_Failed);
+	// The host saw a proof for a different key exchange and refused it; nothing of the board reached Ana
+	EXPECT_EQ(l_Mallory.hostSaid, "Wrong password");
+	EXPECT_EQ(l_Host.session->users().size(), 1u);
+	EXPECT_TRUE(l_Ana.doc.empty());
+}
+
+TEST(Collab, AHostThatDoesNotKnowThePasswordIsNotTrusted)
+{
+	using wb::net::Connection;
+	std::string l_Error;
+	wb::net::Socket l_Listener = wb::net::Socket::listenTcp(0, l_Error);
+	ASSERT_TRUE(l_Listener.valid());
+
+	// A fake host: completes the key exchange, accepts any proof and welcomes the client with a made-up proof of its own
+	std::unique_ptr<Connection> l_Fake;
+	std::atomic<bool> l_SawHello{ false };
+	Node l_Ana;
+	l_Ana.session->join("127.0.0.1", l_Listener.localPort(), "secret", "Ana");
+	wb::net::Socket l_Accepted;
+	for (int i = 0; i < 100 && !l_Accepted.valid(); ++i)
+		l_Accepted = l_Listener.accept(100);
+	ASSERT_TRUE(l_Accepted.valid());
+	l_Fake = std::make_unique<Connection>(std::move(l_Accepted), Connection::Role::Server, [&](wb::net::Frame p_Frame)
+	{
+		if (p_Frame.type != static_cast<uint8_t>(wb::net::MsgType::Hello))
+			return;
+		l_SawHello = true;
+		wb::net::Welcome l_Welcome;
+		l_Welcome.slot = 1;
+		l_Welcome.users = { wb::net::UserInfo{ .slot = 0, .name = "Fake", .color = 0xFFFFFFFFu, .host = true }, wb::net::UserInfo{ .slot = 1, .name = "Ana", .color = 0xFFFFFFFFu, .host = false } };
+		l_Fake->send(static_cast<uint8_t>(wb::net::MsgType::Welcome), wb::net::encode(l_Welcome)); // proof stays zero
+	}, [](const std::string&) {});
+	l_Fake->setMaxFrame(1u << 20);
+	l_Fake->start();
+	wb::net::Challenge l_Challenge;
+	l_Fake->send(static_cast<uint8_t>(wb::net::MsgType::Challenge), wb::net::encode(l_Challenge));
+
+	ASSERT_TRUE(pumpUntil({ &l_Ana }, [&] { return !l_Ana.session->active(); }));
+	EXPECT_TRUE(l_SawHello.load());
+	ASSERT_FALSE(l_Ana.errors.empty());
+	EXPECT_NE(l_Ana.errors.back().find("prove it knows the password"), std::string::npos) << l_Ana.errors.back();
 }

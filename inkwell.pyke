@@ -44,6 +44,14 @@ target STB():
     def configure(self):
         self.exports.includes = ["//vendor/stb"]
 
+# Monocypher (BSD-2-Clause / CC0): X25519, ChaCha20-Poly1305, BLAKE2b and Argon2 for the collaboration channel. Plain C.
+@StaticLibrary("libs/Monocypher", source_groups=False)
+target Monocypher():
+    def configure(self):
+        self.sources = ["//vendor/monocypher/monocypher.c"]
+        self.exports.includes = ["//vendor/monocypher"]
+        self.cmake += ["enable_language(C)"]
+
 @StaticLibrary("libs/ImGui", source_groups=False)
 target ImGui(PUBLIC SDL3, PUBLIC VulkanDeps):
     def configure(self):
@@ -64,15 +72,15 @@ target ImGui(PUBLIC SDL3, PUBLIC VulkanDeps):
 # ---------------------------------------------------------------------------
 
 @StaticLibrary("core")
-target wb_core(PUBLIC GLM):
+target wb_core(PUBLIC GLM, PRIVATE Monocypher):
     def configure(self):
         self.sources = ["src/**/*.cpp"]
         self.exports.modules = ["src/**/*.cppm"]
         self.warnings = "strict"
-        # Collaboration sockets (wb.net.socket) use Winsock
+        # Collaboration sockets (wb.net.socket) use Winsock; the secure channel's random numbers use bcrypt (Windows)
         self.cmake += [
             "if(WIN32)
-    target_link_libraries(wb_core PUBLIC ws2_32)
+    target_link_libraries(wb_core PUBLIC ws2_32 bcrypt)
 endif()"
         ]
         if compiler == "msvc":
