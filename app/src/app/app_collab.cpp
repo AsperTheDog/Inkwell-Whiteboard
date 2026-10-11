@@ -32,6 +32,7 @@ import wb.math;
 import wb.net.collab;
 import wb.net.protocol;
 import wb.net.socket;
+import wb.net.stream;
 import wb.session;
 import wb.steam;
 import wb.ui.context;
