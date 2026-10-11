@@ -776,13 +776,8 @@ bool Steam::init()
 	Api& l_Api = l_Impl->api;
 	if (l_Problem.empty())
 	{
-		// Without an app id Steam refuses to start the program as one of its own. Setting it here is for testing with the
-		// public test app (480); the released program gets its id from Steam, or from steam_appid.txt.
-		if (const char* l_AppId = SDL_getenv("WB_STEAM_APPID"); l_AppId != nullptr && *l_AppId != '\0')
-		{
-			SDL_setenv_unsafe("SteamAppId", l_AppId, 0);
-			SDL_setenv_unsafe("SteamGameId", l_AppId, 0);
-		}
+		// No app id is chosen here: Steam takes it from steam_appid.txt next to the program (or from Steam itself when it
+		// starts the program), and without one it refuses, which just means no Steam options.
 		char l_Error[1024]{};
 		if (l_Api.InitFlat(l_Error) != 0)
 			l_Problem = l_Error[0] != '\0' ? std::string(l_Error) : std::string("Steam is not running or has no app id for this program");

@@ -42,7 +42,7 @@ If the Steam client is running and its library (`steam_api64.dll` / `libsteam_ap
 - A host can be **listed for everyone** using Inkwell on Steam (the join window shows these sessions, with a refresh button) or **unlisted**, where people need your Steam ID (shown when you host).
 - Hosting on both lets friends join through Steam and others by address in the same session.
 
-Inkwell does not ship or link the Steamworks SDK: the library is loaded only when present. The SDK (which contains `steam_api64.dll` in `redistributable_bin/win64` and `libsteam_api.so` in `redistributable_bin/linux64`) is downloaded from the [Steamworks SDK page](https://partner.steamgames.com/downloads/list), which needs a Steamworks partner account to sign in. To try it before it has its own Steam app id, use Steam's public test app: set `WB_STEAM_APPID=480` (or put `steam_appid.txt` containing `480` next to the program), start Steam, and run `inkwell --steam-selftest` to check the connection. `WB_STEAM=0` turns it off.
+Inkwell does not ship or link the Steamworks SDK: the library is loaded only when present. The SDK (which contains `steam_api64.dll` in `redistributable_bin/win64` and `libsteam_api.so` in `redistributable_bin/linux64`) is downloaded from the [Steamworks SDK page](https://partner.steamgames.com/downloads/list), which needs a Steamworks partner account to sign in. Nothing is set up for you: copy `steam_api64.dll` (or `libsteam_api.so`) next to the program and create a text file named `steam_appid.txt` there that contains your Steam app id (just the number, no extra characters), then start Steam and the program. `inkwell --steam-selftest` checks the connection, and the console says why Steam is unavailable if it is. `WB_STEAM=0` turns it off.
 
 ### Security
 

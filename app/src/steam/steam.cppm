@@ -37,7 +37,7 @@ public:
 	Steam& operator=(const Steam&) = delete;
 
 	// Tries to load the Steam library and reach the running client. Quiet on failure: returns false and nothing else
-	// happens. WB_STEAM=0 skips it; WB_STEAM_APPID=<id> picks the app id when neither steam_appid.txt nor Steam did.
+	// happens. WB_STEAM=0 skips it. The app id comes from steam_appid.txt next to the program, never from here.
 	bool init();
 	[[nodiscard]] bool available() const { return m_Available; }
 	// The signed in person: their Steam name and 64 bit id
