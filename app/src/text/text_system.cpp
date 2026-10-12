@@ -230,8 +230,8 @@ bool TextSystem::buildGlyphs(const TextData& p_Data, std::vector<GpuGlyph>& p_Ou
 		const LaidLine& l_Line = l_Layout.lines[l_Glyph.line];
 		const uint8_t l_Synthetic = static_cast<uint8_t>(p_Data.style & ~m_Fonts.faceStyle(l_Glyph.font));
 		GpuGlyph l_Out{};
-		l_Out.rect[0] = l_Glyph.x + l_Entry->left * l_FontSize - l_HalfWidth;
-		l_Out.rect[1] = l_Line.baseline + l_Entry->top * l_FontSize - l_HalfHeight;
+		l_Out.rect[0] = l_Glyph.x + l_Glyph.xOffset + l_Entry->left * l_FontSize - l_HalfWidth;
+		l_Out.rect[1] = l_Line.baseline - l_Glyph.yOffset + l_Entry->top * l_FontSize - l_HalfHeight;
 		l_Out.rect[2] = l_Entry->width * l_FontSize;
 		l_Out.rect[3] = l_Entry->height * l_FontSize;
 		l_Out.uv[0] = l_Entry->u0;

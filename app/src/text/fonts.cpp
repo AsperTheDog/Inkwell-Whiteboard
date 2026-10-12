@@ -23,6 +23,7 @@ module;
 #include <utility>
 #include <vector>
 #include <SDL3/SDL.h>
+#include <hb.h>
 #include "ui/stb_truetype.hpp"
 
 module wb.text.fonts;
@@ -46,6 +47,17 @@ struct FontRegistry::Face
 	bool embeddable = true;
 	bool bundled = false;
 	float emScale = 0.f; // font units -> ems
+	uint32_t collectionIndex = 0;       // which font of a collection file this is
+	mutable hb_font_t* shaper = nullptr; // HarfBuzz's view of the face, made when first shaped
+
+	Face() = default;
+	Face(const Face&) = delete;
+	Face& operator=(const Face&) = delete;
+	~Face()
+	{
+		if (shaper != nullptr)
+			hb_font_destroy(shaper);
+	}
 };
 
 namespace
@@ -556,6 +568,7 @@ FaceId FontRegistry::load(Source& p_Source, const uint8_t p_Style, const std::st
 	l_Face->style = p_Style;
 	l_Face->embeddable = p_Source.embeddable;
 	l_Face->bundled = p_Source.bundled;
+	l_Face->collectionIndex = p_Source.faceIndex;
 	l_Face->emScale = stbtt_ScaleForMappingEmToPixels(&l_Face->info, 1.f);
 	m_Faces.push_back(std::move(l_Face));
 	p_Source.face = static_cast<FaceId>(m_Faces.size() - 1);
@@ -735,6 +748,39 @@ int FontRegistry::faceStart(const FaceId p_Face) const
 	return p_Face < m_Faces.size() ? m_Faces[p_Face]->info.fontstart : -1;
 }
 
+bool FontRegistry::shape(const FaceId p_Face, const std::string_view p_Text, const size_t p_Begin, const size_t p_End, const bool p_Rtl, const uint32_t p_Script, std::vector<ShapedGlyphEm>& p_Out) const
+{
+	if (p_Face >= m_Faces.size() || p_Begin >= p_End || p_End > p_Text.size())
+		return false;
+	const Face& l_Face = *m_Faces[p_Face];
+	if (l_Face.shaper == nullptr)
+	{
+		hb_blob_t* l_Blob = hb_blob_create(reinterpret_cast<const char*>(l_Face.data.data()), static_cast<unsigned int>(l_Face.data.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+		hb_face_t* l_HbFace = hb_face_create(l_Blob, l_Face.collectionIndex);
+		hb_blob_destroy(l_Blob);
+		l_Face.shaper = hb_font_create(l_HbFace);
+		hb_face_destroy(l_HbFace);
+	}
+	hb_buffer_t* l_Buffer = hb_buffer_create();
+	hb_buffer_add_utf8(l_Buffer, p_Text.data(), static_cast<int>(p_Text.size()), static_cast<unsigned int>(p_Begin), static_cast<int>(p_End - p_Begin));
+	hb_buffer_set_direction(l_Buffer, p_Rtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+	hb_buffer_set_script(l_Buffer, static_cast<hb_script_t>(p_Script));
+	hb_buffer_set_language(l_Buffer, hb_language_get_default());
+	hb_shape(l_Face.shaper, l_Buffer, nullptr, 0);
+	unsigned int l_Count = 0;
+	const hb_glyph_info_t* l_Infos = hb_buffer_get_glyph_infos(l_Buffer, &l_Count);
+	const hb_glyph_position_t* l_Positions = hb_buffer_get_glyph_positions(l_Buffer, &l_Count);
+	const unsigned int l_Units = hb_face_get_upem(hb_font_get_face(l_Face.shaper));
+	const float l_ToEm = l_Units > 0 ? 1.f / static_cast<float>(l_Units) : l_Face.emScale;
+	for (unsigned int g = 0; g < l_Count; ++g)
+	{
+		p_Out.push_back(ShapedGlyphEm{ .glyph = l_Infos[g].codepoint, .advance = static_cast<float>(l_Positions[g].x_advance) * l_ToEm, .xOffset = static_cast<float>(l_Positions[g].x_offset) * l_ToEm,
+			.yOffset = static_cast<float>(l_Positions[g].y_offset) * l_ToEm, .cluster = l_Infos[g].cluster });
+	}
+	hb_buffer_destroy(l_Buffer);
+	return true;
+}
+
 // ------------------------------------------------------------------------------------------------ metrics
 
 FamilyMetrics::FamilyMetrics(FontRegistry& p_Registry, const std::string_view p_Family, const uint8_t p_Style)
@@ -775,5 +821,76 @@ float FamilyMetrics::kerning(const GlyphInfo& p_Left, const uint32_t p_LeftCodep
 LineMetrics FamilyMetrics::lineMetrics() const
 {
 	return m_Registry.lineMetrics(m_Primary.face);
+}
+
+bool FamilyMetrics::shapeRun(const std::string_view p_Text, const size_t p_Begin, const size_t p_End, const bool p_Rtl, std::vector<ShapedGlyph>& p_Out) const
+{
+	if (m_Primary.face == NO_FACE || p_Begin >= p_End)
+		return false;
+	// Split the run where the font or the script changes: a character the family lacks comes from a fallback font
+	struct Piece
+	{
+		size_t begin;
+		size_t end;
+		FaceId face;
+		hb_script_t script;
+	};
+	std::vector<Piece> l_Pieces;
+	const std::string_view l_Slice = p_Text.substr(0, p_End);
+	for (size_t l_Index = p_Begin; l_Index < p_End;)
+	{
+		const size_t l_Start = l_Index;
+		const uint32_t l_Code = decodeNext(l_Slice, l_Index);
+		FaceId l_Face = l_Pieces.empty() ? m_Primary.face : l_Pieces.back().face;
+		hb_script_t l_Script = hb_unicode_script(hb_unicode_funcs_get_default(), l_Code);
+		const bool l_Neutral = l_Script == HB_SCRIPT_COMMON || l_Script == HB_SCRIPT_INHERITED || l_Script == HB_SCRIPT_UNKNOWN;
+		if (!isFormatting(l_Code) && !isCombining(l_Code))
+		{
+			if (m_Registry.glyphIndex(m_Primary.face, l_Code) != 0)
+			{
+				l_Face = m_Primary.face;
+			}
+			else
+			{
+				const FaceId l_Fallback = m_Registry.fallbackFor(l_Code, m_Style);
+				l_Face = l_Fallback != NO_FACE ? l_Fallback : m_Primary.face;
+			}
+		}
+		if (l_Neutral && !l_Pieces.empty())
+			l_Script = l_Pieces.back().script; // punctuation and marks take the script of what they follow
+		if (!l_Pieces.empty() && l_Pieces.back().face == l_Face && (l_Neutral || l_Pieces.back().script == l_Script))
+		{
+			l_Pieces.back().end = l_Index;
+			continue;
+		}
+		l_Pieces.push_back(Piece{ l_Start, l_Index, l_Face, l_Neutral && l_Pieces.empty() ? HB_SCRIPT_LATIN : l_Script });
+	}
+
+	const bool l_Synthetic = (m_Style & TextStyle::Bold) != 0;
+	std::vector<FontRegistry::ShapedGlyphEm> l_Glyphs;
+	for (const Piece& l_Piece : l_Pieces)
+	{
+		l_Glyphs.clear();
+		if (!m_Registry.shape(l_Piece.face, p_Text, l_Piece.begin, l_Piece.end, p_Rtl, static_cast<uint32_t>(l_Piece.script), l_Glyphs))
+			return false;
+		if (p_Rtl)
+			std::ranges::reverse(l_Glyphs); // drawing order back to reading order
+		const bool l_Bold = l_Synthetic && (m_Registry.faceStyle(l_Piece.face) & TextStyle::Bold) == 0;
+		for (size_t g = 0; g < l_Glyphs.size(); ++g)
+		{
+			// The characters of a glyph run up to the next glyph's cluster
+			size_t l_Next = g + 1;
+			while (l_Next < l_Glyphs.size() && l_Glyphs[l_Next].cluster == l_Glyphs[g].cluster)
+				++l_Next;
+			const uint32_t l_End = l_Next < l_Glyphs.size() ? l_Glyphs[l_Next].cluster : static_cast<uint32_t>(l_Piece.end);
+			if (l_End <= l_Glyphs[g].cluster)
+				return false; // clusters out of order: leave it to the plain path
+			float l_Advance = l_Glyphs[g].advance;
+			if (l_Bold && l_Advance > 0.f)
+				l_Advance += SYNTHETIC_BOLD_EM;
+			p_Out.push_back(ShapedGlyph{ .font = l_Piece.face, .glyph = l_Glyphs[g].glyph, .advance = l_Advance, .xOffset = l_Glyphs[g].xOffset, .yOffset = l_Glyphs[g].yOffset, .byteBegin = l_Glyphs[g].cluster, .byteEnd = l_End });
+		}
+	}
+	return true;
 }
 } // namespace wb::text

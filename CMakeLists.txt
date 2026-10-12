@@ -95,6 +95,7 @@ enable_testing()
 
 add_subdirectory(libs/SDL3)
 add_subdirectory(libs/Vulkan)
+add_subdirectory(libs/Bidi)
 add_subdirectory(libs/Shaping)
 add_subdirectory(libs/glm)
 add_subdirectory(libs/stb)

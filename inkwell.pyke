@@ -37,10 +37,15 @@ target VulkanDeps():
 
 # HarfBuzz (MIT) shapes text (Arabic letter forms, Indic scripts...) and SheenBidi (Apache-2.0) orders mixed left-to-right
 # and right-to-left text; the interface's glyph atlas uses both for scripts that need them
-@HeaderOnly("libs/Shaping")
-target ShapingDeps():
+@HeaderOnly("libs/Bidi")
+target BidiDeps():
     def configure(self):
-        self.link += ["harfbuzz", "SheenBidi"]
+        self.link += ["SheenBidi"]
+
+@HeaderOnly("libs/Shaping")
+target ShapingDeps(PUBLIC BidiDeps):
+    def configure(self):
+        self.link += ["harfbuzz"]
 
 @HeaderOnly("libs/glm")
 target GLM():
@@ -81,7 +86,7 @@ target ImGui(PUBLIC SDL3, PUBLIC VulkanDeps):
 # ---------------------------------------------------------------------------
 
 @StaticLibrary("core")
-target wb_core(PUBLIC GLM, PRIVATE Monocypher):
+target wb_core(PUBLIC GLM, PRIVATE Monocypher, PRIVATE BidiDeps):
     def configure(self):
         self.sources = ["src/**/*.cpp"]
         self.exports.modules = ["src/**/*.cppm"]

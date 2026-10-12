@@ -4,6 +4,11 @@
 //
 // Fonts are reached through the Metrics interface, so the layout is independent of the font library and can be
 // tested with a fake font. All lengths are in the units of TextData::fontSize; the box origin is its top-left corner.
+//
+// Text with right-to-left scripts (Hebrew, Arabic...) or scripts that need shaping goes through the Unicode
+// Bidirectional Algorithm: lines are broken in reading order, then each line is reordered for display. Glyphs stay in
+// reading order in TextLayout::glyphs; their x says where they are drawn. Text without such scripts takes the plain path
+// and is laid out exactly as before.
 module;
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +53,30 @@ public:
 		return 0.f;
 	}
 	[[nodiscard]] virtual LineMetrics lineMetrics() const = 0;
+
+	// A glyph produced by shapeRun: the glyphs of a cluster of characters. Offsets are in ems, y up.
+	struct ShapedGlyph
+	{
+		uint32_t font = 0;
+		uint32_t glyph = 0;
+		float advance = 0.f;
+		float xOffset = 0.f;
+		float yOffset = 0.f;
+		uint32_t byteBegin = 0; // the characters the glyph draws; consecutive glyphs cover the run without gaps
+		uint32_t byteEnd = 0;
+	};
+	// Shapes p_Text[p_Begin, p_End), which is one direction, into glyphs in reading order (for a right-to-left run:
+	// the first character's glyph first). False when the implementation cannot shape: the layout then takes one glyph
+	// per character from glyph().
+	[[nodiscard]] virtual bool shapeRun(std::string_view p_Text, size_t p_Begin, size_t p_End, bool p_Rtl, std::vector<ShapedGlyph>& p_Out) const
+	{
+		(void)p_Text;
+		(void)p_Begin;
+		(void)p_End;
+		(void)p_Rtl;
+		(void)p_Out;
+		return false;
+	}
 };
 
 struct LayoutOptions
@@ -67,6 +96,9 @@ struct LaidGlyph
 	uint32_t line = 0;
 	float x = 0.f;       // left edge of the advance box, inside the layout box
 	float advance = 0.f; // includes kerning
+	float xOffset = 0.f; // shaping offsets from the pen position (y up), added when drawing
+	float yOffset = 0.f;
+	uint8_t level = 0;   // Unicode embedding level: odd runs right to left
 };
 
 struct LaidLine
@@ -82,6 +114,8 @@ struct LaidLine
 	float baseline = 0.f;
 	float height = 0.f;
 	bool softBreak = false; // wrapped here (no line break character follows)
+	bool bidi = false;      // some glyph is drawn out of reading order (right-to-left): use the direction-aware queries
+	bool rtl = false;       // the paragraph runs right to left
 };
 
 struct TextLayout
@@ -115,4 +149,7 @@ struct CaretPosition
 [[nodiscard]] size_t lineEnd(const TextLayout& p_Layout, size_t p_Byte);
 // Rectangles covering the bytes [p_Begin, p_End), one per line, in layout coordinates
 [[nodiscard]] std::vector<Rect> selectionRects(const TextLayout& p_Layout, size_t p_Begin, size_t p_End);
+// True when the character at p_Byte (the one the caret is before) is in a right-to-left run: the Left arrow then
+// moves forward in the text
+[[nodiscard]] bool rightToLeftAt(const TextLayout& p_Layout, size_t p_Byte);
 } // namespace wb::text

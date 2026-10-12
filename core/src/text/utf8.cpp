@@ -125,7 +125,11 @@ bool isCombining(const uint32_t p_Codepoint)
 {
 	return (p_Codepoint >= 0x0300 && p_Codepoint <= 0x036F) || (p_Codepoint >= 0x1AB0 && p_Codepoint <= 0x1AFF) || (p_Codepoint >= 0x1DC0 && p_Codepoint <= 0x1DFF) ||
 	       (p_Codepoint >= 0x20D0 && p_Codepoint <= 0x20FF) || (p_Codepoint >= 0xFE00 && p_Codepoint <= 0xFE0F) || (p_Codepoint >= 0xFE20 && p_Codepoint <= 0xFE2F) ||
-	       p_Codepoint == 0x200D || (p_Codepoint >= 0x1F3FB && p_Codepoint <= 0x1F3FF) || (p_Codepoint >= 0xE0100 && p_Codepoint <= 0xE01EF);
+	       p_Codepoint == 0x200D || (p_Codepoint >= 0x1F3FB && p_Codepoint <= 0x1F3FF) || (p_Codepoint >= 0xE0100 && p_Codepoint <= 0xE01EF) ||
+	       // Hebrew points and Arabic marks (vowels, shadda...) belong to the letter before them
+	       (p_Codepoint >= 0x0591 && p_Codepoint <= 0x05BD) || p_Codepoint == 0x05BF || p_Codepoint == 0x05C1 || p_Codepoint == 0x05C2 || p_Codepoint == 0x05C4 || p_Codepoint == 0x05C5 || p_Codepoint == 0x05C7 ||
+	       (p_Codepoint >= 0x0610 && p_Codepoint <= 0x061A) || (p_Codepoint >= 0x064B && p_Codepoint <= 0x065F) || p_Codepoint == 0x0670 || (p_Codepoint >= 0x06D6 && p_Codepoint <= 0x06DC) ||
+	       (p_Codepoint >= 0x06DF && p_Codepoint <= 0x06E4) || p_Codepoint == 0x06E7 || p_Codepoint == 0x06E8 || (p_Codepoint >= 0x06EA && p_Codepoint <= 0x06ED);
 }
 
 bool isSpace(const uint32_t p_Codepoint)
@@ -135,7 +139,7 @@ bool isSpace(const uint32_t p_Codepoint)
 
 bool isFormatting(const uint32_t p_Codepoint)
 {
-	return (p_Codepoint >= 0x200B && p_Codepoint <= 0x200F) || (p_Codepoint >= 0x2028 && p_Codepoint <= 0x202E) || (p_Codepoint >= 0x2060 && p_Codepoint <= 0x2064) || p_Codepoint == 0xFEFF || p_Codepoint == 0x00AD;
+	return (p_Codepoint >= 0x200B && p_Codepoint <= 0x200F) || (p_Codepoint >= 0x2028 && p_Codepoint <= 0x202E) || (p_Codepoint >= 0x2060 && p_Codepoint <= 0x2069) || p_Codepoint == 0x061C || p_Codepoint == 0xFEFF || p_Codepoint == 0x00AD;
 }
 
 bool breaksAnywhere(const uint32_t p_Codepoint)

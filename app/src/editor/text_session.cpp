@@ -396,11 +396,17 @@ bool TextSession::key(const SDL_KeyboardEvent& p_Event)
 		return true;
 	}
 	case SDLK_LEFT:
-		m_Editor.moveLeft(l_Shift, l_Ctrl);
-		break;
 	case SDLK_RIGHT:
-		m_Editor.moveRight(l_Shift, l_Ctrl);
+	{
+		// Arrows move on the screen: in a right-to-left run Left goes forward in the text
+		const text::TextLayout& l_Layout = m_TextSystem.layout([&] { TextData l_Data = m_Data; l_Data.text = m_Editor.text(); return l_Data; }());
+		const bool l_Forward = (l_Key == SDLK_RIGHT) != text::rightToLeftAt(l_Layout, m_Editor.caret());
+		if (l_Forward)
+			m_Editor.moveRight(l_Shift, l_Ctrl);
+		else
+			m_Editor.moveLeft(l_Shift, l_Ctrl);
 		break;
+	}
 	case SDLK_UP:
 		moveVertical(-1, l_Shift);
 		l_KeepPreferredX = true;

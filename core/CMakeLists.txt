@@ -3,6 +3,7 @@
 add_library(wb_core STATIC)
 target_link_libraries(wb_core PUBLIC GLM)
 target_link_libraries(wb_core PRIVATE Monocypher)
+target_link_libraries(wb_core PRIVATE BidiDeps)
 
 file(GLOB_RECURSE wb_core_SOURCES_0 CONFIGURE_DEPENDS
     "src/*.cpp"

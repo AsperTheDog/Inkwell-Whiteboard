@@ -672,6 +672,34 @@ void App::driveSmokeTest()
 		m_Editor.setTool(tools::ToolKind::Text);
 		tools::TextState& l_State = m_Editor.textState();
 		m_Editor.brush().color = Color::fromRgba8(0x1F1F1FFFu);
+		if (m_Options.smokeUi == "rtl")
+		{
+			// Right-to-left and mixed text for the screenshot: Hebrew, Arabic, English islands, numbers, wrapping
+			m_Editor.selectAll();
+			m_Editor.deleteSelection();
+			m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+			l_State = { .family = "Inter", .style = 0, .sizePoints = 30.f, .align = TextAlign::Left };
+			l_Click(l_C + Vec2{ -560.f * l_S, -300.f * l_S });
+			m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd, \u05d6\u05d4 Inkwell 2026"));
+			l_Key(SDLK_ESCAPE);
+			l_Click(l_C + Vec2{ -560.f * l_S, -220.f * l_S });
+			m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"\u0645\u0631\u062d\u0628\u064b\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645\u060c \u0647\u0630\u0627 Inkwell"));
+			l_Key(SDLK_ESCAPE);
+			l_Click(l_C + Vec2{ -560.f * l_S, -140.f * l_S });
+			m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"File: \u0644\u0648\u062d\u0629 \u062c\u062f\u064a\u062f\u0629 (3) done"));
+			l_Key(SDLK_ESCAPE);
+			l_State = { .family = "Inter", .style = 0, .sizePoints = 26.f, .align = TextAlign::Right };
+			l_Click(l_C + Vec2{ 120.f * l_S, -300.f * l_S });
+			m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"\u062a\u0639\u0630\u0651\u0631 \u062d\u0641\u0638 \u0627\u0644\u0644\u0648\u062d\u0629. \u0645\u0627 \u0632\u0627\u0644\u062a \u0627\u0644\u0644\u0648\u062d\u0629 \u0642\u064a\u062f \u0627\u0644\u062d\u0641\u0638 \u0648\u0633\u062a\u0638\u0647\u0631 \u0627\u0644\u0646\u062a\u064a\u062c\u0629 \u0628\u0639\u062f \u0642\u0644\u064a\u0644 (3 \u0645\u0644\u0641\u0627\u062a)"));
+			m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.wrapWidth = 380.f; });
+			l_Key(SDLK_ESCAPE);
+			l_Click(l_C + Vec2{ 120.f * l_S, -20.f * l_S });
+			m_Editor.handleTextInput(reinterpret_cast<const char*>(u8"\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05d4\u05d9\u05d4 \u05dc\u05e9\u05de\u05d5\u05e8 \u05d0\u05ea \u05d4\u05dc\u05d5\u05d7. \u05d4\u05dc\u05d5\u05d7 \u05e2\u05d3\u05d9\u05d9\u05df \u05e0\u05e9\u05de\u05e8 \u05d5\u05d4\u05ea\u05d5\u05e6\u05d0\u05d4 \u05ea\u05d5\u05e4\u05d9\u05e2 \u05d1\u05e2\u05d5\u05d3 \u05e8\u05d2\u05e2 (3 \u05e7\u05d1\u05e6\u05d9\u05dd)"));
+			m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.wrapWidth = 380.f; });
+			l_Key(SDLK_ESCAPE);
+			return;
+		}
+
 
 		l_State = { .family = "Inter", .style = 0, .sizePoints = 28.f, .align = TextAlign::Left };
 		l_Click(l_C + Vec2{ -560.f * l_S, -300.f * l_S });
@@ -720,6 +748,8 @@ void App::driveSmokeTest()
 	}
 	case 19:
 	{
+		if (m_Options.smokeUi == "rtl")
+			return;
 		const size_t l_Added = m_Editor.document().size() - s_SmokeObjectsBefore;
 		const size_t l_Steps = m_Editor.history().undoCount() - s_SmokeUndoBefore;
 		if (l_Added != 7 || l_Steps != 7 || m_Editor.textEditing())
@@ -1188,11 +1218,11 @@ void App::driveSmokeTest()
 			m_Editor.setTool(tools::ToolKind::Text);
 			openTextPopup(true);
 		}
-		else if (l_Ui == "textedit" || l_Ui == "textstyle")
+		else if (l_Ui == "textedit" || l_Ui == "textstyle" || l_Ui == "rtl")
 		{
 			m_Editor.setTool(tools::ToolKind::Select);
 			m_Editor.selection().set(std::vector<ObjectId>{ m_Editor.document().objects().back()->id });
-			if (l_Ui == "textedit")
+			if (l_Ui == "textedit" || l_Ui == "rtl")
 			{
 				m_Editor.beginEditingSelectedText();
 				for (int i = 0; i < 6; ++i)

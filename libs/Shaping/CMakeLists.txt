@@ -3,6 +3,6 @@
 add_library(ShapingDeps INTERFACE)
 
 target_link_libraries(ShapingDeps INTERFACE
+    BidiDeps
     "harfbuzz"
-    "SheenBidi"
 )

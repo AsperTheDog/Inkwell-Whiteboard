@@ -123,6 +123,20 @@ public:
 	// Fonts that ship with the app are never embedded in boards
 	[[nodiscard]] bool isBundled(FaceId p_Face) const;
 
+	// A glyph as shaping reports it: font units already converted to ems
+	struct ShapedGlyphEm
+	{
+		uint32_t glyph = 0;
+		float advance = 0.f;
+		float xOffset = 0.f;
+		float yOffset = 0.f;
+		uint32_t cluster = 0; // byte offset in the text of the first character it draws
+	};
+	// Shapes p_Text[p_Begin, p_End) with one face (HarfBuzz): letter forms, ligatures, kerning and mark positions.
+	// p_Script is a HarfBuzz script tag. Glyphs come in drawing order, which for a right-to-left run is the reverse of
+	// reading order. False for an unknown face.
+	bool shape(FaceId p_Face, std::string_view p_Text, size_t p_Begin, size_t p_End, bool p_Rtl, uint32_t p_Script, std::vector<ShapedGlyphEm>& p_Out) const;
+
 	// The parsed font of a face, for code that draws glyphs itself (the font picker preview). The pointer stays valid
 	// for the registry's lifetime. Returns nullptr and 0 for an unknown face.
 	[[nodiscard]] const uint8_t* faceData(FaceId p_Face, size_t& p_Size) const;
@@ -188,6 +202,8 @@ public:
 	[[nodiscard]] GlyphInfo glyph(uint32_t p_Codepoint) const override;
 	[[nodiscard]] float kerning(const GlyphInfo& p_Left, uint32_t p_LeftCodepoint, const GlyphInfo& p_Right, uint32_t p_RightCodepoint) const override;
 	[[nodiscard]] LineMetrics lineMetrics() const override;
+	// Shapes a single-direction run with HarfBuzz; each run of one font and script is shaped on its own
+	[[nodiscard]] bool shapeRun(std::string_view p_Text, size_t p_Begin, size_t p_End, bool p_Rtl, std::vector<ShapedGlyph>& p_Out) const override;
 
 	[[nodiscard]] const ResolvedFace& primary() const { return m_Primary; }
 
