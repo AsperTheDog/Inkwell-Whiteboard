@@ -127,7 +127,7 @@ void App::buildMenu()
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
-	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 14, 12, 2, 1 };
+	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 16, 12, 2, 1 };
 	static constexpr std::array<const char*, 5> TITLES{ "menu.section.board", "menu.section.edit", "menu.section.view", "menu.section.collaborate", "menu.section.help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
@@ -144,6 +144,7 @@ void App::buildMenu()
 	float l_Y = l_Rect.min.y + l_Pad;
 	const float l_Left = l_Rect.min.x + l_Pad;
 	const float l_Inner = l_Width - l_Pad * 2.f;
+	m_Ui.draw().pushClip(l_Rect); // in a short window nothing is drawn past the panel
 
 	const auto l_Row = [&](const ui::Icon p_Icon, const char* p_Id, const char* p_Shortcut, const bool p_Enabled = true, const bool p_Checked = false) -> bool
 	{
@@ -356,6 +357,7 @@ void App::buildMenu()
 			break;
 		}
 	}
+	m_Ui.draw().popClip();
 	m_Ui.draw().setOpacity(1.f);
 	if (l_Close)
 		closePopup("menu item used");
@@ -488,7 +490,7 @@ void App::buildSettings()
 	const float l_SectionHeight = m_Ui.px(34.f);
 	const float l_ButtonsHeight = m_Ui.px(40.f);
 	const float l_ListRow = m_Ui.px(34.f);
-	const float l_LanguageBlock = l_SectionHeight + l_ButtonsHeight + m_Ui.px(16.f) + (m_LanguageListOpen ? l_ListRow * static_cast<float>(m_Languages.size() + 1) + m_Ui.px(8.f) : 0.f);
+	const float l_LanguageBlock = l_SectionHeight + l_ButtonsHeight + m_Ui.px(16.f);
 	const float l_Content = l_LanguageBlock + l_SectionHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SizeHint.size()) + m_Ui.px(16.f)
 		+ l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_ModeHint.size()) + m_Ui.px(16.f)
 		+ l_SectionHeight + l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SpaceHint.size());
@@ -518,30 +520,14 @@ void App::buildSettings()
 	l_Y += l_SectionHeight;
 	const std::string l_Current = currentLanguage();
 	const auto l_CurrentInfo = std::ranges::find(m_Languages, l_Current, &LanguageInfo::code);
-	if (m_Ui.button("settings.language", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), l_CurrentInfo != m_Languages.end() ? l_CurrentInfo->name : l_Current, ui::ButtonStyle::Secondary, true, m_LanguageListOpen ? ui::Icon::ChevronUp : ui::Icon::ChevronDown))
-		m_LanguageListOpen = !m_LanguageListOpen;
-	l_Y += l_ButtonsHeight;
-	if (m_LanguageListOpen)
+	const Rect2 l_LanguageButton = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight });
+	if (m_Ui.button("settings.language", l_LanguageButton, l_CurrentInfo != m_Languages.end() ? l_CurrentInfo->name : l_Current, ui::ButtonStyle::Secondary, true, m_LanguageListOpen ? ui::Icon::ChevronUp : ui::Icon::ChevronDown))
 	{
-		l_Y += m_Ui.px(8.f);
-		// The first entry follows the system's language (and stays so when the system's language changes)
-		if (m_Ui.menuRow("settings.language.auto", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ListRow }), ui::Icon::None, tr("settings.language.auto"), "", true, m_LanguageSetting.empty()))
-		{
-			setUiLanguage("");
-			m_LanguageListOpen = false;
-		}
-		l_Y += l_ListRow;
-		for (const LanguageInfo& l_Info : m_Languages)
-		{
-			if (m_Ui.menuRow("settings.language." + l_Info.code, Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ListRow }), ui::Icon::None, l_Info.name, "", true, l_Info.code == l_Current && !m_LanguageSetting.empty()))
-			{
-				setUiLanguage(l_Info.code);
-				m_LanguageListOpen = false;
-			}
-			l_Y += l_ListRow;
-		}
+		m_LanguageListOpen = !m_LanguageListOpen;
+		m_LanguageScrollToSelected = m_LanguageListOpen;
 	}
-	l_Y += m_Ui.px(16.f);
+	l_Y += l_ButtonsHeight + m_Ui.px(16.f);
+	m_LanguageListRect = {};
 
 	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, tr("settings.pen"), 12.f, l_Theme.accent);
 	l_Y += l_SectionHeight;
@@ -572,6 +558,82 @@ void App::buildSettings()
 		l_Select.space = l_Space == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
 	l_Y += l_ButtonsHeight + m_Ui.px(8.f);
 	l_Hints(l_SpaceHint);
+
+	// The list of languages floats over the window, under the button (or above it when there is no room below), with
+	// a fixed height: it scrolls when it holds more rows than fit
+	if (m_LanguageListOpen)
+	{
+		const size_t l_Rows = m_Languages.size() + 1; // the first one follows the system's language
+		const float l_ListPad = m_Ui.px(6.f);
+		const float l_Margin = m_Ui.px(EDGE_MARGIN);
+		const float l_Wanted = std::min(l_ListRow * static_cast<float>(l_Rows), l_ListRow * 6.5f) + l_ListPad * 2.f;
+		const float l_Below = l_Viewport.y - l_Margin - l_LanguageButton.max.y - m_Ui.px(6.f);
+		const float l_Above = l_LanguageButton.min.y - m_Ui.px(6.f) - l_Margin;
+		const bool l_GoUp = l_Below < l_Wanted && l_Above > l_Below;
+		const float l_ListHeight = std::min(l_Wanted, l_GoUp ? l_Above : l_Below);
+		const float l_Top = l_GoUp ? l_LanguageButton.min.y - m_Ui.px(6.f) - l_ListHeight : l_LanguageButton.max.y + m_Ui.px(6.f);
+		const Rect2 l_Box = Rect2::fromPosSize(Vec2{ l_LanguageButton.min.x, l_Top }, Vec2{ l_LanguageButton.width(), l_ListHeight });
+		const Rect2 l_View{ Vec2{ l_Box.min.x, l_Box.min.y + l_ListPad }, Vec2{ l_Box.max.x, l_Box.max.y - l_ListPad } };
+		m_Ui.panel(l_Box, m_Ui.px(12.f));
+
+		const float l_ContentHeight = l_ListRow * static_cast<float>(l_Rows);
+		const float l_ViewHeight = l_View.max.y - l_View.min.y;
+		const float l_MaxScroll = std::max(0.f, l_ContentHeight - l_ViewHeight);
+		if (m_LanguageScrollToSelected)
+		{
+			m_LanguageScrollToSelected = false;
+			size_t l_Selected = 0;
+			if (!m_LanguageSetting.empty())
+			{
+				const auto l_It = std::ranges::find(m_Languages, l_Current, &LanguageInfo::code);
+				l_Selected = l_It == m_Languages.end() ? 0 : static_cast<size_t>(l_It - m_Languages.begin()) + 1;
+			}
+			m_LanguageScroll = static_cast<float>(l_Selected) * l_ListRow - l_ViewHeight * 0.5f + l_ListRow * 0.5f;
+		}
+		m_LanguageScroll = std::clamp(m_LanguageScroll, 0.f, l_MaxScroll);
+		const float l_Scroll = m_Ui.anim(ui::Context::id("settings.language.scroll"), m_LanguageScroll, 30.f);
+		// The wheel handler works in window coordinates
+		m_LanguageListRect = m_Ui.rightToLeftLayout() ? Rect2{ Vec2{ l_Viewport.x - l_Box.max.x, l_Box.min.y }, Vec2{ l_Viewport.x - l_Box.min.x, l_Box.max.y } } : l_Box;
+
+		l_Draw.pushClip(l_View);
+		const float l_RowRight = l_View.max.x - l_ListPad - (l_MaxScroll > 0.f ? m_Ui.px(8.f) : 0.f);
+		for (size_t i = 0; i < l_Rows; ++i)
+		{
+			const float l_RowTop = l_View.min.y + static_cast<float>(i) * l_ListRow - l_Scroll;
+			if (l_RowTop + l_ListRow < l_View.min.y)
+				continue;
+			if (l_RowTop > l_View.max.y)
+				break;
+			const Rect2 l_Full{ Vec2{ l_View.min.x + l_ListPad, l_RowTop }, Vec2{ l_RowRight, l_RowTop + l_ListRow } };
+			const Rect2 l_Visible{ Vec2{ l_Full.min.x, std::max(l_Full.min.y, l_View.min.y) }, Vec2{ l_Full.max.x, std::min(l_Full.max.y, l_View.max.y) } };
+			const bool l_Auto = i == 0;
+			const LanguageInfo* l_Info = l_Auto ? nullptr : &m_Languages[i - 1];
+			const bool l_Checked = l_Auto ? m_LanguageSetting.empty() : (l_Info->code == l_Current && !m_LanguageSetting.empty());
+			// A row cut by the edge only answers inside the visible part
+			const std::string l_Key = l_Auto ? std::string("settings.language.auto") : "settings.language." + l_Info->code;
+			if (m_Ui.menuRow(l_Key, l_Full, ui::Icon::None, l_Auto ? tr("settings.language.auto") : std::string_view(l_Info->name), "", true, l_Checked) && l_Visible.contains(m_Ui.pointerPosition()))
+			{
+				setUiLanguage(l_Auto ? std::string() : l_Info->code);
+				m_LanguageListOpen = false;
+			}
+		}
+		l_Draw.popClip();
+
+		if (l_MaxScroll > 0.f)
+		{
+			const float l_Track = l_ViewHeight - m_Ui.px(8.f);
+			const float l_Thumb = std::max(m_Ui.px(28.f), l_Track * l_ViewHeight / l_ContentHeight);
+			const float l_ThumbTop = l_View.min.y + m_Ui.px(4.f) + (l_Track - l_Thumb) * (l_Scroll / l_MaxScroll);
+			const Rect2 l_Grab = Rect2::fromPosSize(Vec2{ l_View.max.x - m_Ui.px(14.f), l_ThumbTop }, Vec2{ m_Ui.px(14.f), l_Thumb });
+			const uint32_t l_Id = ui::Context::id("settings.language.scrollbar");
+			const ui::Interaction l_Action = m_Ui.interact(l_Id, l_Grab);
+			if (l_Action.held)
+				m_LanguageScroll = std::clamp((m_Ui.pointerPosition().y - l_View.min.y - l_Thumb * 0.5f) / std::max(l_Track - l_Thumb, 1.f), 0.f, 1.f) * l_MaxScroll;
+			const float l_Emphasis = m_Ui.anim(l_Id + 1, l_Action.hovered || l_Action.held ? 1.f : 0.f, 24.f);
+			const float l_BarWidth = m_Ui.px(3.f + 2.f * l_Emphasis);
+			l_Draw.rect(Rect2::fromPosSize(Vec2{ l_View.max.x - m_Ui.px(7.f) - l_BarWidth * 0.5f, l_ThumbTop }, Vec2{ l_BarWidth, l_Thumb }), l_BarWidth * 0.5f, ui::withAlpha(l_Theme.textMuted, 0.45f + 0.3f * l_Emphasis));
+		}
+	}
 	l_Draw.setOpacity(1.f);
 }
 

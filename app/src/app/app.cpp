@@ -532,6 +532,8 @@ void App::handleInput(const platform::InputEvent& p_Event)
 		const bool l_UiHasPointer = (m_Ui.wantsPointer(l_Wheel->position) || l_ImGuiHasPointer) && !m_Editor.isBusy();
 		if (m_Popup == Popup::Text && m_FontListRect.contains(l_Wheel->position))
 			m_FontScroll -= l_Wheel->delta.y * 34.f * m_Window.displayScale() * (l_Wheel->precise ? 1.f : 2.f);
+		else if (m_LanguageListOpen && m_ShowSettings && m_LanguageListRect.contains(l_Wheel->position))
+			m_LanguageScroll -= l_Wheel->delta.y * 34.f * m_Window.displayScale() * (l_Wheel->precise ? 1.f : 2.f);
 		else if (!l_UiHasPointer)
 			m_Editor.handleWheel(*l_Wheel);
 	}

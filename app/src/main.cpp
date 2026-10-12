@@ -409,7 +409,7 @@ int main(int p_Argc, char** p_Argv)
 #endif
 
 	SDL_SetMainReady();
-	SDL_SetAppMetadata("Inkwell", "1.3.0", "dev.inkwell.app");
+	SDL_SetAppMetadata("Inkwell", "1.3.1", "dev.inkwell.app");
 	wb::platform::InputRouter::configureHints();
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{

@@ -319,6 +319,9 @@ private:
 	std::vector<LanguageInfo> m_Languages;
 	std::string m_LanguageSetting;       // the code the user picked; empty: follow the system language
 	bool m_LanguageListOpen = false;     // the list of languages in the settings window
+	bool m_LanguageScrollToSelected = false;
+	float m_LanguageScroll = 0.f;
+	ui::Rect2 m_LanguageListRect{};      // window coordinates, empty when the list is closed
 
 	gfx::PresentPolicy m_PresentPolicy = gfx::PresentPolicy::VSync;
 	bool m_Running = true;
