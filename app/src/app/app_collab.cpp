@@ -28,6 +28,7 @@ import wb.editor;
 import wb.image.codec;
 import wb.io.blob;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.net.collab;
 import wb.net.protocol;
@@ -284,7 +285,7 @@ void App::initCollab()
 			const std::deque<std::string>& l_Log = m_Collab->diagnostics();
 			for (size_t i = l_Log.size() > 10 ? l_Log.size() - 10 : 0; i < l_Log.size(); ++i)
 				l_Details += '\n' + l_Log[i];
-			showMessage(l_Details.empty() ? p_Text : p_Text + "\n\nConnection log:" + l_Details);
+			showMessage(l_Details.empty() ? p_Text : tr("collab.errorWithLog", { p_Text, l_Details }));
 		}
 		else
 			showToast(p_Text);
@@ -393,7 +394,7 @@ void App::pollCollab()
 		requestRedraw();
 		const uint32_t l_Pending = m_Collab->assetProgress().files;
 		if (m_CollabFilesPending > 0 && l_Pending == 0 && m_Collab->online())
-			showToast("All pictures and videos received");
+			showToast(tr("collab.filesReceived"));
 		m_CollabFilesPending = l_Pending;
 	}
 	if (collabBusy())
@@ -418,7 +419,7 @@ void App::startHosting()
 	{
 		if (!m_Collab->host(l_Port, m_CollabForm.password, m_CollabForm.name, l_Error))
 		{
-			showMessage("Could not start hosting on port " + std::to_string(l_Port) + ".\n\n" + l_Error);
+			showMessage(tr("collab.hostFailed", { std::to_string(l_Port), l_Error }));
 			return;
 		}
 	}
@@ -433,7 +434,7 @@ void App::startHosting()
 		if (!l_Listener)
 		{
 			m_Collab->leave();
-			showMessage("Steam could not start accepting connections. Is Steam still running and signed in?");
+			showMessage(tr("collab.steamListenFailed"));
 			return;
 		}
 		m_Collab->addListener(std::move(l_Listener), "Steam");
@@ -441,9 +442,9 @@ void App::startHosting()
 	}
 	m_CollabDialog = CollabDialog::None;
 	if (l_Steam && !l_Direct)
-		showToast("Hosting through Steam");
+		showToast(tr("collab.hostingSteam"));
 	else
-		showToast("Hosting on port " + std::to_string(m_Collab->listenPort()) + (l_Steam ? " and through Steam" : ""));
+		showToast(tr(l_Steam ? "collab.hostingPortSteam" : "collab.hostingPort", { std::to_string(m_Collab->listenPort()) }));
 }
 
 void App::offerSteamJoin(const uint64_t p_Host)
@@ -455,7 +456,7 @@ void App::offerSteamJoin(const uint64_t p_Host)
 	m_CollabForm.password.clear();
 	m_CollabDialog = CollabDialog::Join;
 	SDL_RaiseWindow(m_Window.handle());
-	showToast("A friend invited you: enter the password to join");
+	showToast(tr("collab.invited"));
 	requestRedraw();
 }
 
@@ -466,10 +467,10 @@ void App::beginJoin()
 		uint64_t l_Host = 0;
 		if (!parseSteamId(m_CollabForm.steamId, l_Host))
 		{
-			showMessage("That is not a valid Steam ID. Use the 17 digit number, a friend code, or a steamcommunity.com/profiles/ link. Custom profile names do not work.");
+			showMessage(tr("collab.badSteamId"));
 			return;
 		}
-		m_Collab->joinWith(m_Steam->connector(l_Host), "Steam user " + std::to_string(l_Host), m_CollabForm.password, m_CollabForm.name);
+		m_Collab->joinWith(m_Steam->connector(l_Host), tr("collab.steamUser", { std::to_string(l_Host) }), m_CollabForm.password, m_CollabForm.name);
 		requestRedraw();
 		return;
 	}
@@ -477,7 +478,7 @@ void App::beginJoin()
 	uint16_t l_Port = 0;
 	if (!net::parseEndpoint(m_CollabForm.address, DEFAULT_PORT, l_Host, l_Port))
 	{
-		showMessage("That is not a valid address.");
+		showMessage(tr("collab.badAddress"));
 		return;
 	}
 	m_Collab->join(l_Host, l_Port, m_CollabForm.password, m_CollabForm.name);
@@ -521,9 +522,9 @@ void App::buildCollabBusy()
 	const float l_InnerWidth = std::min(m_Ui.px(440.f), m_Ui.viewport().x - m_Ui.px(32.f)) - l_Pad * 2.f;
 	const Rect2 l_Card = openCard(m_Ui, "dialog.collab", l_Pad * 2.f + m_Ui.px(26.f) + m_Ui.px(14.f) + m_Ui.px(22.f) + (l_LogShown > 0 ? m_Ui.px(10.f) + l_LogLine * static_cast<float>(l_LogShown) : 0.f) + m_Ui.px(24.f) + m_Ui.px(40.f), l_Fade);
 	float l_Y = l_Card.min.y + l_Pad;
-	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Y + m_Ui.px(13.f) }, "Joining session", 18.f, l_Theme.text);
+	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Y + m_Ui.px(13.f) }, tr("collab.joining"), 18.f, l_Theme.text);
 	l_Y += m_Ui.px(26.f) + m_Ui.px(14.f);
-	const char* l_Text = m_Collab->state() == net::LinkState::Connecting ? "Connecting to the host..." : "Receiving the board...";
+	const std::string& l_Text = tr(m_Collab->state() == net::LinkState::Connecting ? "collab.connecting" : "collab.receivingBoard");
 	l_Draw.text(Vec2{ l_Card.min.x + l_Pad, l_Y + m_Ui.px(11.f) }, l_Text, m_Ui.fontPx(14.f), l_Theme.textMuted);
 	l_Y += m_Ui.px(22.f);
 	if (l_LogShown > 0)
@@ -535,7 +536,7 @@ void App::buildCollabBusy()
 	}
 	l_Y += m_Ui.px(24.f);
 	const float l_ButtonWidth = m_Ui.px(110.f);
-	if (m_Ui.button("collab.cancelJoin", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, m_Ui.px(40.f) }), "Cancel", ui::ButtonStyle::Secondary))
+	if (m_Ui.button("collab.cancelJoin", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, m_Ui.px(40.f) }), tr("common.cancel"), ui::ButtonStyle::Secondary))
 		m_Collab->leave();
 	l_Draw.setOpacity(1.f);
 }
@@ -566,15 +567,15 @@ void App::buildCollabDialog()
 		const Rect2 l_Card = openCard(m_Ui, "dialog.collab", l_Height, l_Fade);
 		const float l_Left = l_Card.min.x + l_Pad;
 		float l_Y = l_Card.min.y + l_Pad;
-		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, "Session", 18.f, l_Theme.text);
+		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, tr("collab.session"), 18.f, l_Theme.text);
 		l_Y += l_TitleBlock;
 		const bool l_Hosting = m_Collab->role() == net::Role::Host;
-		std::string l_Where = !m_Collab->active() ? "Not in a session" : l_Hosting ? (m_Collab->listenPort() != 0 ? "Hosting on port " + std::to_string(m_Collab->listenPort()) + (m_SteamHosting ? " and through Steam" : "") : "Hosting through Steam") : "Connected to the host";
+		std::string l_Where = !m_Collab->active() ? tr("collab.where.none") : l_Hosting ? (m_Collab->listenPort() != 0 ? tr(m_SteamHosting ? "collab.hostingPortSteam" : "collab.hostingPort", { std::to_string(m_Collab->listenPort()) }) : tr("collab.hostingSteam")) : tr("collab.where.client");
 		if (const net::CollabSession::AssetProgress l_Assets = m_Collab->assetProgress(); l_Assets.files > 0)
 		{
-			l_Where += "  -  receiving " + std::to_string(l_Assets.files) + (l_Assets.files == 1 ? " picture/video" : " pictures/videos");
+			l_Where += "  -  " + tr(l_Assets.files == 1 ? "collab.receiving.one" : "collab.receiving.many", { std::to_string(l_Assets.files) });
 			if (l_Assets.expected > 0)
-				l_Where += " (" + std::to_string(l_Assets.received >> 20) + " of " + std::to_string(l_Assets.expected >> 20) + " MiB)";
+				l_Where += " " + tr("collab.receiving.size", { std::to_string(l_Assets.received >> 20), std::to_string(l_Assets.expected >> 20) });
 		}
 		l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(11.f) }, l_Where, m_Ui.fontPx(13.f), l_Theme.textMuted);
 		l_Y += m_Ui.px(22.f) + m_Ui.px(8.f);
@@ -585,11 +586,11 @@ void App::buildCollabDialog()
 			l_Draw.circle(Vec2{ l_Left + m_Ui.px(8.f), l_CenterY }, m_Ui.px(7.f), Color::fromRgba8(l_User.color));
 			std::string l_Tags;
 			if (l_User.host)
-				l_Tags += "host";
+				l_Tags += tr("collab.tag.host");
 			if (l_User.slot == m_Collab->localSlot())
-				l_Tags += l_Tags.empty() ? "you" : ", you";
+				l_Tags += (l_Tags.empty() ? "" : ", ") + tr("collab.tag.you");
 			if (l_User.readOnly)
-				l_Tags += l_Tags.empty() ? "read-only" : ", read-only";
+				l_Tags += (l_Tags.empty() ? "" : ", ") + tr("collab.tag.readOnly");
 			const float l_NameWidth = m_Ui.font().measure(l_User.name, m_Ui.fontPx(14.f));
 			l_Draw.text(Vec2{ l_Left + m_Ui.px(26.f), l_CenterY }, l_User.name, m_Ui.fontPx(14.f), l_Theme.text);
 			if (!l_Tags.empty())
@@ -599,7 +600,7 @@ void App::buildCollabDialog()
 				// Only the host decides who may change the board
 				const float l_ToggleWidth = m_Ui.px(120.f);
 				const Rect2 l_Toggle = Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ToggleWidth, l_CenterY - m_Ui.px(14.f) }, Vec2{ l_ToggleWidth, m_Ui.px(28.f) });
-				if (m_Ui.button("collab.readonly." + std::to_string(l_User.slot), l_Toggle, l_User.readOnly ? "Allow editing" : "Make read-only", ui::ButtonStyle::Secondary))
+				if (m_Ui.button("collab.readonly." + std::to_string(l_User.slot), l_Toggle, tr(l_User.readOnly ? "collab.allowEditing" : "collab.makeReadOnly"), ui::ButtonStyle::Secondary))
 					l_ReadOnlyChange = std::pair<uint16_t, bool>{ l_User.slot, !l_User.readOnly }; // applied below: it rebuilds the list being walked
 			}
 			l_Y += l_RowHeight;
@@ -611,7 +612,7 @@ void App::buildCollabDialog()
 		if (l_LogShown > 0)
 		{
 			l_Y += m_Ui.px(10.f);
-			l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(8.f) }, "Connection log", m_Ui.fontPx(12.5f), l_Theme.textMuted);
+			l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(8.f) }, tr("collab.connectionLog"), m_Ui.fontPx(12.5f), l_Theme.textMuted);
 			l_Y += m_Ui.px(20.f);
 			for (size_t i = l_Log.size() - l_LogShown; i < l_Log.size(); ++i)
 			{
@@ -623,13 +624,13 @@ void App::buildCollabDialog()
 		const float l_ButtonWidth = m_Ui.px(140.f);
 		const Rect2 l_Close = Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(110.f), l_Y }, Vec2{ m_Ui.px(110.f), l_ButtonHeight });
 		const Rect2 l_Leave = Rect2::fromPosSize(Vec2{ l_Close.min.x - m_Ui.px(10.f) - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, l_ButtonHeight });
-		if (m_Ui.button("collab.leave", l_Leave, l_Hosting ? "Stop hosting" : "Leave session", ui::ButtonStyle::Secondary))
+		if (m_Ui.button("collab.leave", l_Leave, tr(l_Hosting ? "menu.stopHosting" : "menu.leave"), ui::ButtonStyle::Secondary))
 		{
 			m_Collab->leave();
 			m_CollabDialog = CollabDialog::None;
-			showToast("Left the session");
+			showToast(tr("toast.leftSession"));
 		}
-		if (m_Ui.button("collab.close", l_Close, "Close", ui::ButtonStyle::Primary))
+		if (m_Ui.button("collab.close", l_Close, tr("common.close"), ui::ButtonStyle::Primary))
 			m_CollabDialog = CollabDialog::None;
 		l_Draw.setOpacity(1.f);
 		return;
@@ -645,17 +646,15 @@ void App::buildCollabDialog()
 	std::string l_Note;
 	if (l_Host && l_UseSteam)
 	{
-		l_Note = std::string(l_UseDirect ? "People can join through Steam or with your address and this port. " : "People join through Steam's relay network, so no port needs to be opened. ")
-		         + "Friends can use Join Game or an invite from Steam, or anyone can join with your Steam ID: " + std::to_string(m_Steam->userId()) + ". "
-		         + "The connection is encrypted and the password also proves who is who. Everyone with the password can edit this board, unless you make them read-only from the session window.";
+		l_Note = tr("collab.note.steamId", { std::to_string(m_Steam->userId()) });
 	}
 	else if (l_Host)
 	{
-		l_Note = "Share your address and this port with the people who should join. The connection is encrypted; the password also proves who is who, so choose one that is hard to guess. Everyone with the password can edit this board, unless you make them read-only from the session window.";
+		l_Note = tr("collab.note.host");
 	}
 	else
 	{
-		l_Note = "Joining replaces the board you have open with the host's.";
+		l_Note = tr("collab.note.join");
 	}
 	const std::vector<std::string> l_NoteLines = m_Ui.font().wrap(l_Note, l_NotePx, l_InnerWidth);
 
@@ -671,7 +670,7 @@ void App::buildCollabDialog()
 	const Rect2 l_Card = openCard(m_Ui, "dialog.collab", l_Height, l_Fade);
 	const float l_Left = l_Card.min.x + l_Pad;
 	float l_Y = l_Card.min.y + l_Pad;
-	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, l_Host ? "Host a session" : "Join a session", 18.f, l_Theme.text);
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, tr(l_Host ? "collab.hostTitle" : "collab.joinTitle"), 18.f, l_Theme.text);
 	l_Y += l_TitleBlock;
 
 	const auto l_Caption = [&](const char* p_Title)
@@ -685,13 +684,13 @@ void App::buildCollabDialog()
 		m_Ui.textField(p_Key, Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_InnerWidth, m_Ui.px(38.f) }), p_Text, p_Placeholder, p_Allowed, p_Max);
 		l_Y += m_Ui.px(38.f) + m_Ui.px(14.f);
 	};
-	l_Field("collab.name", "Your name", m_CollabForm.name, "Shown next to your cursor", {}, net::MAX_NAME_BYTES);
+	l_Field("collab.name", tr("collab.name").c_str(), m_CollabForm.name, tr("collab.name.placeholder").c_str(), {}, net::MAX_NAME_BYTES);
 
 	if (l_HasSteam)
 	{
-		l_Caption("Connection");
-		const std::array<std::string_view, 3> l_HostLabels{ "Direct", "Steam", "Both" };
-		const std::array<std::string_view, 2> l_JoinLabels{ "Direct", "Steam" };
+		l_Caption(tr("collab.connection").c_str());
+		const std::array<std::string_view, 3> l_HostLabels{ tr("collab.transport.direct"), tr("collab.transport.steam"), tr("collab.transport.both") };
+		const std::array<std::string_view, 2> l_JoinLabels{ tr("collab.transport.direct"), tr("collab.transport.steam") };
 		int l_Selected = m_CollabForm.transport;
 		const std::span<const std::string_view> l_Labels = l_Host ? std::span<const std::string_view>(l_HostLabels) : std::span<const std::string_view>(l_JoinLabels);
 		if (m_Ui.segmented("collab.transport", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_InnerWidth, m_Ui.px(38.f) }), l_Labels, {}, l_Selected))
@@ -704,17 +703,17 @@ void App::buildCollabDialog()
 	if (l_Host)
 	{
 		if (l_UseDirect)
-			l_Field("collab.port", "Port", m_CollabForm.port, "5000", "0123456789", 5);
+			l_Field("collab.port", tr("collab.port").c_str(), m_CollabForm.port, "5000", "0123456789", 5);
 	}
 	else if (l_UseSteam)
 	{
-		l_Field("collab.steamid", "Steam ID of the host", m_CollabForm.steamId, "The host's Steam ID", {}, 200);
+		l_Field("collab.steamid", tr("collab.steamId").c_str(), m_CollabForm.steamId, tr("collab.steamId.placeholder").c_str(), {}, 200);
 	}
 	else
 	{
-		l_Field("collab.address", "Host address", m_CollabForm.address, "192.168.1.20:5000", {}, 255);
+		l_Field("collab.address", tr("collab.address").c_str(), m_CollabForm.address, "192.168.1.20:5000", {}, 255);
 	}
-	l_Field("collab.password", "Password", m_CollabForm.password, l_Host ? "Leave empty for an open session" : "Ask the host", {}, 64);
+	l_Field("collab.password", tr("collab.password").c_str(), m_CollabForm.password, tr(l_Host ? "collab.password.hostPlaceholder" : "collab.password.joinPlaceholder").c_str(), {}, 64);
 
 	for (const std::string& l_Line : l_NoteLines)
 	{
@@ -736,9 +735,9 @@ void App::buildCollabDialog()
 	const float l_ButtonWidth = m_Ui.px(120.f);
 	const Rect2 l_Go = Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, l_ButtonHeight });
 	const Rect2 l_Cancel = Rect2::fromPosSize(Vec2{ l_Go.min.x - m_Ui.px(10.f) - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, l_ButtonHeight });
-	if (m_Ui.button("collab.cancel", l_Cancel, "Cancel", ui::ButtonStyle::Secondary))
+	if (m_Ui.button("collab.cancel", l_Cancel, tr("common.cancel"), ui::ButtonStyle::Secondary))
 		m_CollabDialog = CollabDialog::None;
-	if (m_Ui.button("collab.go", l_Go, l_Host ? "Start hosting" : "Join", ui::ButtonStyle::Primary, l_Valid))
+	if (m_Ui.button("collab.go", l_Go, tr(l_Host ? "collab.startHosting" : "collab.joinButton"), ui::ButtonStyle::Primary, l_Valid))
 		submitCollabDialog();
 	l_Draw.setOpacity(1.f);
 }

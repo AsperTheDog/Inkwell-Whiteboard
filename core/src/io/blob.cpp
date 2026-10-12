@@ -36,6 +36,8 @@ module;
 
 module wb.io.blob;
 
+import wb.io.locale;
+
 namespace wb
 {
 namespace fs = std::filesystem;
@@ -230,13 +232,13 @@ std::shared_ptr<FileSource> FileSource::open(const fs::path& p_Path, std::string
 	std::shared_ptr<FileSource> l_Source(new FileSource);
 	if (!l_Source->m_Native->openRead(p_Path))
 	{
-		p_Error = "Cannot open " + pathToUtf8(p_Path);
+		p_Error = tr("io.cannotOpen", { pathToUtf8(p_Path) });
 		return nullptr;
 	}
 	uint64_t l_Size = 0;
 	if (!l_Source->m_Native->fileSize(l_Size))
 	{
-		p_Error = "Cannot read " + pathToUtf8(p_Path);
+		p_Error = tr("io.cannotRead", { pathToUtf8(p_Path) });
 		return nullptr;
 	}
 	l_Source->m_Path = p_Path;
@@ -255,14 +257,14 @@ std::shared_ptr<FileSource> FileSource::createTemporary(const fs::path& p_Direct
 	constexpr uint64_t RESERVE = uint64_t{ 512 } << 20;
 	if (!l_Error && l_Space.available != static_cast<uintmax_t>(-1) && l_Space.available < p_Total + RESERVE)
 	{
-		p_Error = "There is not enough free disk space for " + std::to_string(p_Total >> 20) + " MiB.";
+		p_Error = tr("io.diskSpace", { std::to_string(p_Total >> 20) });
 		return nullptr;
 	}
 	std::shared_ptr<FileSource> l_Source(new FileSource);
 	const fs::path l_Path = p_Directory / randomName();
 	if (!l_Source->m_Native->createTemp(l_Path))
 	{
-		p_Error = "Cannot create a temporary file in " + pathToUtf8(p_Directory);
+		p_Error = tr("io.cannotCreateTemp", { pathToUtf8(p_Directory) });
 		return nullptr;
 	}
 	l_Source->m_Path = l_Path;
@@ -299,12 +301,12 @@ bool FileSource::append(const std::span<const uint8_t> p_Bytes, std::string& p_E
 	const uint64_t l_At = m_Available.load();
 	if (!m_Temporary || l_At + p_Bytes.size() > m_Size)
 	{
-		p_Error = "More bytes than the file was announced to have.";
+		p_Error = tr("io.moreBytes");
 		return false;
 	}
 	if (!m_Native->writeAt(l_At, p_Bytes.data(), p_Bytes.size()))
 	{
-		p_Error = "Cannot write to the disk (full?).";
+		p_Error = tr("io.diskWrite");
 		m_Failed.store(true);
 		m_Arrived.notify_all();
 		return false;
@@ -390,7 +392,7 @@ IoResult copySourceToFile(const ByteSource& p_Source, const fs::path& p_Path)
 	{
 		std::ofstream l_File(l_Temp, std::ios::binary | std::ios::trunc);
 		if (!l_File)
-			return IoResult::failure("Cannot create " + pathToUtf8(l_Temp));
+			return IoResult::failure(tr("io.cannotCreate", { pathToUtf8(l_Temp) }));
 		const bool l_Streamed = streamBytes(p_Source, 0, p_Source.size(), [&](const uint8_t* p_Data, const size_t p_Size)
 		{
 			l_File.write(reinterpret_cast<const char*>(p_Data), static_cast<std::streamsize>(p_Size));
@@ -401,7 +403,7 @@ IoResult copySourceToFile(const ByteSource& p_Source, const fs::path& p_Path)
 		{
 			l_File.close();
 			fs::remove(l_Temp, l_Error);
-			return IoResult::failure("Cannot write " + pathToUtf8(p_Path) + " (disk full, or the original file is gone?)");
+			return IoResult::failure(tr("io.cannotWriteGone", { pathToUtf8(p_Path) }));
 		}
 	}
 	return replaceFile(l_Temp, p_Path);

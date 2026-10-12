@@ -25,6 +25,7 @@ module wb.app;
 import wb.doc.document;
 import wb.editor;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.platform.pdf;
 import wb.tools.tool;
@@ -40,18 +41,18 @@ void App::startPdfImport(const std::filesystem::path& p_Path)
 {
 	if (m_PdfJob.valid())
 	{
-		showToast("Another PDF is still being drawn");
+		showToast(tr("pdf.busy"));
 		return;
 	}
 	std::vector<uint8_t> l_Bytes;
 	if (const IoResult l_Read = readFile(p_Path, l_Bytes, MAX_PDF_BYTES); !l_Read.ok)
 	{
-		showMessage("The PDF could not be read.\n\n" + l_Read.error);
+		showMessage(tr("pdf.readFailed", { l_Read.error }));
 		return;
 	}
 	m_PdfName = pathToUtf8(p_Path.filename());
 	m_PdfJob = std::async(std::launch::async, [l_Bytes = std::move(l_Bytes)] { return platform::importPdf(l_Bytes); });
-	showToast("Drawing " + m_PdfName + "...");
+	showToast(tr("pdf.drawing", { m_PdfName }));
 }
 
 // Once per loop: puts a finished PDF on the board
@@ -94,9 +95,9 @@ void App::pollPdfImport()
 	const size_t l_Count = l_Pages.size();
 	m_Editor.insertPages(std::move(l_Pages));
 	if (l_Import.totalPages > l_Count)
-		showToast("Added the first " + std::to_string(l_Count) + " of " + std::to_string(l_Import.totalPages) + " pages. They are locked: Ctrl+L unlocks");
+		showToast(tr("pdf.addedFirst", { std::to_string(l_Count), std::to_string(l_Import.totalPages) }));
 	else
-		showToast("Added " + std::to_string(l_Count) + (l_Count == 1 ? " page" : " pages") + ". They are locked: select one and press Ctrl+L to unlock");
+		showToast(tr(l_Count == 1 ? "pdf.added.one" : "pdf.added.many", { std::to_string(l_Count) }));
 	requestRedraw();
 }
 } // namespace wb

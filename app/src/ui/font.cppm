@@ -3,9 +3,14 @@
 // the rows that changed since the last frame.
 //
 // Text uses Inter; icons are glyphs of the Lucide icon font (ISC licence), addressed by the Icon enum.
+//
+// Inter has Latin, Greek and Cyrillic. A character it lacks is looked up, in this order, in the language's own font
+// (setLanguageFont: a file shipped with the app that holds the glyphs of that language's texts, so the interface is
+// readable on any machine) and then in whatever the fallback finder offers (the fonts installed on the system).
 module;
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -131,10 +136,19 @@ struct GlyphQuad
 	Vec2 uv1{ 0.f };
 };
 
+// A font that has some character, as the fallback finder reports it. `id` tells the atlas it has seen the face before.
+struct FallbackFace
+{
+	const uint8_t* data = nullptr; // must stay alive and unchanged for as long as the atlas is used
+	int offset = 0;                // where the font starts in the data (a collection holds several)
+	uint64_t id = 0;
+};
+
 class FontAtlas
 {
 public:
 	struct Font;
+	using FallbackFinder = std::function<FallbackFace(uint32_t p_Codepoint)>;
 
 	static constexpr uint32_t ATLAS_SIZE = 1024;
 
@@ -149,6 +163,15 @@ public:
 	// Adds a face drawn from p_Data, which must stay alive and unchanged for as long as the atlas is used. Returns
 	// FontFace::Text when the data cannot be read as a font.
 	FontFace addFace(const uint8_t* p_Data, size_t p_Size);
+
+	// The font for the characters of the current language that Inter lacks (an empty path: none). False when the file
+	// cannot be read. Glyphs already drawn from another language font are forgotten.
+	bool setLanguageFont(const std::filesystem::path& p_Path);
+	// Asked once per character that neither Inter nor the language font has
+	void setFallbackFinder(FallbackFinder p_Finder);
+	// Call when the fallback finder may know more than before (the installed fonts were scanned): characters that had
+	// no font are asked about again
+	void forgetFallbackMisses();
 
 	// Call once per frame before building the UI. Returns true when the atlas had overflowed and was reset (the UI
 	// of the previous frame was missing glyphs, so another frame is worth drawing).
@@ -176,13 +199,21 @@ public:
 	void markAllDirty();
 
 private:
+	// The face that draws p_Codepoint when p_Face is asked to: Inter, or the language font, or a fallback
+	[[nodiscard]] FontFace resolve(FontFace p_Face, uint32_t p_Codepoint) const;
+	FontFace addBorrowed(const uint8_t* p_Data, int p_Offset) const;
 	[[nodiscard]] static uint64_t key(FontFace p_Face, uint32_t p_Codepoint, int p_PixelSize);
 	[[nodiscard]] bool pack(uint32_t p_Width, uint32_t p_Height, uint32_t& p_X, uint32_t& p_Y);
 	void reset();
 
 	std::unique_ptr<Font> m_Text;
 	std::unique_ptr<Font> m_Icons;
-	std::vector<std::unique_ptr<Font>> m_Extra;
+	mutable std::vector<std::unique_ptr<Font>> m_Extra;
+	FallbackFinder m_Finder;
+	FontFace m_LanguageFace = FontFace::Text; // Text: no language font
+	std::unordered_map<std::string, FontFace> m_LanguageFaces; // by file, so switching back and forth reads each once
+	mutable std::unordered_map<uint32_t, FontFace> m_Resolved;  // characters Inter lacks -> their face (Text: none found)
+	mutable std::unordered_map<uint64_t, FontFace> m_FallbackFaces;
 	[[nodiscard]] const Font& fontFor(FontFace p_Face) const;
 	std::vector<uint8_t> m_Pixels;
 	std::unordered_map<uint64_t, GlyphQuad> m_Glyphs;

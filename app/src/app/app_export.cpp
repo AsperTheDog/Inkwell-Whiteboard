@@ -34,6 +34,7 @@ import wb.gfx.buffer;
 import wb.gfx.commands;
 import wb.gfx.image;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.render.canvas_renderer;
 import wb.session;
@@ -106,7 +107,7 @@ void App::openExportDialog()
 {
 	if (m_Editor.document().empty())
 	{
-		showToast("The board is empty, there is nothing to export");
+		showToast(tr("export.empty"));
 		return;
 	}
 	m_ExportOptions.selectionOnly = m_Editor.hasSelection();
@@ -150,7 +151,7 @@ void App::buildExportDialog()
 
 	const float l_Left = l_Card.min.x + l_Pad;
 	float l_Y = l_Card.min.y + l_Pad;
-	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, "Export as PNG", 18.f, l_Theme.text);
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(13.f) }, tr("export.title"), 18.f, l_Theme.text);
 	l_Y += m_Ui.px(26.f) + m_Ui.px(14.f);
 
 	const auto l_Row = [&](const char* p_Key, const char* p_Title, const std::span<const std::string_view> p_Labels, int& p_Value)
@@ -162,35 +163,35 @@ void App::buildExportDialog()
 		l_Y += l_Control + l_Gap;
 	};
 
-	static constexpr std::array<std::string_view, 2> AREA_LABELS{ "Whole board", "Selection" };
+	const std::array<std::string_view, 2> AREA_LABELS{ tr("export.area.board"), tr("export.area.selection") };
 	int l_Area = m_ExportOptions.selectionOnly ? 1 : 0;
 	if (l_HasSelection)
 	{
-		l_Row("export.area", "Area", AREA_LABELS, l_Area);
+		l_Row("export.area", tr("export.area").c_str(), AREA_LABELS, l_Area);
 	}
 	else
 	{
-		m_Ui.label(Vec2{ l_Left, l_Y + l_RowLabel * 0.5f }, "Area", 13.f, l_Theme.textMuted);
+		m_Ui.label(Vec2{ l_Left, l_Y + l_RowLabel * 0.5f }, tr("export.area"), 13.f, l_Theme.textMuted);
 		l_Y += l_RowLabel;
-		m_Ui.label(Vec2{ l_Left, l_Y + l_Control * 0.5f }, "Everything on the board", 14.f, l_Theme.text);
+		m_Ui.label(Vec2{ l_Left, l_Y + l_Control * 0.5f }, tr("export.area.everything"), 14.f, l_Theme.text);
 		l_Y += l_Control + l_Gap;
 	}
 	m_ExportOptions.selectionOnly = l_Area == 1;
 
 	static constexpr std::array<std::string_view, 4> SCALE_LABELS{ "1x", "2x", "3x", "4x" };
-	l_Row("export.scale", "Resolution", SCALE_LABELS, m_ExportOptions.scale);
+	l_Row("export.scale", tr("export.resolution").c_str(), SCALE_LABELS, m_ExportOptions.scale);
 
-	static constexpr std::array<std::string_view, 2> BACKGROUND_LABELS{ "Board colour", "Transparent" };
+	const std::array<std::string_view, 2> BACKGROUND_LABELS{ tr("export.bg.board"), tr("export.bg.transparent") };
 	int l_Background = m_ExportOptions.transparent ? 1 : 0;
-	l_Row("export.background", "Background", BACKGROUND_LABELS, l_Background);
+	l_Row("export.background", tr("export.background").c_str(), BACKGROUND_LABELS, l_Background);
 	m_ExportOptions.transparent = l_Background == 1;
 
-	std::string l_Info = "Nothing to export";
+	std::string l_Info = tr("export.nothing");
 	if (l_Plan.valid)
 	{
-		l_Info = std::to_string(l_Plan.extent.width) + " x " + std::to_string(l_Plan.extent.height) + " pixels";
+		l_Info = tr("export.size", { std::to_string(l_Plan.extent.width), std::to_string(l_Plan.extent.height) });
 		if (l_Plan.reduced)
-			l_Info += " (lowered to fit)";
+			l_Info = tr("export.sizeReduced", { std::to_string(l_Plan.extent.width), std::to_string(l_Plan.extent.height) });
 	}
 	l_Draw.text(Vec2{ l_Left, l_Y + m_Ui.px(11.f) }, l_Info, m_Ui.fontPx(13.f), l_Theme.textMuted);
 	l_Y += m_Ui.px(22.f) + m_Ui.px(8.f);
@@ -198,9 +199,9 @@ void App::buildExportDialog()
 	const float l_ButtonWidth = m_Ui.px(110.f);
 	const Rect2 l_Export = Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, m_Ui.px(40.f) });
 	const Rect2 l_Cancel = Rect2::fromPosSize(Vec2{ l_Export.min.x - m_Ui.px(10.f) - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, m_Ui.px(40.f) });
-	if (m_Ui.button("export.cancel", l_Cancel, "Cancel", ui::ButtonStyle::Secondary))
+	if (m_Ui.button("export.cancel", l_Cancel, tr("common.cancel"), ui::ButtonStyle::Secondary))
 		m_ShowExport = false;
-	if (m_Ui.button("export.go", l_Export, "Export...", ui::ButtonStyle::Primary, l_Plan.valid))
+	if (m_Ui.button("export.go", l_Export, tr("export.go"), ui::ButtonStyle::Primary, l_Plan.valid))
 	{
 		m_ShowExport = false;
 		showExportSaveDialog();
@@ -212,7 +213,8 @@ void App::showExportSaveDialog()
 {
 	if (m_DialogKind != DialogKind::None)
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "PNG pictures", "png" } };
+	static SDL_DialogFileFilter s_Filters[1]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("export.pngFiles").c_str(), "png" };
 	m_DialogKind = DialogKind::ExportPng;
 	const std::string l_Name = m_Session.displayName() + ".png";
 	std::string l_Start = l_Name;
@@ -228,12 +230,12 @@ void App::startExport(const std::filesystem::path& p_Path)
 	const ExportPlan l_Plan = exportPlan();
 	if (!l_Plan.valid)
 	{
-		showMessage("There is nothing to export.");
+		showMessage(tr("export.nothingToExport"));
 		return;
 	}
 	if (m_ExportJob || m_ExportWrite.valid())
 	{
-		showToast("Another export is still running");
+		showToast(tr("export.busy"));
 		return;
 	}
 	ExportJob l_Job;
@@ -356,12 +358,12 @@ void App::finishExport()
 		}
 		std::vector<uint8_t> l_Png;
 		if (stbi_write_png_to_func(&appendPng, &l_Png, static_cast<int>(l_Extent.width), static_cast<int>(l_Extent.height), 4, l_Data, static_cast<int>(l_Extent.width * 4)) == 0)
-			return "The picture could not be encoded.";
+			return tr("export.encodeFailed");
 		if (const IoResult l_Result = writeFileAtomic(l_Job.path, l_Png); !l_Result.ok)
 			return l_Result.error;
 		return {};
 	});
-	showToast("Exporting " + m_ExportWriteName + "...");
+	showToast(tr("export.exporting", { m_ExportWriteName }));
 }
 
 // Once per loop: reports a finished export
@@ -371,8 +373,8 @@ void App::pollExport()
 		return;
 	const std::string l_Error = m_ExportWrite.get();
 	if (l_Error.empty())
-		showToast("Exported " + m_ExportWriteName);
+		showToast(tr("export.exported", { m_ExportWriteName }));
 	else
-		showMessage("The picture could not be saved.\n\n" + l_Error);
+		showMessage(tr("export.saveFailed", { l_Error }));
 }
 } // namespace wb

@@ -23,6 +23,7 @@ module;
 
 module wb.io.serializer;
 
+import wb.io.locale;
 import wb.math;
 import wb.doc.document;
 import wb.doc.object;
@@ -1071,7 +1072,7 @@ IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitB
 	{
 		std::ofstream l_File(l_Temp, std::ios::binary | std::ios::trunc);
 		if (!l_File)
-			return IoResult::failure("Cannot create " + pathToUtf8(l_Temp));
+			return IoResult::failure(tr("io.cannotCreate", { pathToUtf8(l_Temp) }));
 		const auto l_Write = [&](const void* p_Data, const size_t p_Size)
 		{
 			l_File.write(static_cast<const char*>(p_Data), static_cast<std::streamsize>(p_Size));
@@ -1149,7 +1150,7 @@ IoResult writeSplitBoardAtomic(const std::filesystem::path& p_Path, const SplitB
 			std::filesystem::remove(l_Temp, l_Error);
 			if (p_Placed != nullptr)
 				p_Placed->clear();
-			return IoResult::failure(l_Problem.empty() ? "Cannot write " + pathToUtf8(p_Path) + " (disk full or no permission?)" : l_Problem);
+			return IoResult::failure(l_Problem.empty() ? tr("io.cannotWrite", { pathToUtf8(p_Path) }) : l_Problem);
 		}
 	}
 	return replaceFile(l_Temp, p_Path);
@@ -1271,9 +1272,9 @@ std::string consumeChunk(LoadState& p_State, const uint32_t p_Tag, const std::sp
 LoadResult commitLoad(LoadState& p_State, Document& p_Document, BoardMeta& p_Meta, const bool p_AllowMissingAssets)
 {
 	if (!p_State.haveEnd)
-		return failure("The file is incomplete (truncated).");
+		return failure(tr("io.truncated"));
 	if (!p_State.meta || !p_State.haveObjects)
-		return failure("The file is damaged (missing data).");
+		return failure(tr("io.missingData"));
 	// Images whose picture is missing cannot be shown: drop them like objects of an unknown kind
 	if (!p_AllowMissingAssets)
 	{
@@ -1288,7 +1289,7 @@ LoadResult commitLoad(LoadState& p_State, Document& p_Document, BoardMeta& p_Met
 		}));
 	}
 	if (p_State.meta->objectCount != p_State.objects.size() + p_State.skipped)
-		return failure("The file is damaged (object count mismatch).");
+		return failure(tr("io.countMismatch"));
 
 	p_Document.clear();
 	if (p_State.meta->nextId > 0)
@@ -1426,10 +1427,10 @@ LoadResult deserializeBoard(const std::span<const uint8_t> p_Bytes, Document& p_
 		const uint64_t l_Length = l_File.u64();
 		const uint32_t l_ExpectedCrc = l_File.u32();
 		if (!l_File.ok() || l_Length > l_File.remaining())
-			return failure("The file is incomplete (truncated).");
+			return failure(tr("io.truncated"));
 		const std::span<const uint8_t> l_Payload = l_File.take(static_cast<size_t>(l_Length));
 		if (crc32(l_Payload) != l_ExpectedCrc)
-			return failure("The file is damaged (checksum mismatch).");
+			return failure(tr("io.checksum"));
 		if (std::string l_Problem = consumeChunk(l_State, l_Tag, l_Payload); !l_Problem.empty())
 			return failure(std::move(l_Problem));
 	}
@@ -1441,7 +1442,7 @@ LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Docume
 	const uint64_t l_Total = p_File->size();
 	std::array<uint8_t, 12> l_Head{};
 	if (l_Total < l_Head.size() || p_File->read(0, l_Head.data(), l_Head.size()) != l_Head.size())
-		return failure("This is not a Inkwell file.");
+		return failure(tr("io.notInkwell"));
 	Reader l_HeadReader(l_Head);
 	if (std::string l_Problem = checkFileHeader(l_HeadReader); !l_Problem.empty())
 		return failure(std::move(l_Problem));
@@ -1452,7 +1453,7 @@ LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Docume
 	{
 		std::array<uint8_t, CHUNK_HEADER_BYTES> l_ChunkHead{};
 		if (p_File->read(l_At, l_ChunkHead.data(), l_ChunkHead.size()) != l_ChunkHead.size())
-			return failure("The file is incomplete (truncated).");
+			return failure(tr("io.truncated"));
 		uint32_t l_Tag = 0;
 		uint64_t l_Length = 0;
 		uint32_t l_ExpectedCrc = 0;
@@ -1461,7 +1462,7 @@ LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Docume
 		std::memcpy(&l_ExpectedCrc, l_ChunkHead.data() + 12, 4);
 		l_At += CHUNK_HEADER_BYTES;
 		if (l_Length > l_Total - l_At)
-			return failure("The file is incomplete (truncated).");
+			return failure(tr("io.truncated"));
 
 		// Big files are not read: they are used from where they are (and not checksummed, which would read all of them)
 		if (l_Tag == TAG_ABIG && l_Length >= LARGE_ASSET_BYTES)
@@ -1478,7 +1479,7 @@ LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Docume
 		else
 		{
 			if (l_Length > MAX_RESIDENT_CHUNK)
-				return failure("The file is damaged (a chunk is too large).");
+				return failure(tr("io.chunkTooLarge"));
 			std::vector<uint8_t> l_Payload;
 			try
 			{
@@ -1486,12 +1487,12 @@ LoadResult loadBoardFile(const std::shared_ptr<const ByteSource>& p_File, Docume
 			}
 			catch (const std::bad_alloc&)
 			{
-				return failure("There is not enough memory to open this file.");
+				return failure(tr("io.noMemory"));
 			}
 			if (p_File->read(l_At, l_Payload.data(), l_Payload.size()) != l_Payload.size())
-				return failure("The file is incomplete (truncated).");
+				return failure(tr("io.truncated"));
 			if (crc32(l_Payload) != l_ExpectedCrc)
-				return failure("The file is damaged (checksum mismatch).");
+				return failure(tr("io.checksum"));
 			if (std::string l_Problem = consumeChunk(l_State, l_Tag, l_Payload); !l_Problem.empty())
 				return failure(std::move(l_Problem));
 		}

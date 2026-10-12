@@ -126,6 +126,8 @@ public:
 	// The parsed font of a face, for code that draws glyphs itself (the font picker preview). The pointer stays valid
 	// for the registry's lifetime. Returns nullptr and 0 for an unknown face.
 	[[nodiscard]] const uint8_t* faceData(FaceId p_Face, size_t& p_Size) const;
+	// Where the font of a face starts inside faceData() (a font collection holds several); -1 for an unknown face
+	[[nodiscard]] int faceStart(FaceId p_Face) const;
 
 private:
 	struct Source

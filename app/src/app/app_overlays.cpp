@@ -24,6 +24,7 @@ module;
 module wb.app;
 
 import wb.editor;
+import wb.io.locale;
 import wb.math;
 import wb.net.collab;
 import wb.net.protocol;
@@ -228,7 +229,7 @@ void App::buildCropOverlay()
 	if (modalOpen())
 		return;
 	const Vec2 l_Viewport = m_Ui.viewport();
-	const std::string l_Hint = "Drag the handles or the frame to choose what is shown";
+	const std::string& l_Hint = tr("crop.hint");
 	const int l_HintPx = m_Ui.fontPx(13.f);
 	const float l_Pad = m_Ui.px(8.f);
 	const float l_ButtonWidth = m_Ui.px(76.f);
@@ -238,7 +239,7 @@ void App::buildCropOverlay()
 	m_Ui.panel(l_Pill, m_Ui.px(18.f));
 	l_Draw.text(Vec2{ l_Pill.min.x + l_Pad + m_Ui.px(14.f), l_Pill.center().y }, l_Hint, l_HintPx, l_Theme.textMuted);
 	const ui::Rect2 l_Done = ui::Rect2::fromPosSize(Vec2{ l_Pill.max.x - l_Pad - l_ButtonWidth, l_Pill.min.y + l_Pad }, Vec2{ l_ButtonWidth, l_Height - l_Pad * 2.f });
-	if (m_Ui.button("crop.done", l_Done, "Done", ui::ButtonStyle::Primary))
+	if (m_Ui.button("crop.done", l_Done, tr("crop.done"), ui::ButtonStyle::Primary))
 		m_Editor.endCrop();
 }
 
@@ -290,7 +291,7 @@ void App::buildAssetSpinners()
 			for (const float l_Side : { -1.f, 1.f })
 				l_Draw.line(l_Center + Vec2{ l_Side * 4.f * l_Scale, -6.f * l_Scale }, l_Center + Vec2{ l_Side * 4.f * l_Scale, 6.f * l_Scale }, 3.f * l_Scale, Color{ 1.f, 1.f, 1.f, 0.95f });
 			if (l_Short > 90.f * l_Scale)
-				l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, "Not available", m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
+				l_Draw.text(l_Center + Vec2{ 0.f, l_Radius + 16.f * l_Scale }, tr("media.notAvailable"), m_Ui.fontPx(12.f), Color{ 1.f, 1.f, 1.f, 0.95f }, ui::TextAlign::Center);
 			continue;
 		}
 		l_Any = true;

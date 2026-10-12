@@ -28,6 +28,7 @@ import wb.doc.commands;
 import wb.doc.document;
 import wb.doc.object;
 import wb.editor;
+import wb.io.locale;
 import wb.math;
 import wb.render.canvas_renderer;
 import wb.render.video_store;
@@ -55,7 +56,7 @@ constexpr double SEEK_SLOP_SECONDS = 0.02;
 // "Commentary (eng)", or "Track 2" for one that says nothing about itself
 std::string trackLabel(const video::TrackInfo& p_Track, const size_t p_Index)
 {
-	std::string l_Label = !p_Track.title.empty() ? p_Track.title : "Track " + std::to_string(p_Index + 1);
+	std::string l_Label = !p_Track.title.empty() ? p_Track.title : tr("video.track", { std::to_string(p_Index + 1) });
 	if (!p_Track.language.empty() && p_Track.language != "und")
 		l_Label += " (" + p_Track.language + ")";
 	return l_Label;
@@ -124,7 +125,9 @@ void App::showSubtitleDialog(const ObjectId p_Video)
 {
 	if (m_DialogKind != DialogKind::None)
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Subtitles", "srt;vtt;ass;ssa" }, { "All files", "*" } };
+	static SDL_DialogFileFilter s_Filters[2]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("video.subtitleFiles").c_str(), "srt;vtt;ass;ssa" };
+	s_Filters[1] = { tr("common.allFiles").c_str(), "*" };
 	m_DialogKind = DialogKind::Subtitles;
 	m_SubtitleTarget = p_Video;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
@@ -135,13 +138,13 @@ void App::addSubtitleFile(const ObjectId p_Video, const std::filesystem::path& p
 	const Object* l_Object = m_Editor.document().find(p_Video);
 	if (l_Object == nullptr || l_Object->video() == nullptr)
 	{
-		showToast("That video is no longer on the board");
+		showToast(tr("video.gone"));
 		return;
 	}
 	std::vector<uint8_t> l_Bytes;
 	if (const IoResult l_Read = readFile(p_Path, l_Bytes, MAX_SUBTITLE_FILE_BYTES); !l_Read.ok)
 	{
-		showMessage("The subtitle file could not be read (they can be 2 MB at most).\n\n" + l_Read.error);
+		showMessage(tr("video.subtitleReadFailed", { l_Read.error }));
 		return;
 	}
 	SubtitleFile l_File;
@@ -149,7 +152,7 @@ void App::addSubtitleFile(const ObjectId p_Video, const std::filesystem::path& p
 	l_File.text = subtitleTextToUtf8(std::string_view(reinterpret_cast<const char*>(l_Bytes.data()), l_Bytes.size()));
 	if (parseSubtitles(l_File.text).empty())
 	{
-		showMessage(l_File.name + " has no subtitles Inkwell can read. SRT, WebVTT and ASS files work.");
+		showMessage(tr("video.noSubtitles", { l_File.name }));
 		return;
 	}
 	const VideoData& l_Video = *l_Object->video();
@@ -165,7 +168,7 @@ void App::addSubtitleFile(const ObjectId p_Video, const std::filesystem::path& p
 	}
 	if (l_Video.subtitleFiles.size() >= MAX_SUBTITLE_FILES)
 	{
-		showMessage("A video can have " + std::to_string(MAX_SUBTITLE_FILES) + " subtitle files at most. Remove one first.");
+		showMessage(tr("video.tooManySubtitles", { std::to_string(MAX_SUBTITLE_FILES) }));
 		return;
 	}
 	m_LastDirectory = pathToUtf8(p_Path.parent_path());
@@ -176,7 +179,7 @@ void App::addSubtitleFile(const ObjectId p_Video, const std::filesystem::path& p
 		p_Data.subtitleTrack = static_cast<int8_t>(l_Embedded + static_cast<int>(p_Data.subtitleFiles.size()) - 1);
 		return true;
 	});
-	showToast("Added " + l_Name);
+	showToast(tr("video.subtitleAdded", { l_Name }));
 }
 
 bool App::dropSubtitleFile(const std::filesystem::path& p_Path, const Vec2 p_Position)
@@ -471,7 +474,7 @@ void App::buildVideoViewer()
 		return l_Rect;
 	};
 
-	if (m_Ui.iconButton("video.play", l_NextButton(), l_Status.playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Status.playing ? "Pause" : "Play"))
+	if (m_Ui.iconButton("video.play", l_NextButton(), l_Status.playing ? ui::Icon::Pause : ui::Icon::Play, false, true, tr(l_Status.playing ? "video.pause" : "video.play")))
 	{
 		l_Videos.setPlaying(l_Hot, !l_Status.playing);
 		shareVideoState(l_Hot);
@@ -551,13 +554,13 @@ void App::buildVideoViewer()
 		l_Draw.ring(Vec2{ l_FillX, l_Y }, l_Knob, l_Theme.accent, m_Ui.px(1.75f));
 	}
 
-	if (l_ShowLoop && m_Ui.iconButton("video.loop", l_LoopRect, ui::Icon::Repeat, l_Video->loop, true, l_Video->loop ? "Loop is on" : "Loop"))
+	if (l_ShowLoop && m_Ui.iconButton("video.loop", l_LoopRect, ui::Icon::Repeat, l_Video->loop, true, tr(l_Video->loop ? "video.loopOn" : "video.loop")))
 		m_Editor.editVideo(l_Hot, l_Video->loop ? "Stop looping" : "Loop video", [](VideoData& p_Data) { p_Data.loop = !p_Data.loop; return true; });
 	m_VideoVolumeRect = Rect2{};
 	if (l_ShowSound)
 	{
 		const bool l_Silent = l_Video->muted || l_Video->volume <= 0.f;
-		const char* l_Tip = !l_Status.audioWorks ? "No sound device" : (l_Silent ? "Sound is off" : "Sound is on");
+		const std::string& l_Tip = tr(!l_Status.audioWorks ? "video.noSoundDevice" : (l_Silent ? "video.soundOff" : "video.soundOn"));
 		if (m_Ui.iconButton("video.sound", l_SoundRect, l_Silent ? ui::Icon::VolumeOff : ui::Icon::Volume, !l_Silent, l_Status.audioWorks, l_Tip))
 			m_Editor.editVideo(l_Hot, l_Video->muted ? "Sound on" : "Sound off", [](VideoData& p_Data) { p_Data.muted = !p_Data.muted; if (!p_Data.muted && p_Data.volume <= 0.f) p_Data.volume = 0.6f; return true; });
 
@@ -623,7 +626,7 @@ void App::buildVideoViewer()
 	// ---- sound tracks and subtitles: a menu over the button (it opens under the pointer, or stays open after a click)
 	if (l_ShowTracks)
 	{
-		if (m_Ui.iconButton("video.tracks", l_TracksRect, ui::Icon::Captions, l_Video->subtitleTrack >= 0 || m_VideoTracksPinned, true, "Sound tracks and subtitles"))
+		if (m_Ui.iconButton("video.tracks", l_TracksRect, ui::Icon::Captions, l_Video->subtitleTrack >= 0 || m_VideoTracksPinned, true, tr("video.tracks")))
 			m_VideoTracksPinned = !m_VideoTracksPinned;
 		const bool l_Open = m_VideoTracksPinned || l_TracksRect.contains(l_Pointer) || (m_VideoTracksOpenLast && m_VideoTracksRect.contains(l_Pointer));
 		m_VideoTracksOpenLast = l_Open;
@@ -678,14 +681,14 @@ void App::buildVideoViewer()
 					*p_Removed = l_CrossClicked;
 				return l_State.clicked && !l_CrossClicked;
 			};
-			const auto l_Title = [&](const char* p_Text)
+			const auto l_Title = [&](const std::string& p_Text)
 			{
 				l_Draw.text(Vec2{ l_Panel.min.x + m_Ui.px(16.f), l_Y + l_Header * 0.55f }, p_Text, l_HeaderPx, l_Theme.textMuted);
 				l_Y += l_Header;
 			};
 			if (l_Sounds)
 			{
-				l_Title("Sound");
+				l_Title(tr("video.sound"));
 				for (size_t i = 0; i < l_Info->audioTracks.size(); ++i)
 				{
 					if (l_Item("video.track.a" + std::to_string(i), trackLabel(l_Info->audioTracks[i], i), static_cast<size_t>(l_Status.audioTrack) == i))
@@ -695,8 +698,8 @@ void App::buildVideoViewer()
 					}
 				}
 			}
-			l_Title("Subtitles");
-			if (l_Item("video.track.s-1", "Off", l_Video->subtitleTrack < 0))
+			l_Title(tr("video.subtitles"));
+			if (l_Item("video.track.s-1", tr("video.subtitlesOff"), l_Video->subtitleTrack < 0))
 			{
 				m_Editor.editVideo(l_Hot, "Subtitles off", [](VideoData& p_Data) { p_Data.subtitleTrack = -1; return true; });
 				m_VideoTracksPinned = false;
@@ -735,7 +738,7 @@ void App::buildVideoViewer()
 					m_VideoTracksPinned = false;
 				}
 			}
-			if (l_Item("video.track.add", "Add a subtitle file...", false, nullptr, ui::Icon::Plus))
+			if (l_Item("video.track.add", tr("video.addSubtitles"), false, nullptr, ui::Icon::Plus))
 			{
 				m_VideoTracksPinned = false;
 				showSubtitleDialog(l_Hot);

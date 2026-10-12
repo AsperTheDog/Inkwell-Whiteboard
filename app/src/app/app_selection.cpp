@@ -22,6 +22,7 @@ module wb.app;
 import wb.doc.document;
 import wb.doc.commands;
 import wb.doc.object;
+import wb.io.locale;
 import wb.render.canvas_renderer;
 import wb.render.image_store;
 import wb.editor;
@@ -142,44 +143,44 @@ void App::buildSelectionBar()
 		l_Cursor += l_Button + l_Gap;
 		return l_Rect;
 	};
-	if (m_Ui.iconButton("selbar.duplicate", l_Next(), ui::Icon::Duplicate, false, true, "Duplicate (Ctrl+D)"))
+	if (m_Ui.iconButton("selbar.duplicate", l_Next(), ui::Icon::Duplicate, false, true, tr("tip.duplicate")))
 		m_Editor.duplicateSelection();
 	const Editor::LockState l_Lock = m_Editor.selectionLockState();
 	const bool l_Editable = l_Lock != Editor::LockState::All; // a locked selection can only be unlocked (or copied)
-	if (m_Ui.iconButton("selbar.delete", l_Next(), ui::Icon::Trash, false, l_Editable, "Delete (Del)"))
+	if (m_Ui.iconButton("selbar.delete", l_Next(), ui::Icon::Trash, false, l_Editable, tr("tip.delete")))
 		m_Editor.deleteSelection();
 	if (!m_Editor.hasSelection())
 		return; // deleted: the rest of the bar is gone
-	if (m_Ui.iconButton("selbar.transform", l_Next(), ui::Icon::Move, m_Popup == Popup::Arrange, true, l_CanAlign ? "Transform: order, flip, crop, reset rotation, align and space out" : "Transform: order, flip, crop and reset rotation"))
+	if (m_Ui.iconButton("selbar.transform", l_Next(), ui::Icon::Move, m_Popup == Popup::Arrange, true, tr(l_CanAlign ? "tip.transform.align" : "tip.transform")))
 		togglePopup(Popup::Arrange);
-	if (m_Ui.iconButton("selbar.lock", l_Next(), l_Lock == Editor::LockState::None ? ui::Icon::Lock : ui::Icon::Unlock, l_Lock != Editor::LockState::None, true, l_Lock == Editor::LockState::None ? "Lock: nothing can move or erase it (Ctrl+L)" : "Unlock (Ctrl+L)"))
+	if (m_Ui.iconButton("selbar.lock", l_Next(), l_Lock == Editor::LockState::None ? ui::Icon::Lock : ui::Icon::Unlock, l_Lock != Editor::LockState::None, true, tr(l_Lock == Editor::LockState::None ? "tip.lock" : "tip.unlock")))
 		m_Editor.toggleSelectionLock();
 	if (l_CanGroup || l_HasGroup)
 	{
-		if (m_Ui.iconButton("selbar.group", l_Next(), ui::Icon::Layers, !l_CanGroup, l_Editable, l_CanGroup ? "Group: select and move these as one (Ctrl+G)" : "Ungroup (Ctrl+Shift+G)"))
+		if (m_Ui.iconButton("selbar.group", l_Next(), ui::Icon::Layers, !l_CanGroup, l_Editable, tr(l_CanGroup ? "tip.group" : "tip.ungroup")))
 			m_Editor.toggleSelectionGroup();
 	}
 	if (l_Animated > 0)
 	{
 		const bool l_Playing = l_AnimatedPlaying == l_Animated;
-		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, l_Playing ? "Pause the animation" : "Play the animation"))
+		if (m_Ui.iconButton("selbar.play", l_Next(), l_Playing ? ui::Icon::Pause : ui::Icon::Play, false, true, tr(l_Playing ? "tip.animPause" : "tip.animPlay")))
 			toggleSelectedPlayback();
 	}
 	if (l_HasStrokes)
 	{
-		if (m_Ui.iconButton("selbar.smooth", l_Next(), ui::Icon::Spline, false, l_Editable, "Smooth the strokes. Click again for more"))
+		if (m_Ui.iconButton("selbar.smooth", l_Next(), ui::Icon::Spline, false, l_Editable, tr("tip.smooth")))
 			m_Editor.smoothSelection();
 	}
 	if (l_HasText)
 	{
 		const ui::Rect2 l_TextRect = l_Next();
 		m_TextAnchor = l_TextRect;
-		if (m_Ui.iconButton("selbar.text", l_TextRect, ui::Icon::Type, m_Popup == Popup::Text, true, "Font, size and alignment of the selected text"))
+		if (m_Ui.iconButton("selbar.text", l_TextRect, ui::Icon::Type, m_Popup == Popup::Text, true, tr("tip.selText")))
 			openTextPopup(false);
 	}
 	if (l_FilePopover)
 	{
-		if (m_Ui.iconButton("selbar.file", l_Next(), ui::Icon::ShrinkImage, m_Popup == Popup::Media, true, "File: reduce its size or save it to your computer"))
+		if (m_Ui.iconButton("selbar.file", l_Next(), ui::Icon::ShrinkImage, m_Popup == Popup::Media, true, tr("tip.selFile")))
 			togglePopup(Popup::Media);
 	}
 	else if (m_Popup == Popup::Media)
@@ -188,14 +189,14 @@ void App::buildSelectionBar()
 	}
 	if (l_CanShrink && !l_FilePopover)
 	{
-		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
+		if (m_Ui.iconButton("selbar.shrink", l_Next(), ui::Icon::ShrinkImage, false, true, tr("tip.shrink")))
 			compressSelectedPictures();
 	}
 	if (l_CanSaveFile && !l_FilePopover)
 	{
 		const ImageAsset* l_HereAsset = m_Editor.document().findAsset(l_MediaAsset);
 		const bool l_Here = l_HereAsset != nullptr && l_HereAsset->complete();
-		if (m_Ui.iconButton("selbar.savefile", l_Next(), ui::Icon::SaveAs, false, l_Here, l_Here ? "Save this file to your computer" : "Still arriving: it can be saved when it has finished"))
+		if (m_Ui.iconButton("selbar.savefile", l_Next(), ui::Icon::SaveAs, false, l_Here, tr(l_Here ? "tip.saveFile" : "tip.saveFileLater")))
 			showSaveMediaDialog(l_MediaAsset);
 	}
 
@@ -206,7 +207,7 @@ void App::buildSelectionBar()
 		m_Ui.draw().line(Vec2{ l_Line, l_Bar.min.y + m_Ui.px(12.f) }, Vec2{ l_Line, l_Bar.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
 		l_Cursor += l_Separator;
 		const ui::Rect2 l_ColorRect = l_Next();
-		if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, "Recolour the selection"))
+		if (m_Ui.iconButton("selbar.colour", l_ColorRect, ui::Icon::Palette, m_Popup == Popup::SelectionColor, true, tr("pop.recolor")))
 			togglePopup(Popup::SelectionColor);
 	}
 	else if (m_Popup == Popup::SelectionColor)

@@ -16,6 +16,7 @@ module;
 
 module wb.platform.pdf;
 
+import wb.io.locale;
 import wb.math;
 
 namespace wb::platform
@@ -43,13 +44,13 @@ std::string describeError(const unsigned long p_Code)
 	switch (p_Code)
 	{
 	case FPDF_ERR_PASSWORD:
-		return "This PDF is protected with a password.";
+		return tr("pdf.password");
 	case FPDF_ERR_FORMAT:
-		return "This file is not a PDF Inkwell can read.";
+		return tr("pdf.format");
 	case FPDF_ERR_FILE:
-		return "The PDF could not be opened.";
+		return tr("pdf.open");
 	default:
-		return "The PDF could not be read.";
+		return tr("pdf.read");
 	}
 }
 } // namespace
@@ -120,7 +121,7 @@ PdfImport importPdf(const std::vector<uint8_t>& p_Bytes)
 	}
 	FPDF_CloseDocument(l_Document);
 	if (l_Result.pages.empty())
-		l_Result.error = "No page of this PDF could be drawn.";
+		l_Result.error = tr("pdf.noPages");
 	return l_Result;
 }
 } // namespace wb::platform

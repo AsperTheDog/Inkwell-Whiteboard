@@ -21,6 +21,8 @@ module;
 
 module wb.io.file;
 
+import wb.io.locale;
+
 namespace wb
 {
 namespace fs = std::filesystem;
@@ -76,7 +78,7 @@ IoResult replaceFile(const fs::path& p_From, const fs::path& p_To)
 	{
 		std::error_code l_Ignored;
 		fs::remove(p_From, l_Ignored);
-		return IoResult::failure("Cannot replace " + pathToUtf8(p_To) + ": " + l_Error.message());
+		return IoResult::failure(tr("io.cannotReplace", { pathToUtf8(p_To), l_Error.message() }));
 	}
 	return {};
 }
@@ -92,14 +94,14 @@ IoResult writeFileAtomic(const fs::path& p_Path, const std::span<const uint8_t> 
 	{
 		std::ofstream l_File(l_Temp, std::ios::binary | std::ios::trunc);
 		if (!l_File)
-			return IoResult::failure("Cannot create " + pathToUtf8(l_Temp));
+			return IoResult::failure(tr("io.cannotCreate", { pathToUtf8(l_Temp) }));
 		l_File.write(reinterpret_cast<const char*>(p_Bytes.data()), static_cast<std::streamsize>(p_Bytes.size()));
 		l_File.flush();
 		if (!l_File)
 		{
 			l_File.close();
 			fs::remove(l_Temp, l_Error);
-			return IoResult::failure("Cannot write " + pathToUtf8(p_Path) + " (disk full or no permission?)");
+			return IoResult::failure(tr("io.cannotWrite", { pathToUtf8(p_Path) }));
 		}
 	}
 
@@ -111,19 +113,19 @@ IoResult readFile(const fs::path& p_Path, std::vector<uint8_t>& p_Bytes, const u
 	p_Bytes.clear();
 	std::ifstream l_File(p_Path, std::ios::binary | std::ios::ate);
 	if (!l_File)
-		return IoResult::failure("Cannot open " + pathToUtf8(p_Path));
+		return IoResult::failure(tr("io.cannotOpen", { pathToUtf8(p_Path) }));
 	const std::streamoff l_Size = l_File.tellg();
 	if (l_Size < 0)
-		return IoResult::failure("Cannot read " + pathToUtf8(p_Path));
+		return IoResult::failure(tr("io.cannotRead", { pathToUtf8(p_Path) }));
 	if (static_cast<uint64_t>(l_Size) > p_MaxBytes)
-		return IoResult::failure(pathToUtf8(p_Path) + " is too large");
+		return IoResult::failure(tr("io.tooLarge", { pathToUtf8(p_Path) }));
 	p_Bytes.resize(static_cast<size_t>(l_Size));
 	l_File.seekg(0);
 	l_File.read(reinterpret_cast<char*>(p_Bytes.data()), l_Size);
 	if (!l_File)
 	{
 		p_Bytes.clear();
-		return IoResult::failure("Cannot read " + pathToUtf8(p_Path));
+		return IoResult::failure(tr("io.cannotRead", { pathToUtf8(p_Path) }));
 	}
 	return {};
 }

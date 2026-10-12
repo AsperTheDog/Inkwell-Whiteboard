@@ -16,6 +16,7 @@ module;
 module wb.image.codec;
 
 import wb.io.gif;
+import wb.io.locale;
 
 namespace wb::image
 {
@@ -326,7 +327,7 @@ std::optional<Decoded> decode(const std::span<const uint8_t> p_Bytes, const Deco
 	const std::optional<ImageInfo> l_Info = probe(p_Bytes);
 	if (!l_Info)
 	{
-		p_Error = "This is not a picture Inkwell can read.";
+		p_Error = tr("media.notPicture");
 		return std::nullopt;
 	}
 	const int l_Size = static_cast<int>(p_Bytes.size());
@@ -362,7 +363,7 @@ std::optional<Decoded> decode(const std::span<const uint8_t> p_Bytes, const Deco
 		});
 		if (!l_Decoded || l_Webp.frames.empty())
 		{
-			p_Error = "The picture could not be decoded (WebP).";
+			p_Error = tr("media.decodeWebp");
 			return std::nullopt;
 		}
 		return l_Webp;
@@ -415,7 +416,7 @@ std::optional<Decoded> decode(const std::span<const uint8_t> p_Bytes, const Deco
 	if (!l_Block || l_Width <= 0 || l_Height <= 0 || l_FrameCount <= 0)
 	{
 		const char* l_Reason = stbi_failure_reason();
-		p_Error = std::string("The picture could not be decoded") + (l_Reason != nullptr ? std::string(" (") + l_Reason + ")." : ".");
+		p_Error = l_Reason != nullptr ? tr("media.decodeReason", { l_Reason }) : tr("media.decode");
 		if (l_RawDelays != nullptr)
 			stbi_image_free(l_RawDelays);
 		return std::nullopt;
@@ -456,7 +457,7 @@ std::optional<Recompressed> recompress(const std::span<const uint8_t> p_Bytes, c
 	const std::optional<ImageInfo> l_Info = probe(p_Bytes);
 	if (!l_Info || l_Info->gif)
 	{
-		p_Error = l_Info ? "Animated pictures cannot be recompressed." : "This is not a picture Inkwell can read.";
+		p_Error = tr(l_Info ? "media.animatedRecompress" : "media.notPicture");
 		return std::nullopt;
 	}
 	int l_Width = 0, l_Height = 0, l_Components = 0;
@@ -479,7 +480,7 @@ std::optional<Recompressed> recompress(const std::span<const uint8_t> p_Bytes, c
 	const uint8_t* l_Decoded = l_Info->webp ? l_WebpPixels.data() : l_Pixels.get();
 	if (l_Decoded == nullptr || l_Width <= 0 || l_Height <= 0)
 	{
-		p_Error = "The picture could not be decoded.";
+		p_Error = tr("media.decode");
 		return std::nullopt;
 	}
 
@@ -523,7 +524,7 @@ std::optional<Recompressed> recompress(const std::span<const uint8_t> p_Bytes, c
 	// Worth it only when it saves at least a tenth
 	if (l_Result.bytes.empty() || l_Result.bytes.size() * 10 > p_Bytes.size() * 9)
 	{
-		p_Error = "This picture is already small.";
+		p_Error = tr("media.alreadySmall");
 		return std::nullopt;
 	}
 	return l_Result;

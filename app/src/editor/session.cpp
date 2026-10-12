@@ -20,6 +20,7 @@ import wb.doc.document;
 import wb.editor;
 import wb.io.blob;
 import wb.io.file;
+import wb.io.locale;
 import wb.io.serializer;
 
 namespace wb
@@ -55,13 +56,13 @@ bool Session::dirty() const
 
 std::string Session::displayName() const
 {
-	return m_Path ? pathToUtf8(m_Path->filename()) : std::string("Untitled");
+	return m_Path ? pathToUtf8(m_Path->filename()) : tr("board.untitled");
 }
 
 IoResult Session::beginSave(const std::filesystem::path& p_Path)
 {
 	if (m_Save)
-		return IoResult::failure("The board is still being saved.");
+		return IoResult::failure(tr("file.stillSavingError"));
 	waitForAutosave(); // two writers must not meet
 
 	// Serialized here (the document belongs to this thread). Everything big is written by the worker, read from where it
@@ -153,7 +154,7 @@ IoResult Session::saveTo(const std::filesystem::path& p_Path)
 		return l_Started;
 	waitForSave();
 	const std::optional<SaveOutcome> l_Outcome = std::exchange(m_Outcome, std::nullopt);
-	return l_Outcome && l_Outcome->ok ? IoResult{} : IoResult::failure(l_Outcome ? l_Outcome->error : std::string("The board could not be saved."));
+	return l_Outcome && l_Outcome->ok ? IoResult{} : IoResult::failure(l_Outcome ? l_Outcome->error : tr("file.saveFailedShort"));
 }
 
 IoResult Session::open(const std::filesystem::path& p_Path)
@@ -300,7 +301,7 @@ IoResult Session::recover()
 		return IoResult::failure(l_Loaded.error);
 	if (!l_Loaded.missingFiles.empty())
 	{
-		m_Warning = "These pictures or videos could not be restored because their files have moved or changed:";
+		m_Warning = tr("file.missingMedia");
 		for (const std::string& l_Name : l_Loaded.missingFiles)
 			m_Warning += "\n  " + l_Name;
 	}

@@ -31,6 +31,7 @@ import wb.editor;
 import wb.image.codec;
 import wb.io.blob;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.platform.clipboard;
 import wb.platform.input;
@@ -218,17 +219,17 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 		m_Editor.selection().set(l_Inserted);
 		m_Editor.setTool(tools::ToolKind::Select); // ready to move and resize it
 		if (l_Rejected > 0)
-			showToast(std::to_string(l_Rejected) + (l_Rejected == 1 ? " file could not be inserted" : " files could not be inserted"));
+			showToast(tr(l_Rejected == 1 ? "images.rejected.one" : "images.rejected.many", { std::to_string(l_Rejected) }));
 		else if (l_Unreadable > 0)
-			showToast(std::to_string(l_Unreadable) + (l_Unreadable == 1 ? " file could not be read" : " files could not be read"));
+			showToast(tr(l_Unreadable == 1 ? "images.unreadable.one" : "images.unreadable.many", { std::to_string(l_Unreadable) }));
 	}
 	else if (l_Unreadable > 0)
 	{
-		showToast(l_Unreadable == 1 ? "That file could not be read" : "Those files could not be read");
+		showToast(tr(l_Unreadable == 1 ? "images.thatUnreadable" : "images.thoseUnreadable"));
 	}
 	else if (l_Rejected > 0)
 	{
-		showToast("Inkwell can only insert pictures, videos, PDFs and text files");
+		showToast(tr("images.unsupported"));
 	}
 	requestRedraw();
 }
@@ -271,7 +272,9 @@ void App::showInsertPictureDialog()
 {
 	if (m_DialogKind != DialogKind::None || m_Editor.isBusy())
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Pictures, videos and PDFs", "png;jpg;jpeg;gif;webp;bmp;tga;psd;pdf;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" }, { "All files", "*" } };
+	static SDL_DialogFileFilter s_Filters[2]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("images.files").c_str(), "png;jpg;jpeg;gif;webp;bmp;tga;psd;pdf;mp4;m4v;mov;webm;mkv;avi;ogv;mpg;mpeg;ts" };
+	s_Filters[1] = { tr("common.allFiles").c_str(), "*" };
 	m_DialogKind = DialogKind::Pictures;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 2, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
 }
@@ -284,7 +287,7 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 	if (l_Path.extension() == ".wbrd")
 	{
 		if (m_Session.dirty())
-			showToast("Save this board first, then open the other one with Ctrl+O");
+			showToast(tr("images.saveFirst"));
 		else
 			openPath(l_Path);
 		return;
@@ -306,7 +309,7 @@ void App::handleDroppedFile(const SDL_DropEvent& p_Event)
 	{
 		const float l_Scale = m_Window.pixelDensity();
 		if (!dropSubtitleFile(l_Path, Vec2{ p_Event.x, p_Event.y } * l_Scale))
-			showToast("Drop subtitle files on a video");
+			showToast(tr("images.dropSubtitles"));
 		return;
 	}
 
@@ -328,7 +331,7 @@ void App::compressSelectedPictures()
 		return;
 	if (m_ReduceJob.valid())
 	{
-		showToast("Pictures are still being reduced");
+		showToast(tr("images.shrinkBusy"));
 		return;
 	}
 	Document& l_Document = m_Editor.document();
@@ -351,7 +354,7 @@ void App::compressSelectedPictures()
 	}
 	if (l_Files.empty())
 	{
-		showToast("Nothing to reduce in the selection");
+		showToast(tr("images.nothingToReduce"));
 		return;
 	}
 
@@ -380,7 +383,7 @@ void App::compressSelectedPictures()
 		}
 		return l_Out;
 	});
-	showToast("Reducing the pictures...");
+	showToast(tr("images.reducing"));
 }
 
 // Once per loop: puts the reduced files on the board. Editing the objects is a normal edit, so everybody in a shared board gets
@@ -428,7 +431,7 @@ void App::pollReducedPictures()
 
 	if (l_Replacements.empty())
 	{
-		showToast(l_Result.reason.empty() ? "Nothing to reduce in the selection" : l_Result.reason);
+		showToast(l_Result.reason.empty() ? tr("images.nothingToReduce") : l_Result.reason);
 		return;
 	}
 	m_Editor.editImages(l_Result.objects, "Reduce picture size", [&](ImageData& p_Image)
@@ -439,7 +442,7 @@ void App::pollReducedPictures()
 		p_Image.asset = l_It->second;
 		return true;
 	});
-	showToast("Reduced from " + formatSize(l_Before) + " to " + formatSize(l_After));
+	showToast(tr("images.reduced", { formatSize(l_Before), formatSize(l_After) }));
 	requestRedraw();
 }
 

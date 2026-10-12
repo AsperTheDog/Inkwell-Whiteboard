@@ -27,6 +27,7 @@ import wb.gfx.frames;
 import wb.gfx.image;
 import wb.gfx.swapchain;
 import wb.io.file;
+import wb.io.locale;
 import wb.io.settings;
 import wb.math;
 import wb.net.collab;
@@ -205,6 +206,8 @@ private:
 	void finishPersistence(bool p_DiscardRecovery);
 	void loadSettings();
 	void saveSettings();
+	void initLanguage();
+	void setUiLanguage(const std::string& p_Code); // switches the texts now; "" follows the system language
 	void requestAction(Action p_Action);
 	void performAction(Action p_Action);
 	void requestSave(bool p_SaveAs, Action p_After);
@@ -311,6 +314,10 @@ private:
 	Settings m_Settings;
 	std::filesystem::path m_PrefDir;     // empty: nothing is persisted (smoke test, or no writable location)
 	std::string m_LastDirectory;         // where the file dialogs start
+	std::filesystem::path m_LanguageDir; // the language files (assets/lang)
+	std::vector<LanguageInfo> m_Languages;
+	std::string m_LanguageSetting;       // the code the user picked; empty: follow the system language
+	bool m_LanguageListOpen = false;     // the list of languages in the settings window
 
 	gfx::PresentPolicy m_PresentPolicy = gfx::PresentPolicy::VSync;
 	bool m_Running = true;

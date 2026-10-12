@@ -23,6 +23,7 @@ module;
 
 module wb.net.collab;
 
+import wb.io.locale;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
@@ -169,6 +170,39 @@ bool CollabSession::setReadOnly(const uint16_t p_Slot, const bool p_ReadOnly)
 	return true;
 }
 
+namespace
+{
+// Reasons travel over the wire in English, because the other side may speak another language. They are translated
+// here, where they are shown.
+std::string localizeReason(const std::string& p_Reason)
+{
+	static constexpr std::pair<std::string_view, std::string_view> REASONS[] = {
+		{ "Too many wrong passwords, wait a minute", "net.reason.tooManyPasswords" },
+		{ "This host runs an incompatible version of Inkwell", "net.reason.incompatible" },
+		{ "Wrong password", "net.reason.wrongPassword" },
+		{ "The session is full", "net.reason.full" },
+		{ "The host could not prepare the board", "net.reason.noBoard" },
+		{ "The host ended the session", "net.reason.ended" },
+		{ "Session ended", "net.reason.ended" },
+		{ "Rejected", "net.reason.rejected" },
+		{ "Protocol error", "net.reason.protocol" },
+		{ "Incompatible version", "net.reason.incompatibleShort" },
+		{ "Not an Inkwell peer", "net.reason.notInkwell" },
+		{ "Invalid key exchange", "net.reason.keyExchange" },
+		{ "Corrupted or tampered data", "net.reason.tampered" },
+		{ "Too many video updates", "net.reason.tooManyVideo" },
+		{ "Too many line updates", "net.reason.tooManyLines" },
+		{ "Cancelled", "net.reason.cancelled" },
+	};
+	for (const auto& [l_English, l_Id] : REASONS)
+	{
+		if (p_Reason == l_English)
+			return tr(l_Id);
+	}
+	return p_Reason;
+}
+} // namespace
+
 void CollabSession::tell(const std::string& p_Text, const bool p_Error)
 {
 	if (m_Hooks.message)
@@ -226,7 +260,7 @@ bool CollabSession::host(const uint16_t p_Port, std::string p_Password, std::str
 	if (!l_Socket.valid())
 	{
 		if (p_Error.empty())
-			p_Error = "Could not open the port";
+			p_Error = tr("net.openPortFailed");
 		note("Could not host on port " + std::to_string(p_Port) + ": " + p_Error);
 		return false;
 	}
@@ -627,12 +661,12 @@ void CollabSession::tick()
 		{
 			if (!l_Peer.challenged && l_Now - l_Peer.since > HANDSHAKE_TIMEOUT)
 			{
-				failClient("Connected, but the host never started the login within 10 s. Whatever accepted the connection is not an Inkwell host (a router forwarding to the wrong machine, or another program).");
+				failClient(tr("net.noLogin"));
 				break;
 			}
 			if (l_Now - l_Peer.since > JOIN_TIMEOUT)
 			{
-				failClient(l_Peer.welcomed ? "The host stopped sending the board" : "The host did not answer the login");
+				failClient(tr(l_Peer.welcomed ? "net.boardStopped" : "net.loginNoAnswer"));
 				break;
 			}
 		}
@@ -701,7 +735,7 @@ void CollabSession::handleEvent(Event& p_Event)
 		break;
 	}
 	case Event::Kind::ConnectFailed:
-		failClient(p_Event.text.empty() ? "Could not connect" : p_Event.text);
+		failClient(p_Event.text.empty() ? tr("net.connectFailed") : p_Event.text);
 		break;
 	case Event::Kind::FrameIn:
 	{
@@ -726,21 +760,21 @@ void CollabSession::handleEvent(Event& p_Event)
 			break;
 		}
 		const Peer& l_Peer = l_It->second;
-		const std::string l_Why = " (" + p_Event.text + ")";
+		const std::string l_Why = localizeReason(p_Event.text);
 		if (m_State == LinkState::Online)
-			failClient("Disconnected from the host" + l_Why);
+			failClient(tr("net.disconnected", { l_Why }));
 		else if (p_Event.text == "Incompatible version")
-			failClient("This host runs an older version of Inkwell without encrypted sessions. Both sides need the same version.");
+			failClient(tr("net.olderHost"));
 		else if (!l_Peer.challenged && (p_Event.text == "Not an Inkwell peer" || p_Event.text == "Invalid key exchange"))
-			failClient("Reached something on that address and port, but it is not an Inkwell host: it sent data Inkwell does not understand (a web server, a router page or another program is using this port?)");
+			failClient(tr("net.notInkwellHost"));
 		else if (p_Event.text == "Corrupted or tampered data")
-			failClient("The connection to the host delivered data that failed its integrity check, so it was cut. Somebody may be tampering with it.");
+			failClient(tr("net.tamperedData"));
 		else if (!l_Peer.challenged)
-			failClient("The connection was accepted but closed before the login started" + l_Why + ". Whatever is on that port is not an Inkwell host, or a router/firewall cut the connection.");
+			failClient(tr("net.closedBeforeLogin", { l_Why }));
 		else if (!l_Peer.welcomed)
-			failClient("The host closed the connection during the login" + l_Why);
+			failClient(tr("net.closedDuringLogin", { l_Why }));
 		else
-			failClient("The host closed the connection while sending the board" + l_Why);
+			failClient(tr("net.closedDuringBoard", { l_Why }));
 		break;
 	}
 	}
@@ -884,7 +918,7 @@ void CollabSession::hostHello(Peer& p_Peer, const Frame& p_Frame)
 	sendVideoStates(p_Peer);
 	rebuildUsers();
 	note(p_Peer.address + " logged in as \"" + p_Peer.info.name + "\" and received the board (" + std::to_string(l_Board.size() / 1024) + " KiB)");
-	tell(p_Peer.info.name + " joined");
+	tell(tr("net.joined", { p_Peer.info.name }));
 }
 
 void CollabSession::hostOps(Peer& p_Peer, const Frame& p_Frame)
@@ -981,7 +1015,7 @@ void CollabSession::dropPeer(const uint32_t p_Id, const std::string& p_Reason)
 		if (l_Other.state == PeerState::Joined)
 			l_Other.connection->send(type(MsgType::UserLeft), l_Announce);
 	}
-	tell(l_Info.name + " left");
+	tell(tr("net.left", { l_Info.name }));
 	abandonDownloadsFrom(p_Id, l_Info.name);
 }
 
@@ -1050,7 +1084,7 @@ void CollabSession::cursorReceived(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged pointer update");
+			failClient(tr("net.damaged.pointer"));
 		return;
 	}
 	const Clock::time_point l_Now = Clock::now();
@@ -1114,7 +1148,7 @@ void CollabSession::videoStateReceived(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged video update");
+			failClient(tr("net.damaged.video"));
 		return;
 	}
 	if (m_Role == Role::Host)
@@ -1264,7 +1298,7 @@ void CollabSession::strokeReceived(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged line update");
+			failClient(tr("net.damaged.line"));
 		return;
 	}
 	if (m_Role == Role::Host)
@@ -1521,7 +1555,7 @@ void CollabSession::previewReceived(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged thumbnail");
+			failClient(tr("net.damaged.thumbnail"));
 		return;
 	}
 	// Only for files we are waiting for from this peer
@@ -1614,9 +1648,8 @@ void CollabSession::abandonDownloadsFrom(const uint32_t p_PeerId, const std::str
 		(void)m_Document.take(l_Id); // an ordinary local edit: it is replicated to the others
 	if (!l_Remove.empty() && m_Hooks.remoteChange)
 		m_Hooks.remoteChange(l_Remove, true);
-	const std::string l_What = l_Lost.size() == 1 ? "a picture/video" : std::to_string(l_Lost.size()) + " pictures/videos";
-	note(p_Who + " left before " + l_What + " finished arriving: cancelled");
-	tell(p_Who + " left before " + l_What + " finished arriving. " + (l_Remove.empty() ? "" : "Removed from the board."));
+	note(p_Who + " left before " + std::to_string(l_Lost.size()) + " file(s) finished arriving: cancelled");
+	tell(tr(l_Lost.size() == 1 ? (l_Remove.empty() ? "net.leftFile" : "net.leftFileRemoved") : (l_Remove.empty() ? "net.leftFiles" : "net.leftFilesRemoved"), { p_Who, std::to_string(l_Lost.size()) }));
 }
 
 void CollabSession::wantAssets(Peer& p_Source, const std::span<const ObjectId> p_Objects)
@@ -1687,7 +1720,7 @@ void CollabSession::assetRequested(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged file request");
+			failClient(tr("net.damaged.request"));
 		return;
 	}
 	if (completeAsset(l_Request.id) != nullptr)
@@ -1753,7 +1786,7 @@ void CollabSession::assetStalledReceived(Peer& p_Peer, const Frame& p_Frame)
 	AssetRequest l_Message;
 	if (!decode(p_Frame.payload, l_Message))
 	{
-		failClient("The host sent a damaged message");
+		failClient(tr("net.damaged.message"));
 		return;
 	}
 	dropDownload(l_Message.id); // the transfer we waited for is not coming
@@ -1852,7 +1885,7 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 		if (m_Role == Role::Host)
 			dropPeer(p_Peer.id, "Protocol error");
 		else
-			failClient("The host sent a damaged picture or video");
+			failClient(tr("net.damaged.file"));
 		return;
 	}
 	// Only files we asked this peer for are taken; anything else (also pieces of a board that has since been replaced) is ignored
@@ -1892,7 +1925,7 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 			{
 				const std::string l_Name = l_Download.name;
 				note("Could not receive \"" + l_Name + "\": " + l_Problem);
-				tell("\"" + l_Name + "\" could not be received: " + l_Problem);
+				tell(tr("net.receiveFailed", { l_Name, l_Problem }));
 				dropDownload(l_Id);
 				m_Stalled.insert(l_Id);
 				return;
@@ -1920,7 +1953,7 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 		{
 			const std::string l_Name = l_Download.name;
 			note("Could not store \"" + l_Name + "\": " + l_Problem);
-			tell("\"" + l_Name + "\" could not be received: " + l_Problem);
+			tell(tr("net.receiveFailed", { l_Name, l_Problem }));
 			dropDownload(l_Id);
 			m_Stalled.insert(l_Id);
 			return;
@@ -1974,7 +2007,7 @@ void CollabSession::assetReceived(Peer& p_Peer, const Frame& p_Frame)
 
 void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 {
-	const auto l_Protocol = [&] { failClient("The host sent something unexpected (message type " + std::to_string(p_Frame.type) + "). It may run a different version of Inkwell."); };
+	const auto l_Protocol = [&] { failClient(tr("net.unexpected", { std::to_string(p_Frame.type) })); };
 	switch (static_cast<MsgType>(p_Frame.type))
 	{
 	case MsgType::Challenge:
@@ -2001,7 +2034,7 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		Reject l_Reject;
 		if (!decode(p_Frame.payload, l_Reject))
 			return l_Protocol();
-		failClient(l_Reject.reason.empty() ? "The host refused the connection" : l_Reject.reason);
+		failClient(l_Reject.reason.empty() ? tr("net.refused") : localizeReason(l_Reject.reason));
 		return;
 	}
 	case MsgType::Welcome:
@@ -2012,7 +2045,7 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		// Only the real host (or somebody who knows the password) can show this for exactly this key exchange
 		if (!crypto::equal(l_Welcome.proof, m_PasswordKey.proof(true, p_Peer.connection->transcript())))
 		{
-			failClient("The host could not prove it knows the password for this connection. Somebody may be intercepting it.");
+			failClient(tr("net.noProof"));
 			return;
 		}
 		p_Peer.welcomed = true;
@@ -2045,7 +2078,7 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 		{
 			m_Users.push_back(l_User);
 			++m_UsersRevision;
-			tell(l_User.name + " joined");
+			tell(tr("net.joined", { l_User.name }));
 		}
 		return;
 	}
@@ -2070,7 +2103,7 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 					m_StrokeActive = false;
 					m_StrokeDirty = false;
 				}
-				tell(l_Update.readOnly ? "The host made you read-only: you can watch but not change the board" : "The host lets you edit again");
+				tell(tr(l_Update.readOnly ? "net.nowReadOnly" : "net.canEditAgain"));
 			}
 			break;
 		}
@@ -2083,7 +2116,7 @@ void CollabSession::clientFrame(Peer& p_Peer, Frame& p_Frame)
 			return l_Protocol();
 		if (const UserInfo* l_User = user(l_Left.slot))
 		{
-			tell(l_User->name + " left");
+			tell(tr("net.left", { l_User->name }));
 			m_Cursors.erase(l_Left.slot);
 			forgetStrokes(l_Left.slot);
 			std::erase_if(m_Users, [&](const UserInfo& p_Other) { return p_Other.slot == l_Left.slot; });
@@ -2136,7 +2169,7 @@ void CollabSession::clientSnapshot(Peer& p_Peer, const Frame& p_Frame)
 	SnapshotChunk l_Chunk;
 	if (!decode(p_Frame.payload, l_Chunk) || p_Peer.snapshot.size() + l_Chunk.bytes.size() > MAX_SNAPSHOT_BYTES)
 	{
-		failClient("The host sent a damaged board");
+		failClient(tr("net.damaged.board"));
 		return;
 	}
 	p_Peer.snapshot.insert(p_Peer.snapshot.end(), l_Chunk.bytes.begin(), l_Chunk.bytes.end());
@@ -2154,7 +2187,7 @@ void CollabSession::clientSnapshot(Peer& p_Peer, const Frame& p_Frame)
 	}
 	if (!l_Loaded)
 	{
-		failClient("Could not read the board from the host");
+		failClient(tr("net.boardUnreadable"));
 		return;
 	}
 	p_Peer.state = PeerState::Joined;
@@ -2163,7 +2196,7 @@ void CollabSession::clientSnapshot(Peer& p_Peer, const Frame& p_Frame)
 	m_Pending.clear();
 	m_PendingMove.clear();
 	setIdle(false);
-	tell("Joined the session");
+	tell(tr("net.youJoined"));
 	// Big pictures and videos are not part of the board: ask for the ones it uses
 	wantAllMissingAssets(p_Peer);
 	if (!m_Downloads.empty())

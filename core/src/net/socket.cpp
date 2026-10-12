@@ -34,6 +34,8 @@ module;
 
 module wb.net.socket;
 
+import wb.io.locale;
+
 namespace wb::net
 {
 namespace
@@ -321,7 +323,7 @@ Socket Socket::connectTcp(const std::string& p_Host, const uint16_t p_Port, cons
 #else
 		const std::string l_Why = std::string(gai_strerror(l_Lookup)) + ", " + std::to_string(l_Lookup);
 #endif
-		p_Error = "Could not find \"" + p_Host + "\": the name does not resolve. Check the spelling, or use the IP address instead.";
+		p_Error = tr("net.noSuchHost", { p_Host });
 		say("Lookup failed (" + l_Why + ")");
 		return {};
 	}
@@ -413,22 +415,19 @@ Socket Socket::connectTcp(const std::string& p_Host, const uint16_t p_Port, cons
 		return l_Result;
 	if (p_Cancel.load())
 	{
-		p_Error = "Cancelled";
+		p_Error = tr("net.reason.cancelled");
 	}
 	else if (l_Refused == l_Tried)
 	{
-		p_Error = "\"" + p_Host + "\" refused the connection on port " + std::to_string(p_Port) + ". The machine is reachable but nothing is listening there: "
-		          "the host is not hosting yet, the port number is wrong, or a firewall is rejecting it.";
+		p_Error = tr("net.hostRefused", { p_Host, std::to_string(p_Port) });
 	}
 	else if (l_Timeouts == l_Tried)
 	{
-		p_Error = "No answer from \"" + p_Host + "\" on port " + std::to_string(p_Port) + " after " + std::to_string(p_TimeoutMs / 1000) + " s. "
-		          "Packets are being dropped on the way: the IP address is wrong (a private 192.168.x.x / 10.x.x.x address does not work over the internet), "
-		          "the router is not forwarding this port to the host, or the host's firewall blocks inkwell.";
+		p_Error = tr("net.noAnswer", { p_Host, std::to_string(p_Port), std::to_string(p_TimeoutMs / 1000) });
 	}
 	else
 	{
-		p_Error = "Could not connect to \"" + p_Host + "\" on port " + std::to_string(p_Port) + ": " + l_LastReason;
+		p_Error = tr("net.connectTo", { p_Host, std::to_string(p_Port), l_LastReason });
 	}
 	return l_Result;
 }

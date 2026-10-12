@@ -26,6 +26,7 @@ module wb.app;
 import wb.doc.commands;
 import wb.editor;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.platform.input;
 import wb.session;
@@ -46,14 +47,13 @@ constexpr float EDGE_MARGIN = 16.f;
 
 std::string describeAge(const int64_t p_Seconds)
 {
-	const auto l_Count = [](const int64_t p_Value, const char* p_Unit) { return std::to_string(p_Value) + " " + p_Unit + (p_Value == 1 ? "" : "s") + " ago"; };
 	if (p_Seconds < 60)
-		return "less than a minute ago";
+		return tr("age.lessThanMinute");
 	if (p_Seconds < 3600)
-		return l_Count(p_Seconds / 60, "minute");
+		return tr(p_Seconds / 60 == 1 ? "age.minute" : "age.minutes", { std::to_string(p_Seconds / 60) });
 	if (p_Seconds < 86400)
-		return l_Count(p_Seconds / 3600, "hour");
-	return l_Count(p_Seconds / 86400, "day");
+		return tr(p_Seconds / 3600 == 1 ? "age.hour" : "age.hours", { std::to_string(p_Seconds / 3600) });
+	return tr(p_Seconds / 86400 == 1 ? "age.day" : "age.days", { std::to_string(p_Seconds / 86400) });
 }
 
 struct DialogButton
@@ -62,7 +62,8 @@ struct DialogButton
 	ui::ButtonStyle style = ui::ButtonStyle::Secondary;
 };
 
-// A modal card over a dimmed board. Returns the index of the clicked button, or -1.
+// A modal card over a dimmed board. Title and button labels are language ids; the body is already translated text.
+// Returns the index of the clicked button, or -1.
 int dialogCard(ui::Context& p_Ui, const std::string_view p_Key, const std::string_view p_Title, const std::string_view p_Body, const std::span<const DialogButton> p_Buttons)
 {
 	ui::DrawList& l_Draw = p_Ui.draw();
@@ -89,7 +90,7 @@ int dialogCard(ui::Context& p_Ui, const std::string_view p_Key, const std::strin
 	p_Ui.panel(l_Card, p_Ui.px(22.f));
 
 	float l_Y = l_Card.min.y + l_Pad;
-	p_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Y + p_Ui.px(13.f) }, p_Title, 18.f, l_Theme.text);
+	p_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Y + p_Ui.px(13.f) }, tr(p_Title), 18.f, l_Theme.text);
 	l_Y += p_Ui.px(26.f) + p_Ui.px(10.f);
 	for (const std::string& l_Line : l_Lines)
 	{
@@ -104,9 +105,9 @@ int dialogCard(ui::Context& p_Ui, const std::string_view p_Key, const std::strin
 	for (int i = static_cast<int>(p_Buttons.size()) - 1; i >= 0; --i)
 	{
 		const DialogButton& l_Button = p_Buttons[static_cast<size_t>(i)];
-		const float l_ButtonWidth = std::max(p_Ui.px(96.f), p_Ui.font().measure(l_Button.label, p_Ui.fontPx(14.f)) + p_Ui.px(40.f));
+		const float l_ButtonWidth = std::max(p_Ui.px(96.f), p_Ui.font().measure(tr(l_Button.label), p_Ui.fontPx(14.f)) + p_Ui.px(40.f));
 		const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_X - l_ButtonWidth, l_Y }, Vec2{ l_ButtonWidth, l_ButtonHeight });
-		if (p_Ui.button(std::string(p_Key) + ".button" + std::to_string(i), l_Rect, l_Button.label, l_Button.style))
+		if (p_Ui.button(std::string(p_Key) + ".button" + std::to_string(i), l_Rect, tr(l_Button.label), l_Button.style))
 			l_Clicked = i;
 		l_X -= l_ButtonWidth + p_Ui.px(10.f);
 	}
@@ -127,7 +128,7 @@ void App::buildMenu()
 	const float l_HeaderHeight = m_Ui.px(40.f);
 	const float l_RowHeight = m_Ui.px(36.f);
 	static constexpr std::array<int, 5> ROW_COUNTS{ 6, 14, 12, 2, 1 };
-	static constexpr std::array<const char*, 5> TITLES{ "Board", "Edit", "View", "Collaborate", "Help" };
+	static constexpr std::array<const char*, 5> TITLES{ "menu.section.board", "menu.section.edit", "menu.section.view", "menu.section.collaborate", "menu.section.help" };
 	const bool l_Idle = !m_Editor.isBusy();
 	const ui::Theme& l_Theme = m_Ui.theme();
 
@@ -144,11 +145,11 @@ void App::buildMenu()
 	const float l_Left = l_Rect.min.x + l_Pad;
 	const float l_Inner = l_Width - l_Pad * 2.f;
 
-	const auto l_Row = [&](const ui::Icon p_Icon, const char* p_Label, const char* p_Shortcut, const bool p_Enabled = true, const bool p_Checked = false) -> bool
+	const auto l_Row = [&](const ui::Icon p_Icon, const char* p_Id, const char* p_Shortcut, const bool p_Enabled = true, const bool p_Checked = false) -> bool
 	{
 		const Rect2 l_RowRect = Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_RowHeight });
 		l_Y += l_RowHeight;
-		return m_Ui.menuRow(std::string("menu.") + p_Label, l_RowRect, p_Icon, p_Label, p_Shortcut, p_Enabled, p_Checked);
+		return m_Ui.menuRow(p_Id, l_RowRect, p_Icon, tr(p_Id), p_Shortcut, p_Enabled, p_Checked);
 	};
 
 	for (int l_Section = 0; l_Section < 5; ++l_Section)
@@ -161,7 +162,7 @@ void App::buildMenu()
 		if (l_Hover > 0.001f)
 			m_Ui.draw().rect(l_HeaderRect, m_Ui.px(8.f), ui::withAlpha(l_Theme.hover, l_Theme.hover.a * l_Hover));
 		const bool l_IsOpen = m_MenuSection == l_Section;
-		m_Ui.label(Vec2{ l_HeaderRect.min.x + m_Ui.px(14.f), l_HeaderRect.center().y }, TITLES[static_cast<size_t>(l_Section)], 13.f, l_IsOpen ? l_Theme.text : l_Theme.textMuted);
+		m_Ui.label(Vec2{ l_HeaderRect.min.x + m_Ui.px(14.f), l_HeaderRect.center().y }, tr(TITLES[static_cast<size_t>(l_Section)]), 13.f, l_IsOpen ? l_Theme.text : l_Theme.textMuted);
 		m_Ui.draw().icon(l_IsOpen ? ui::Icon::ChevronDown : ui::Icon::ChevronRight, Vec2{ l_HeaderRect.max.x - m_Ui.px(20.f), l_HeaderRect.center().y }, m_Ui.fontPx(16.f), l_Theme.textMuted);
 		if (l_State.clicked)
 			m_MenuSection = l_IsOpen ? -1 : l_Section;
@@ -174,142 +175,142 @@ void App::buildMenu()
 		switch (l_Section)
 		{
 		case 0:
-			if (l_Row(ui::Icon::NewFile, "New board", "Ctrl+N", l_Idle))
+			if (l_Row(ui::Icon::NewFile, "menu.new", "Ctrl+N", l_Idle))
 			{
 				requestAction(Action::NewBoard);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Open, "Open...", "Ctrl+O", l_Idle))
+			if (l_Row(ui::Icon::Open, "menu.open", "Ctrl+O", l_Idle))
 			{
 				requestAction(Action::OpenFile);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Save, "Save", "Ctrl+S", l_Idle))
+			if (l_Row(ui::Icon::Save, "menu.save", "Ctrl+S", l_Idle))
 			{
 				requestSave(false, Action::None);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::SaveAs, "Save as...", "Ctrl+Shift+S", l_Idle))
+			if (l_Row(ui::Icon::SaveAs, "menu.saveAs", "Ctrl+Shift+S", l_Idle))
 			{
 				requestSave(true, Action::None);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Export, "Export as PNG...", "Ctrl+Shift+E", l_Idle))
+			if (l_Row(ui::Icon::Export, "menu.exportPng", "Ctrl+Shift+E", l_Idle))
 			{
 				openExportDialog();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Close, "Exit", "Alt+F4"))
+			if (l_Row(ui::Icon::Close, "menu.exit", "Alt+F4"))
 			{
 				requestAction(Action::Quit);
 				l_Close = true;
 			}
 			break;
 		case 1:
-			if (l_Row(ui::Icon::Undo, "Undo", "Ctrl+Z", m_Editor.history().canUndo() && l_Idle))
+			if (l_Row(ui::Icon::Undo, "menu.undo", "Ctrl+Z", m_Editor.history().canUndo() && l_Idle))
 				m_Editor.undo();
-			if (l_Row(ui::Icon::Redo, "Redo", "Ctrl+Y", m_Editor.history().canRedo() && l_Idle))
+			if (l_Row(ui::Icon::Redo, "menu.redo", "Ctrl+Y", m_Editor.history().canRedo() && l_Idle))
 				m_Editor.redo();
-			if (l_Row(ui::Icon::Image, "Insert picture or PDF...", "Ctrl+I", l_Idle))
+			if (l_Row(ui::Icon::Image, "menu.insert", "Ctrl+I", l_Idle))
 			{
 				showInsertPictureDialog();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Cut, "Cut", "Ctrl+X", l_HasSelection))
+			if (l_Row(ui::Icon::Cut, "menu.cut", "Ctrl+X", l_HasSelection))
 			{
 				m_Editor.cutSelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Copy, "Copy", "Ctrl+C", l_HasSelection))
+			if (l_Row(ui::Icon::Copy, "menu.copy", "Ctrl+C", l_HasSelection))
 			{
 				m_Editor.copySelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Paste, "Paste", "Ctrl+V", m_Editor.canPaste() && l_Idle))
+			if (l_Row(ui::Icon::Paste, "menu.paste", "Ctrl+V", m_Editor.canPaste() && l_Idle))
 			{
 				m_Editor.paste();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Duplicate, "Duplicate", "Ctrl+D", l_HasSelection))
+			if (l_Row(ui::Icon::Duplicate, "menu.duplicate", "Ctrl+D", l_HasSelection))
 			{
 				m_Editor.duplicateSelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Trash, "Delete", "Del", l_HasSelection))
+			if (l_Row(ui::Icon::Trash, "menu.delete", "Del", l_HasSelection))
 			{
 				m_Editor.deleteSelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::SelectAll, "Select all", "Ctrl+A", l_Idle && !m_Editor.document().empty()))
+			if (l_Row(ui::Icon::SelectAll, "menu.selectAll", "Ctrl+A", l_Idle && !m_Editor.document().empty()))
 			{
 				m_Editor.selectAll();
 				l_Close = true;
 			}
 			// In a session only the host may wipe the board
-			if (l_Row(ui::Icon::Trash, "Clear board...", "", l_Idle && !m_Editor.document().empty() && !m_Editor.readOnly() && !(m_Collab && m_Collab->role() == net::Role::Client)))
+			if (l_Row(ui::Icon::Trash, "menu.clearBoard", "", l_Idle && !m_Editor.document().empty() && !m_Editor.readOnly() && !(m_Collab && m_Collab->role() == net::Role::Client)))
 			{
 				m_ClearOpen = true;
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Layers, "Group", "Ctrl+G", l_Idle && m_Editor.canGroupSelection()))
+			if (l_Row(ui::Icon::Layers, "menu.group", "Ctrl+G", l_Idle && m_Editor.canGroupSelection()))
 			{
 				m_Editor.groupSelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Layers, "Ungroup", "Ctrl+Shift+G", l_Idle && m_Editor.selectionHasGroup()))
+			if (l_Row(ui::Icon::Layers, "menu.ungroup", "Ctrl+Shift+G", l_Idle && m_Editor.selectionHasGroup()))
 			{
 				m_Editor.ungroupSelection();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::BringToFront, "Bring to front", "Ctrl+Shift+]", l_HasSelection))
+			if (l_Row(ui::Icon::BringToFront, "menu.toFront", "Ctrl+Shift+]", l_HasSelection))
 			{
 				m_Editor.reorderSelection(ZOrderMove::ToFront);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Forward, "Bring forward", "Ctrl+]", l_HasSelection))
+			if (l_Row(ui::Icon::Forward, "menu.forward", "Ctrl+]", l_HasSelection))
 				m_Editor.reorderSelection(ZOrderMove::Forward);
-			if (l_Row(ui::Icon::Backward, "Send backward", "Ctrl+[", l_HasSelection))
+			if (l_Row(ui::Icon::Backward, "menu.backward", "Ctrl+[", l_HasSelection))
 				m_Editor.reorderSelection(ZOrderMove::Backward);
-			if (l_Row(ui::Icon::SendToBack, "Send to back", "Ctrl+Shift+[", l_HasSelection))
+			if (l_Row(ui::Icon::SendToBack, "menu.toBack", "Ctrl+Shift+[", l_HasSelection))
 			{
 				m_Editor.reorderSelection(ZOrderMove::ToBack);
 				l_Close = true;
 			}
 			break;
 		case 2:
-			if (l_Row(ui::Icon::Plus, "Zoom in", "Ctrl+="))
+			if (l_Row(ui::Icon::Plus, "menu.zoomIn", "Ctrl+="))
 				m_Editor.zoomAroundCenter(1.25);
-			if (l_Row(ui::Icon::Minus, "Zoom out", "Ctrl+-"))
+			if (l_Row(ui::Icon::Minus, "menu.zoomOut", "Ctrl+-"))
 				m_Editor.zoomAroundCenter(1.0 / 1.25);
-			if (l_Row(ui::Icon::None, "Actual size", "Ctrl+0"))
+			if (l_Row(ui::Icon::None, "menu.actualSize", "Ctrl+0"))
 				m_Editor.resetZoom();
-			if (l_Row(ui::Icon::Fit, "Fit everything", "Home"))
+			if (l_Row(ui::Icon::Fit, "menu.fit", "Home"))
 			{
 				m_Editor.fitContent();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Grid, "Grid", "", true, m_ShowGrid))
+			if (l_Row(ui::Icon::Grid, "menu.grid", "", true, m_ShowGrid))
 				m_ShowGrid = !m_ShowGrid;
-			if (l_Row(ui::Icon::Ruler, "Ruler", "R", true, m_Editor.rulerVisible()))
+			if (l_Row(ui::Icon::Ruler, "menu.ruler", "R", true, m_Editor.rulerVisible()))
 				m_Editor.toggleRuler();
-			if (l_Row(ui::Icon::Moon, "Dark theme", "", true, m_DarkTheme))
+			if (l_Row(ui::Icon::Moon, "menu.darkTheme", "", true, m_DarkTheme))
 				m_DarkTheme = !m_DarkTheme;
-			if (l_Row(ui::Icon::Play, "Play animations", "", true, m_PlayAnimations))
+			if (l_Row(ui::Icon::Play, "menu.playAnimations", "", true, m_PlayAnimations))
 				m_PlayAnimations = !m_PlayAnimations;
-			if (l_Row(ui::Icon::Layers, "Hide interface", "F2"))
+			if (l_Row(ui::Icon::Layers, "menu.hideInterface", "F2"))
 			{
 				toggleInterface();
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Fullscreen, "Fullscreen", "F11"))
+			if (l_Row(ui::Icon::Fullscreen, "menu.fullscreen", "F11"))
 			{
 				const bool l_Fullscreen = (SDL_GetWindowFlags(m_Window.handle()) & SDL_WINDOW_FULLSCREEN) != 0;
 				SDL_SetWindowFullscreen(m_Window.handle(), !l_Fullscreen);
 				l_Close = true;
 			}
-			if (l_Row(ui::Icon::Bug, "Debug panel", "F3", true, m_ShowDebug))
+			if (l_Row(ui::Icon::Bug, "menu.debugPanel", "F3", true, m_ShowDebug))
 				m_ShowDebug = !m_ShowDebug;
-			if (l_Row(ui::Icon::Sliders, "Settings...", ""))
+			if (l_Row(ui::Icon::Sliders, "menu.settings", ""))
 			{
 				m_ShowSettings = true;
 				l_Close = true;
@@ -318,26 +319,26 @@ void App::buildMenu()
 		case 3:
 			if (m_Collab && m_Collab->active())
 			{
-				if (l_Row(ui::Icon::Layers, "People and session...", "", m_Collab->online()))
+				if (l_Row(ui::Icon::Layers, "menu.session", "", m_Collab->online()))
 				{
 					openCollabDialog(CollabDialog::Session);
 					l_Close = true;
 				}
-				if (l_Row(ui::Icon::Close, m_Collab->role() == net::Role::Host ? "Stop hosting" : "Leave session", ""))
+				if (l_Row(ui::Icon::Close, m_Collab->role() == net::Role::Host ? "menu.stopHosting" : "menu.leave", ""))
 				{
 					m_Collab->leave();
-					showToast("Left the session");
+					showToast(tr("toast.leftSession"));
 					l_Close = true;
 				}
 			}
 			else
 			{
-				if (l_Row(ui::Icon::Upload, "Host a session...", "", l_Idle))
+				if (l_Row(ui::Icon::Upload, "menu.host", "", l_Idle))
 				{
 					openCollabDialog(CollabDialog::Host);
 					l_Close = true;
 				}
-				if (l_Row(ui::Icon::Open, "Join a session...", "", l_Idle))
+				if (l_Row(ui::Icon::Open, "menu.join", "", l_Idle))
 				{
 					openCollabDialog(CollabDialog::Join);
 					l_Close = true;
@@ -345,7 +346,7 @@ void App::buildMenu()
 			}
 			break;
 		case 4:
-			if (l_Row(ui::Icon::Keyboard, "Keyboard shortcuts", "F1"))
+			if (l_Row(ui::Icon::Keyboard, "menu.shortcuts", "F1"))
 			{
 				m_ShowShortcuts = true;
 				l_Close = true;
@@ -364,97 +365,27 @@ void App::buildMenu()
 
 namespace
 {
-struct ShortcutRow
-{
-	const char* keys;
-	const char* what;
-};
-
+// The sheet is data in the language file: "shortcuts.<section>.title" and, per row, "shortcuts.<section>.<n>.keys" and
+// "shortcuts.<section>.<n>.what" with n from 1
 struct ShortcutSection
 {
-	const char* title;
-	std::vector<ShortcutRow> rows;
+	const char* id;
+	int rows;
 };
 
-const std::vector<ShortcutSection>& leftSections()
+constexpr std::array<ShortcutSection, 4> LEFT_SECTIONS{ ShortcutSection{ "tools", 6 }, ShortcutSection{ "navigation", 7 }, ShortcutSection{ "file", 3 }, ShortcutSection{ "window", 4 } };
+constexpr std::array<ShortcutSection, 3> RIGHT_SECTIONS{ ShortcutSection{ "editing", 15 }, ShortcutSection{ "text", 6 }, ShortcutSection{ "selection", 5 } };
+
+std::string shortcutId(const ShortcutSection& p_Section, const int p_Row, const char* p_Part)
 {
-	static const std::vector<ShortcutSection> s_Sections{
-		{ "Tools", {
-			{ "P  M  S  E", "Pen, highlighter, shapes, eraser" },
-			{ "V  T  H  L", "Select, text, hand, laser pointer" },
-			{ "Alt + a tool key", "Borrow that tool while held" },
-			{ "R", "Show or hide the ruler" },
-			{ "Shape tool: Shift / Alt", "Equal sides / from the centre" },
-			{ "Pen eraser end", "Erases, whatever the tool" },
-		} },
-		{ "Navigation", {
-			{ "Mouse wheel", "Zoom at the pointer" },
-			{ "Ctrl + wheel", "Scroll (Shift: sideways)" },
-			{ "Space + drag", "Move the board" },
-			{ "Right / middle drag", "Move the board" },
-			{ "Ctrl + =  /  Ctrl + -", "Zoom in / out" },
-			{ "Ctrl + 0", "Actual size" },
-			{ "Home", "Fit everything" },
-		} },
-		{ "File", {
-			{ "Ctrl + N / O", "New / open a board" },
-			{ "Ctrl + S", "Save" },
-			{ "Ctrl + Shift + S", "Save as" },
-		} },
-		{ "Window", {
-			{ "F1", "This list" },
-			{ "F2", "Hide or show the interface" },
-			{ "F3", "Debug panel" },
-			{ "F11", "Fullscreen" },
-		} },
-	};
-	return s_Sections;
+	return std::string("shortcuts.") + p_Section.id + "." + std::to_string(p_Row) + "." + p_Part;
 }
 
-const std::vector<ShortcutSection>& rightSections()
-{
-	static const std::vector<ShortcutSection> s_Sections{
-		{ "Editing", {
-			{ "Ctrl + Z", "Undo" },
-			{ "Ctrl + Y / Ctrl + Shift + Z", "Redo" },
-			{ "Ctrl + A", "Select all" },
-			{ "Ctrl + C / X / V", "Copy / cut / paste" },
-			{ "Ctrl + D", "Duplicate" },
-			{ "Ctrl + L", "Lock or unlock the selection" },
-			{ "Ctrl + G", "Group the selection" },
-			{ "Ctrl + Shift + G", "Ungroup" },
-			{ "Ctrl + Shift + E", "Export as PNG" },
-			{ "Ctrl + I", "Insert a picture" },
-			{ "Delete", "Delete the selection" },
-			{ "Arrows (+ Shift)", "Nudge by 1 (10) points" },
-			{ "Ctrl + ] / [", "Bring forward / send back" },
-			{ "Ctrl + Shift + ] / [", "To front / to back" },
-			{ "Esc", "Cancel a drag, or deselect" },
-		} },
-		{ "Text", {
-			{ "Click (Text tool)", "Type there; click again to edit" },
-			{ "Double click / Enter", "Edit the selected text" },
-			{ "Ctrl + B / I", "Bold / italic" },
-			{ "Esc / Ctrl + Enter", "Finish typing" },
-			{ "Drag a side handle", "Wrap lines at that width" },
-			{ "Drop a .ttf / .otf file", "Add a font" },
-		} },
-		{ "Selection", {
-			{ "Click, box or lasso", "Select (Shift adds)" },
-			{ "Drag inside the box", "Move" },
-			{ "Drag a handle", "Scale (Shift: keep shape)" },
-			{ "Alt + drag a handle", "Scale from the centre" },
-			{ "Drag the top circle", "Rotate (Shift: 15 degrees)" },
-		} },
-	};
-	return s_Sections;
-}
-
-float sectionsHeight(ui::Context& p_Ui, const std::vector<ShortcutSection>& p_Sections)
+float sectionsHeight(ui::Context& p_Ui, const std::span<const ShortcutSection> p_Sections)
 {
 	float l_Height = 0.f;
 	for (const ShortcutSection& l_Section : p_Sections)
-		l_Height += p_Ui.px(34.f) + p_Ui.px(28.f) * static_cast<float>(l_Section.rows.size()) + p_Ui.px(8.f);
+		l_Height += p_Ui.px(34.f) + p_Ui.px(28.f) * static_cast<float>(l_Section.rows) + p_Ui.px(8.f);
 	return l_Height;
 }
 } // namespace
@@ -480,18 +411,18 @@ void App::buildShortcuts()
 	const float l_Gap = m_Ui.px(36.f);
 	const float l_Width = std::min(m_Ui.px(900.f), l_Viewport.x - m_Ui.px(EDGE_MARGIN) * 2.f);
 	const float l_Column = (l_Width - l_Pad * 2.f - l_Gap) * 0.5f;
-	const float l_Content = std::max(sectionsHeight(m_Ui, leftSections()), sectionsHeight(m_Ui, rightSections()));
+	const float l_Content = std::max(sectionsHeight(m_Ui, LEFT_SECTIONS), sectionsHeight(m_Ui, RIGHT_SECTIONS));
 	const float l_Height = std::min(l_Pad * 2.f + m_Ui.px(40.f) + l_Content, l_Viewport.y - m_Ui.px(EDGE_MARGIN) * 2.f);
 	const float l_Lift = (1.f - l_Open) * m_Ui.px(10.f);
 	const Rect2 l_Card = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, (l_Viewport.y - l_Height) * 0.5f + l_Lift }, Vec2{ l_Width, l_Height });
 	m_Ui.panel(l_Card, m_Ui.px(24.f));
 
-	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Card.min.y + l_Pad + m_Ui.px(14.f) }, "Keyboard shortcuts", 19.f, l_Theme.text);
-	if (m_Ui.iconButton("shortcuts.close", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(36.f) + m_Ui.px(8.f), l_Card.min.y + l_Pad - m_Ui.px(4.f) }, Vec2{ m_Ui.px(36.f) }), ui::Icon::Close, false, true, "Close (Esc)"))
+	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Card.min.y + l_Pad + m_Ui.px(14.f) }, tr("shortcuts.title"), 19.f, l_Theme.text);
+	if (m_Ui.iconButton("shortcuts.close", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(36.f) + m_Ui.px(8.f), l_Card.min.y + l_Pad - m_Ui.px(4.f) }, Vec2{ m_Ui.px(36.f) }), ui::Icon::Close, false, true, tr("common.closeEsc")))
 		m_ShowShortcuts = false;
 
 	l_Draw.pushClip(l_Card);
-	const auto l_DrawColumn = [&](const std::vector<ShortcutSection>& p_Sections, const float p_X)
+	const auto l_DrawColumn = [&](const std::span<const ShortcutSection> p_Sections, const float p_X)
 	{
 		float l_Y = l_Card.min.y + l_Pad + m_Ui.px(48.f);
 		const int l_KeyPx = m_Ui.fontPx(12.5f);
@@ -499,24 +430,24 @@ void App::buildShortcuts()
 		const float l_KeyColumn = std::min(m_Ui.px(196.f), l_Column * 0.5f);
 		for (const ShortcutSection& l_Section : p_Sections)
 		{
-			m_Ui.label(Vec2{ p_X, l_Y + m_Ui.px(12.f) }, l_Section.title, 12.f, l_Theme.accent);
+			m_Ui.label(Vec2{ p_X, l_Y + m_Ui.px(12.f) }, tr(std::string("shortcuts.") + l_Section.id + ".title"), 12.f, l_Theme.accent);
 			l_Y += m_Ui.px(34.f);
-			for (const ShortcutRow& l_Row : l_Section.rows)
+			for (int l_RowIndex = 1; l_RowIndex <= l_Section.rows; ++l_RowIndex)
 			{
 				const float l_RowCenter = l_Y + m_Ui.px(14.f);
-				const std::string l_Keys = m_Ui.font().fit(l_Row.keys, l_KeyPx, l_KeyColumn - m_Ui.px(24.f));
+				const std::string l_Keys = m_Ui.font().fit(tr(shortcutId(l_Section, l_RowIndex, "keys")), l_KeyPx, l_KeyColumn - m_Ui.px(24.f));
 				const float l_KeysWidth = m_Ui.font().measure(l_Keys, l_KeyPx) + m_Ui.px(16.f);
 				const Rect2 l_Cap = Rect2::fromPosSize(Vec2{ p_X, l_RowCenter - m_Ui.px(11.f) }, Vec2{ l_KeysWidth, m_Ui.px(22.f) });
 				l_Draw.rectBorder(l_Cap, m_Ui.px(6.f), l_Theme.hover, l_Theme.divider, 1.f);
 				l_Draw.text(Vec2{ l_Cap.min.x + m_Ui.px(8.f), l_RowCenter }, l_Keys, l_KeyPx, l_Theme.text);
-				l_Draw.text(Vec2{ p_X + l_KeyColumn, l_RowCenter }, m_Ui.font().fit(l_Row.what, l_TextPx, l_Column - l_KeyColumn), l_TextPx, l_Theme.textMuted);
+				l_Draw.text(Vec2{ p_X + l_KeyColumn, l_RowCenter }, m_Ui.font().fit(tr(shortcutId(l_Section, l_RowIndex, "what")), l_TextPx, l_Column - l_KeyColumn), l_TextPx, l_Theme.textMuted);
 				l_Y += m_Ui.px(28.f);
 			}
 			l_Y += m_Ui.px(8.f);
 		}
 	};
-	l_DrawColumn(leftSections(), l_Card.min.x + l_Pad);
-	l_DrawColumn(rightSections(), l_Card.min.x + l_Pad + l_Column + l_Gap);
+	l_DrawColumn(LEFT_SECTIONS, l_Card.min.x + l_Pad);
+	l_DrawColumn(RIGHT_SECTIONS, l_Card.min.x + l_Pad + l_Column + l_Gap);
 	l_Draw.popClip();
 	l_Draw.setOpacity(1.f);
 }
@@ -548,15 +479,17 @@ void App::buildSettings()
 	const int l_HintPx = m_Ui.fontPx(12.5f);
 	tools::BrushState& l_Brush = m_Editor.brush();
 	tools::SelectState& l_Select = m_Editor.selectState();
-	const std::vector<std::string> l_SizeHint = m_Ui.font().wrap("Scales everything drawn with the pen, on top of the size chosen in its panel. Strokes already on the board keep their size.", l_HintPx, l_Inner);
+	const std::vector<std::string> l_SizeHint = m_Ui.font().wrap(tr("settings.sizeScale.hint"), l_HintPx, l_Inner);
 	const bool l_ScreenSized = l_Brush.sizeMode == tools::BrushSizeMode::Screen;
-	const std::vector<std::string> l_ModeHint = m_Ui.font().wrap(l_ScreenSized ? "The pen draws the same size on screen however far you zoom, so strokes get finer when you zoom in." : "The pen draws a fixed size on the board, so strokes grow and shrink as you zoom.", l_HintPx, l_Inner);
+	const std::vector<std::string> l_ModeHint = m_Ui.font().wrap(tr(l_ScreenSized ? "settings.mode.screen.hint" : "settings.mode.board.hint"), l_HintPx, l_Inner);
 	const bool l_Local = l_Select.space == tools::TransformSpace::Local;
-	const std::vector<std::string> l_SpaceHint = m_Ui.font().wrap(l_Local ? "The box of a single stroke turns with it, so you can stretch it along its own sides." : "The box of a single stroke stays upright, whatever its rotation. Text and pictures always follow their own sides.", l_HintPx, l_Inner);
+	const std::vector<std::string> l_SpaceHint = m_Ui.font().wrap(tr(l_Local ? "settings.space.local.hint" : "settings.space.global.hint"), l_HintPx, l_Inner);
 	const float l_Line = m_Ui.px(17.f);
 	const float l_SectionHeight = m_Ui.px(34.f);
 	const float l_ButtonsHeight = m_Ui.px(40.f);
-	const float l_Content = l_SectionHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SizeHint.size()) + m_Ui.px(16.f)
+	const float l_ListRow = m_Ui.px(34.f);
+	const float l_LanguageBlock = l_SectionHeight + l_ButtonsHeight + m_Ui.px(16.f) + (m_LanguageListOpen ? l_ListRow * static_cast<float>(m_Languages.size() + 1) + m_Ui.px(8.f) : 0.f);
+	const float l_Content = l_LanguageBlock + l_SectionHeight + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SizeHint.size()) + m_Ui.px(16.f)
 		+ l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_ModeHint.size()) + m_Ui.px(16.f)
 		+ l_SectionHeight + l_ButtonsHeight + m_Ui.px(8.f) + l_Line * static_cast<float>(l_SpaceHint.size());
 	const float l_Height = std::min(l_Pad * 2.f + m_Ui.px(48.f) + l_Content, l_Viewport.y - m_Ui.px(EDGE_MARGIN) * 2.f);
@@ -564,8 +497,8 @@ void App::buildSettings()
 	const Rect2 l_Card = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, (l_Viewport.y - l_Height) * 0.5f + l_Lift }, Vec2{ l_Width, l_Height });
 	m_Ui.panel(l_Card, m_Ui.px(22.f));
 
-	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Card.min.y + l_Pad + m_Ui.px(14.f) }, "Settings", 19.f, l_Theme.text);
-	if (m_Ui.iconButton("settings.close", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(36.f) + m_Ui.px(8.f), l_Card.min.y + l_Pad - m_Ui.px(4.f) }, Vec2{ m_Ui.px(36.f) }), ui::Icon::Close, false, true, "Close (Esc)"))
+	m_Ui.label(Vec2{ l_Card.min.x + l_Pad, l_Card.min.y + l_Pad + m_Ui.px(14.f) }, tr("settings.title"), 19.f, l_Theme.text);
+	if (m_Ui.iconButton("settings.close", Rect2::fromPosSize(Vec2{ l_Card.max.x - l_Pad - m_Ui.px(36.f) + m_Ui.px(8.f), l_Card.min.y + l_Pad - m_Ui.px(4.f) }, Vec2{ m_Ui.px(36.f) }), ui::Icon::Close, false, true, tr("common.closeEsc")))
 		m_ShowSettings = false;
 
 	const float l_Left = l_Card.min.x + l_Pad;
@@ -580,11 +513,41 @@ void App::buildSettings()
 	};
 	static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
 
-	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, "Pen", 12.f, l_Theme.accent);
+	// Language: the current one on a button, the list of the others under it
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, tr("settings.language"), 12.f, l_Theme.accent);
+	l_Y += l_SectionHeight;
+	const std::string l_Current = currentLanguage();
+	const auto l_CurrentInfo = std::ranges::find(m_Languages, l_Current, &LanguageInfo::code);
+	if (m_Ui.button("settings.language", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), l_CurrentInfo != m_Languages.end() ? l_CurrentInfo->name : l_Current, ui::ButtonStyle::Secondary, true, m_LanguageListOpen ? ui::Icon::ChevronUp : ui::Icon::ChevronDown))
+		m_LanguageListOpen = !m_LanguageListOpen;
+	l_Y += l_ButtonsHeight;
+	if (m_LanguageListOpen)
+	{
+		l_Y += m_Ui.px(8.f);
+		// The first entry follows the system's language (and stays so when the system's language changes)
+		if (m_Ui.menuRow("settings.language.auto", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ListRow }), ui::Icon::None, tr("settings.language.auto"), "", true, m_LanguageSetting.empty()))
+		{
+			setUiLanguage("");
+			m_LanguageListOpen = false;
+		}
+		l_Y += l_ListRow;
+		for (const LanguageInfo& l_Info : m_Languages)
+		{
+			if (m_Ui.menuRow("settings.language." + l_Info.code, Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ListRow }), ui::Icon::None, l_Info.name, "", true, l_Info.code == l_Current && !m_LanguageSetting.empty()))
+			{
+				setUiLanguage(l_Info.code);
+				m_LanguageListOpen = false;
+			}
+			l_Y += l_ListRow;
+		}
+	}
+	l_Y += m_Ui.px(16.f);
+
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, tr("settings.pen"), 12.f, l_Theme.accent);
 	l_Y += l_SectionHeight;
 	char l_Value[32];
 	std::snprintf(l_Value, sizeof(l_Value), "%.2fx", static_cast<double>(l_Brush.sizeScale));
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Stroke size multiplier", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("settings.sizeScale"), 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, l_Value, 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	const float l_Inset = m_Ui.px(10.f);
@@ -594,17 +557,17 @@ void App::buildSettings()
 	l_Y += m_Ui.px(16.f);
 
 	int l_Mode = l_ScreenSized ? 0 : 1;
-	static constexpr std::array<std::string_view, 2> MODE_LABELS{ "Fixed on screen", "Fixed on board" };
+	const std::array<std::string_view, 2> MODE_LABELS{ tr("settings.mode.screen"), tr("settings.mode.board") };
 	if (m_Ui.segmented("settings.sizeMode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), MODE_LABELS, NO_ICONS, l_Mode))
 		l_Brush.sizeMode = l_Mode == 0 ? tools::BrushSizeMode::Screen : tools::BrushSizeMode::Board;
 	l_Y += l_ButtonsHeight + m_Ui.px(8.f);
 	l_Hints(l_ModeHint);
 	l_Y += m_Ui.px(16.f);
 
-	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, "Selection", 12.f, l_Theme.accent);
+	m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(12.f) }, tr("settings.selection"), 12.f, l_Theme.accent);
 	l_Y += l_SectionHeight;
 	int l_Space = l_Local ? 1 : 0;
-	static constexpr std::array<std::string_view, 2> SPACE_LABELS{ "Board axes", "Object axes" };
+	const std::array<std::string_view, 2> SPACE_LABELS{ tr("settings.space.global"), tr("settings.space.local") };
 	if (m_Ui.segmented("settings.space", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_ButtonsHeight }), SPACE_LABELS, NO_ICONS, l_Space))
 		l_Select.space = l_Space == 0 ? tools::TransformSpace::Global : tools::TransformSpace::Local;
 	l_Y += l_ButtonsHeight + m_Ui.px(8.f);
@@ -628,8 +591,8 @@ void App::buildDialogs()
 
 	if (m_MessageOpen)
 	{
-		static constexpr std::array<DialogButton, 1> BUTTONS{ DialogButton{ "OK", ui::ButtonStyle::Primary } };
-		if (dialogCard(m_Ui, "dialog.message", "Inkwell", m_Message, BUTTONS) == 0)
+		static constexpr std::array<DialogButton, 1> BUTTONS{ DialogButton{ "common.ok", ui::ButtonStyle::Primary } };
+		if (dialogCard(m_Ui, "dialog.message", "app.name", m_Message, BUTTONS) == 0)
 			m_MessageOpen = false;
 		return;
 	}
@@ -654,17 +617,17 @@ void App::buildDialogs()
 
 	if (m_ClearOpen)
 	{
-		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "Cancel", ui::ButtonStyle::Secondary }, DialogButton{ "Clear board", ui::ButtonStyle::Primary } };
+		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "common.cancel", ui::ButtonStyle::Secondary }, DialogButton{ "dialog.clear.confirm", ui::ButtonStyle::Primary } };
 		const bool l_Shared = m_Collab && m_Collab->active();
-		const std::string l_Body = l_Shared ? "This removes everything from the board for everyone in the session. You can undo it afterwards." : "This removes everything from the board. You can undo it afterwards.";
-		const int l_Clicked = dialogCard(m_Ui, "dialog.clear", "Clear the board?", l_Body, BUTTONS);
+		const std::string l_Body = tr(l_Shared ? "dialog.clear.bodyShared" : "dialog.clear.body");
+		const int l_Clicked = dialogCard(m_Ui, "dialog.clear", "dialog.clear.title", l_Body, BUTTONS);
 		if (l_Clicked >= 0)
 		{
 			m_ClearOpen = false;
 			if (l_Clicked == 1 && !(m_Collab && m_Collab->role() == net::Role::Client))
 			{
 				m_Editor.clearBoard();
-				showToast("Board cleared");
+				showToast(tr("toast.boardCleared"));
 			}
 		}
 		return;
@@ -672,10 +635,10 @@ void App::buildDialogs()
 
 	if (m_PromptOpen)
 	{
-		static constexpr std::array<DialogButton, 3> BUTTONS{ DialogButton{ "Cancel", ui::ButtonStyle::Secondary }, DialogButton{ "Don't save", ui::ButtonStyle::Secondary }, DialogButton{ "Save", ui::ButtonStyle::Primary } };
-		const std::string l_Body = "\"" + m_Session.displayName() + "\" has changes that are not saved.";
+		static constexpr std::array<DialogButton, 3> BUTTONS{ DialogButton{ "common.cancel", ui::ButtonStyle::Secondary }, DialogButton{ "dialog.prompt.discard", ui::ButtonStyle::Secondary }, DialogButton{ "dialog.prompt.save", ui::ButtonStyle::Primary } };
+		const std::string l_Body = tr("dialog.prompt.body", { m_Session.displayName() });
 		const Action l_Action = m_PromptAction;
-		switch (dialogCard(m_Ui, "dialog.prompt", "Unsaved changes", l_Body, BUTTONS))
+		switch (dialogCard(m_Ui, "dialog.prompt", "dialog.prompt.title", l_Body, BUTTONS))
 		{
 		case 0:
 			m_PromptOpen = false;
@@ -700,10 +663,10 @@ void App::buildDialogs()
 
 	if (m_RecoveryOpen && m_Recovery)
 	{
-		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "Discard", ui::ButtonStyle::Secondary }, DialogButton{ "Recover", ui::ButtonStyle::Primary } };
-		const std::string l_Name = m_Recovery->sourcePath.empty() ? std::string("an untitled board") : "\"" + pathToUtf8(pathFromUtf8(m_Recovery->sourcePath).filename()) + "\"";
-		const std::string l_Body = "Inkwell closed before " + l_Name + " was saved.\n" + std::to_string(m_Recovery->objectCount) + " objects, last autosaved " + describeAge(m_Recovery->ageSeconds) + ".";
-		switch (dialogCard(m_Ui, "dialog.recovery", "Recover unsaved work", l_Body, BUTTONS))
+		static constexpr std::array<DialogButton, 2> BUTTONS{ DialogButton{ "dialog.recovery.discard", ui::ButtonStyle::Secondary }, DialogButton{ "dialog.recovery.recover", ui::ButtonStyle::Primary } };
+		const std::string l_Name = m_Recovery->sourcePath.empty() ? tr("dialog.recovery.untitled") : "\"" + pathToUtf8(pathFromUtf8(m_Recovery->sourcePath).filename()) + "\"";
+		const std::string l_Body = tr("dialog.recovery.body", { l_Name, std::to_string(m_Recovery->objectCount), describeAge(m_Recovery->ageSeconds) });
+		switch (dialogCard(m_Ui, "dialog.recovery", "dialog.recovery.title", l_Body, BUTTONS))
 		{
 		case 0:
 			m_RecoveryOpen = false;
@@ -716,11 +679,11 @@ void App::buildDialogs()
 			if (const IoResult l_Result = m_Session.recover(); l_Result.ok)
 			{
 				updateTitle();
-				showToast("Recovered unsaved work");
+				showToast(tr("toast.recovered"));
 			}
 			else
 			{
-				showMessage("The unsaved work could not be recovered.\n\n" + l_Result.error);
+				showMessage(tr("dialog.recovery.failed", { l_Result.error }));
 			}
 			break;
 		default:

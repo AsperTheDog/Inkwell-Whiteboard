@@ -21,6 +21,7 @@ module;
 
 module wb.app;
 
+import wb.io.locale;
 import wb.net.protocol;
 import wb.doc.commands;
 import wb.doc.gizmo;
@@ -89,13 +90,13 @@ const char* deviceLabel(const platform::PointerDevice p_Device)
 	switch (p_Device)
 	{
 	case platform::PointerDevice::Mouse:
-		return "mouse";
+		return "device.mouse";
 	case platform::PointerDevice::Pen:
-		return "pen";
+		return "device.pen";
 	case platform::PointerDevice::Touch:
-		return "touch";
+		return "device.touch";
 	}
-	return "mouse";
+	return "device.mouse";
 }
 } // namespace
 
@@ -108,7 +109,7 @@ void App::toggleInterface()
 	m_ShowShortcuts = false;
 	m_ShowSettings = false;
 	if (m_HideUi)
-		showToast("Interface hidden. Press F2 to bring it back");
+		showToast(tr("toast.interfaceHidden"));
 	requestRedraw();
 }
 
@@ -229,11 +230,11 @@ bool App::handleUiKey(const SDL_KeyboardEvent& p_Event)
 			if (const IoResult l_Result = m_Session.recover(); l_Result.ok)
 			{
 				updateTitle();
-				showToast("Recovered unsaved work");
+				showToast(tr("toast.recovered"));
 			}
 			else
 			{
-				showMessage("The unsaved work could not be recovered.\n\n" + l_Result.error);
+				showMessage(tr("dialog.recovery.failed", { l_Result.error }));
 			}
 		}
 		return true; // the choice has to be made with the buttons
@@ -372,7 +373,7 @@ void App::buildTopBar()
 			l_X += l_DotSpace;
 		}
 		l_Draw.text(Vec2{ l_X, l_Chip.center().y }, l_Name, l_FontPx, l_Theme.text);
-		m_Ui.noteTooltip(l_Id, l_Chip, l_Dirty ? "Unsaved changes. Open the menu (Ctrl+S saves)" : "Open the menu", l_State.hovered);
+		m_Ui.noteTooltip(l_Id, l_Chip, tr(l_Dirty ? "tip.chip.dirty" : "tip.chip"), l_State.hovered);
 		if (l_State.clicked)
 			togglePopup(Popup::Menu);
 	}
@@ -389,9 +390,9 @@ void App::buildTopBar()
 		m_MenuAnchor = l_Pill;
 		buildPeopleChip(l_Pill.min.x - m_Ui.px(10.f));
 
-		if (m_Ui.iconButton("topbar.theme", l_ThemeButton, m_DarkTheme ? ui::Icon::Sun : ui::Icon::Moon, false, true, m_DarkTheme ? "Switch to the light theme" : "Switch to the dark theme"))
+		if (m_Ui.iconButton("topbar.theme", l_ThemeButton, m_DarkTheme ? ui::Icon::Sun : ui::Icon::Moon, false, true, tr(m_DarkTheme ? "tip.themeLight" : "tip.themeDark")))
 			m_DarkTheme = !m_DarkTheme;
-		if (m_Ui.iconButton("topbar.menu", l_MenuButton, ui::Icon::Menu, m_Popup == Popup::Menu, true, "Menu"))
+		if (m_Ui.iconButton("topbar.menu", l_MenuButton, ui::Icon::Menu, m_Popup == Popup::Menu, true, tr("tip.menu")))
 			togglePopup(Popup::Menu);
 	}
 	(void)l_Scale;
@@ -445,7 +446,7 @@ void App::buildPeopleChip(const float p_RightEdge)
 
 	std::string l_Tip;
 	for (const net::UserInfo& l_User : l_Users)
-		l_Tip += (l_Tip.empty() ? "" : ", ") + l_User.name + (l_User.slot == m_Collab->localSlot() ? " (you)" : "");
+		l_Tip += (l_Tip.empty() ? "" : ", ") + (l_User.slot == m_Collab->localSlot() ? tr("people.you", { l_User.name }) : l_User.name);
 	m_Ui.noteTooltip(l_Id, l_Chip, l_Tip, l_State.hovered);
 	if (l_State.clicked)
 		openCollabDialog(CollabDialog::Session);
@@ -494,7 +495,7 @@ void App::buildToolbar()
 		l_Draw.icon(deviceIcon(l_Device), l_ChipRect.center(), m_Ui.fontPx(16.f), m_Editor.toolIsBorrowed() ? l_Theme.accent : l_Theme.textMuted);
 		if (m_Editor.toolIsBorrowed())
 			l_Draw.circle(Vec2{ l_ChipRect.center().x + m_Ui.px(8.f), l_ChipRect.center().y - m_Ui.px(9.f) }, m_Ui.px(3.f), l_Theme.accent);
-		const std::string l_Tip = std::string("Tools for the ") + deviceLabel(l_Device) + (m_Editor.toolIsBorrowed() ? " (borrowed while the key is held)" : ". Mouse, pen and touch each keep their own tool");
+		const std::string l_Tip = tr(m_Editor.toolIsBorrowed() ? "tip.device.borrowed" : "tip.device", { tr(deviceLabel(l_Device)) });
 		m_Ui.noteTooltip(l_Id, l_ChipRect, l_Tip, l_State.hovered);
 		l_X += l_Chip;
 	}
@@ -502,8 +503,8 @@ void App::buildToolbar()
 
 	const tools::ToolKind l_Selected = m_Editor.selectedTool();
 	// Indexed by tool kind: pen, eraser, select, hand, text, highlighter, shapes, laser
-	static const char* const TIPS[] = { "Pen (P). Click again for colours and size", "Eraser (E). Click again for options", "Select (V). Click again for box or lasso", "Hand (H). Drag to move the board", "Text (T). Click again for font, size and colour", "Highlighter (M). Click again for colour and size", "Shapes (S). Click again to pick a shape", "Laser pointer (L). Click again to set the trail length" };
-	static const char* const SIMPLE_TIPS[] = { "Pen (P)", "Eraser (E)", "Select (V)", "Hand (H). Drag to move the board", "Text (T). Click the board and type", "Highlighter (M)", "Shapes (S). Drag on the board", "Laser pointer (L). Hold and move" };
+	static const char* const TIPS[] = { "tip.tool.pen.selected", "tip.tool.eraser.selected", "tip.tool.select.selected", "tip.tool.hand.selected", "tip.tool.text.selected", "tip.tool.highlighter.selected", "tip.tool.shapes.selected", "tip.tool.laser.selected" };
+	static const char* const SIMPLE_TIPS[] = { "tip.tool.pen", "tip.tool.eraser", "tip.tool.select", "tip.tool.hand", "tip.tool.text", "tip.tool.highlighter", "tip.tool.shapes", "tip.tool.laser" };
 	const auto l_ToolButton = [&](const tools::ToolKind p_Kind)
 	{
 		const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button });
@@ -512,7 +513,7 @@ void App::buildToolbar()
 		const Color l_PenColor = m_Editor.brush().color;
 		const Color l_MarkerColor = m_Editor.highlighterBrush().color;
 		const Color* l_Badge = p_Kind == tools::ToolKind::Pen ? &l_PenColor : (p_Kind == tools::ToolKind::Highlighter ? &l_MarkerColor : nullptr);
-		const char* l_Tip = l_IsSelected ? TIPS[static_cast<size_t>(p_Kind)] : SIMPLE_TIPS[static_cast<size_t>(p_Kind)];
+		const std::string& l_Tip = tr(l_IsSelected ? TIPS[static_cast<size_t>(p_Kind)] : SIMPLE_TIPS[static_cast<size_t>(p_Kind)]);
 		if (m_Ui.iconButton(std::string("toolbar.tool") + std::to_string(static_cast<int>(p_Kind)), l_Rect, toolIcon(p_Kind), l_IsSelected, true, l_Tip, l_Badge))
 		{
 			Popup l_Wanted = Popup::None;
@@ -561,23 +562,23 @@ void App::buildToolbar()
 
 	l_ToolButton(tools::ToolKind::Text);
 	l_Space();
-	if (m_Ui.iconButton("toolbar.picture", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Image, false, !m_Editor.isBusy(), "Insert a picture or PDF (Ctrl+I). You can also paste or drop them"))
+	if (m_Ui.iconButton("toolbar.picture", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Image, false, !m_Editor.isBusy(), tr("tip.insertPicture")))
 		showInsertPictureDialog();
 	l_X += l_Button;
 	l_Divider();
 
-	if (m_Ui.iconButton("toolbar.ruler", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Ruler, m_Editor.rulerVisible(), true, "Ruler (R). Draw along its edge for straight lines"))
+	if (m_Ui.iconButton("toolbar.ruler", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Ruler, m_Editor.rulerVisible(), true, tr("tip.ruler")))
 		m_Editor.toggleRuler();
 	l_X += l_Button;
 	l_Space();
 	l_ToolButton(tools::ToolKind::Laser);
 	l_Divider();
 
-	if (m_Ui.iconButton("toolbar.undo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Undo, false, m_Editor.history().canUndo() && !m_Editor.isBusy(), "Undo (Ctrl+Z)"))
+	if (m_Ui.iconButton("toolbar.undo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Undo, false, m_Editor.history().canUndo() && !m_Editor.isBusy(), tr("tip.undo")))
 		m_Editor.undo();
 	l_X += l_Button;
 	l_Space();
-	if (m_Ui.iconButton("toolbar.redo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Redo, false, m_Editor.history().canRedo() && !m_Editor.isBusy(), "Redo (Ctrl+Y)"))
+	if (m_Ui.iconButton("toolbar.redo", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Redo, false, m_Editor.history().canRedo() && !m_Editor.isBusy(), tr("tip.redo")))
 		m_Editor.redo();
 }
 
@@ -598,7 +599,7 @@ void App::buildZoomPill()
 
 	float l_X = l_Pill.min.x + l_Pad;
 	const float l_Y = l_Pill.min.y + l_Pad;
-	if (m_Ui.iconButton("zoom.out", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Minus, false, true, "Zoom out (Ctrl+-)"))
+	if (m_Ui.iconButton("zoom.out", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Minus, false, true, tr("tip.zoomOut")))
 		m_Editor.zoomAroundCenter(1.0 / 1.25);
 	l_X += l_Button;
 
@@ -607,7 +608,7 @@ void App::buildZoomPill()
 		m_Editor.resetZoom();
 	l_X += l_Percent;
 
-	if (m_Ui.iconButton("zoom.in", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Plus, false, true, "Zoom in (Ctrl+=)"))
+	if (m_Ui.iconButton("zoom.in", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Plus, false, true, tr("tip.zoomIn")))
 		m_Editor.zoomAroundCenter(1.25);
 	l_X += l_Button;
 
@@ -615,7 +616,7 @@ void App::buildZoomPill()
 	m_Ui.draw().line(Vec2{ l_Line, l_Pill.min.y + m_Ui.px(12.f) }, Vec2{ l_Line, l_Pill.max.y - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
 	l_X += l_Separator;
 
-	if (m_Ui.iconButton("zoom.fit", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Fit, false, true, "Fit everything (Home)"))
+	if (m_Ui.iconButton("zoom.fit", Rect2::fromPosSize(Vec2{ l_X, l_Y }, Vec2{ l_Button }), ui::Icon::Fit, false, true, tr("tip.fit")))
 		m_Editor.fitContent();
 }
 } // namespace wb

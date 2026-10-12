@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -31,6 +32,8 @@ import wb.gfx.commands;
 import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.swapchain;
+import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.platform.input;
 import wb.platform.window;
@@ -100,6 +103,13 @@ const char* gpuTypeName(const VkPhysicalDeviceType p_Type)
 	}
 }
 
+std::filesystem::path languageDirectory()
+{
+	const char* l_Base = SDL_GetBasePath();
+	const std::filesystem::path l_Root = l_Base != nullptr ? std::filesystem::path(reinterpret_cast<const char8_t*>(l_Base)) : std::filesystem::current_path();
+	return l_Root / "assets" / "lang";
+}
+
 std::filesystem::path fontDirectory()
 {
 	const char* l_Base = SDL_GetBasePath();
@@ -107,6 +117,52 @@ std::filesystem::path fontDirectory()
 	return l_Root / "assets" / "fonts";
 }
 } // namespace
+
+// English first, so that every text exists even when no language is chosen (or its file is missing)
+void App::initLanguage()
+{
+	m_LanguageDir = languageDirectory();
+	if (!setLanguage(m_LanguageDir, "en"))
+		spdlog::warn("The English texts are missing from {}", pathToUtf8(m_LanguageDir));
+	m_Languages = scanLanguages(m_LanguageDir);
+}
+
+// An empty code follows the system's languages, in their order of preference ("pt-BR" is tried before "pt")
+void App::setUiLanguage(const std::string& p_Code)
+{
+	m_LanguageSetting = p_Code;
+	std::string l_Code = p_Code;
+	if (l_Code.empty())
+	{
+		const auto l_Find = [this](const std::string& p_Wanted)
+		{
+			for (const LanguageInfo& l_Info : m_Languages)
+			{
+				if (std::ranges::equal(l_Info.code, p_Wanted, [](const char p_A, const char p_B) { return std::tolower(static_cast<unsigned char>(p_A)) == std::tolower(static_cast<unsigned char>(p_B)); }))
+					return l_Info.code;
+			}
+			return std::string();
+		};
+		int l_Count = 0;
+		SDL_Locale** l_Locales = SDL_GetPreferredLocales(&l_Count);
+		for (int i = 0; l_Locales != nullptr && i < l_Count && l_Code.empty(); ++i)
+		{
+			const std::string l_Language = l_Locales[i]->language != nullptr ? l_Locales[i]->language : "";
+			if (l_Locales[i]->country != nullptr)
+				l_Code = l_Find(l_Language + "-" + l_Locales[i]->country);
+			if (l_Code.empty())
+				l_Code = l_Find(l_Language);
+		}
+		SDL_free(l_Locales);
+	}
+	setLanguage(m_LanguageDir, l_Code.empty() ? "en" : l_Code);
+	// The language's own font holds the glyphs of its texts (the key is absent, so the id comes back, for Latin ones)
+	const std::string& l_Font = tr("language.font");
+	m_FontAtlas.setLanguageFont(l_Font == "language.font" || l_Font.empty() ? std::filesystem::path() : fontDirectory() / "ui" / pathFromUtf8(l_Font));
+	m_LastTitle.clear();
+	updateTitle();
+	requestRedraw();
+}
 
 void App::run()
 {
@@ -168,6 +224,7 @@ void App::run()
 
 void App::init()
 {
+	initLanguage();
 	if (m_Options.perfStrokes > 0)
 		m_PresentPolicy = gfx::PresentPolicy::Immediate;
 	m_Window.create("Inkwell");
@@ -194,11 +251,22 @@ void App::init()
 		std::string l_Error;
 		if (!m_FontAtlas.load(fontDirectory(), l_Error))
 			throw std::runtime_error(l_Error);
+		// Characters Inter lacks and the language's own font does not hold come from the installed fonts
+		m_FontAtlas.setFallbackFinder([this](const uint32_t p_Codepoint)
+		{
+			text::FontRegistry& l_Fonts = m_Editor.textSystem().fonts();
+			const text::FaceId l_Face = l_Fonts.fallbackFor(p_Codepoint, 0);
+			size_t l_Size = 0;
+			const uint8_t* l_Data = l_Fonts.faceData(l_Face, l_Size);
+			return ui::FallbackFace{ l_Data, l_Fonts.faceStart(l_Face), l_Face };
+		});
 		m_Ui.init(m_FontAtlas);
 		m_UiRenderer.init(m_Context, m_Swapchain.format());
 	}
 	initCollab();
 	initPersistence();
+	if (const char* l_Language = SDL_getenv("WB_LANG"))
+		setUiLanguage(l_Language); // for trying a language without changing the saved setting (it is not saved)
 	m_DarkTheme = m_DarkTheme || m_Options.smokeDark;
 	m_ThemeBlend = m_DarkTheme ? 1.f : 0.f;
 
@@ -502,7 +570,8 @@ void App::renderFrame()
 		requestRedraw(2); // the glyph atlas overflowed and was cleared: draw again with the glyphs it now holds
 	{
 		text::FontRegistry& l_Fonts = m_Editor.textSystem().fonts();
-		l_Fonts.pump();
+		if (l_Fonts.pump())
+			m_FontAtlas.forgetFallbackMisses(); // the installed fonts became known
 		if (m_Editor.textSystem().beginFrame())
 		{
 			m_Editor.remeasureText(); // fonts arrived: boxes made with stand-ins fit their text again

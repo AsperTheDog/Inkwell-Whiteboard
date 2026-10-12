@@ -23,6 +23,7 @@ module;
 module wb.video.media;
 
 import wb.io.blob;
+import wb.io.locale;
 import wb.text.subtitles;
 
 namespace wb::video
@@ -148,14 +149,14 @@ struct Input
 		if (format == nullptr || l_Buffer == nullptr)
 		{
 			av_free(l_Buffer);
-			p_Error = "Out of memory.";
+			p_Error = tr("media.outOfMemory");
 			return false;
 		}
 		io = avio_alloc_context(l_Buffer, BUFFER_BYTES, 0, this, &Input::readPacket, nullptr, &Input::seekPacket);
 		if (io == nullptr)
 		{
 			av_free(l_Buffer);
-			p_Error = "Out of memory.";
+			p_Error = tr("media.outOfMemory");
 			return false;
 		}
 		format->pb = io;
@@ -169,12 +170,12 @@ struct Input
 		av_dict_free(&l_Options);
 		if (l_Result < 0)
 		{
-			p_Error = "This is not a video file Inkwell can read.";
+			p_Error = tr("media.notVideo");
 			return false; // avformat_open_input freed (and nulled) the context
 		}
 		if (avformat_find_stream_info(format, nullptr) < 0)
 		{
-			p_Error = "The video file is damaged.";
+			p_Error = tr("media.videoDamaged");
 			return false;
 		}
 		return true;
@@ -1120,7 +1121,7 @@ std::unique_ptr<Player> Player::open(Source p_Data, const Options& p_Options, st
 {
 	if (!p_Data || p_Data->size() == 0)
 	{
-		p_Error = "The video is empty.";
+		p_Error = tr("media.videoEmpty");
 		return nullptr;
 	}
 	std::unique_ptr<Player> l_Player(new Player);
@@ -1138,13 +1139,13 @@ std::unique_ptr<Player> Player::open(Source p_Data, const Options& p_Options, st
 	l_Impl.videoIndex = pickVideoStream(l_Format);
 	if (l_Impl.videoIndex < 0)
 	{
-		p_Error = "The file has no picture.";
+		p_Error = tr("media.noPicture");
 		return nullptr;
 	}
 	const AVStream* l_Stream = l_Format->streams[l_Impl.videoIndex];
 	if (!openDecoder(l_Stream, true, l_Impl.videoCodec))
 	{
-		p_Error = "Inkwell cannot decode this kind of video.";
+		p_Error = tr("media.cannotDecode");
 		return nullptr;
 	}
 	discardOtherStreams(l_Format, l_Impl.videoIndex);

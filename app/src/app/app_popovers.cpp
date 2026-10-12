@@ -29,6 +29,7 @@ import wb.doc.commands;
 import wb.doc.edit;
 import wb.doc.object;
 import wb.editor;
+import wb.io.locale;
 import wb.math;
 import wb.session;
 import wb.tools.laser;
@@ -186,7 +187,7 @@ void App::buildPopover()
 		float l_Y = l_Rect.min.y + l_Pad;
 		const float l_Left = l_Rect.min.x + l_Pad;
 		const float l_Inner = l_Width - l_Pad * 2.f;
-		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(10.f) }, "Recolour the selection", 12.5f, m_Ui.theme().textMuted);
+		m_Ui.label(Vec2{ l_Left, l_Y + m_Ui.px(10.f) }, tr("pop.recolor"), 12.5f, m_Ui.theme().textMuted);
 		l_Y += m_Ui.px(20.f);
 		Color l_Picked;
 		if (paletteGrid(Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, 2.f * l_Diameter + m_Ui.px(12.f) }), l_Diameter, 6, std::nullopt, l_Picked))
@@ -217,12 +218,12 @@ void App::buildPopover()
 			const char* tip;
 		};
 		static constexpr std::array<Entry, 6> ALIGN{ {
-			{ ui::Icon::AlignLeftEdges, AlignMode::Left, "Align left edges" },
-			{ ui::Icon::AlignCenterX, AlignMode::CenterX, "Centre horizontally" },
-			{ ui::Icon::AlignRightEdges, AlignMode::Right, "Align right edges" },
-			{ ui::Icon::AlignTopEdges, AlignMode::Top, "Align top edges" },
-			{ ui::Icon::AlignCenterY, AlignMode::CenterY, "Centre vertically" },
-			{ ui::Icon::AlignBottomEdges, AlignMode::Bottom, "Align bottom edges" },
+			{ ui::Icon::AlignLeftEdges, AlignMode::Left, "tip.align.left" },
+			{ ui::Icon::AlignCenterX, AlignMode::CenterX, "tip.align.centerX" },
+			{ ui::Icon::AlignRightEdges, AlignMode::Right, "tip.align.right" },
+			{ ui::Icon::AlignTopEdges, AlignMode::Top, "tip.align.top" },
+			{ ui::Icon::AlignCenterY, AlignMode::CenterY, "tip.align.centerY" },
+			{ ui::Icon::AlignBottomEdges, AlignMode::Bottom, "tip.align.bottom" },
 		} };
 		const SelectionActions& l_Actions = m_SelectionActions;
 		const bool l_Editable = m_Editor.selectionLockState() != Editor::LockState::All;
@@ -240,29 +241,29 @@ void App::buildPopover()
 		float l_Top = l_Rect.min.y + l_Pad;
 		const auto l_Place = [&] { const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_X, l_Top }, Vec2{ l_Button }); l_X += l_Button + l_Gap; return l_Slot; };
 		// Order and orientation
-		if (m_Ui.iconButton("arrange.front", l_Place(), ui::Icon::BringToFront, false, l_Editable, "Bring to front (Ctrl+Shift+])"))
+		if (m_Ui.iconButton("arrange.front", l_Place(), ui::Icon::BringToFront, false, l_Editable, tr("tip.toFront")))
 			m_Editor.reorderSelection(ZOrderMove::ToFront);
-		if (m_Ui.iconButton("arrange.back", l_Place(), ui::Icon::SendToBack, false, l_Editable, "Send to back (Ctrl+Shift+[)"))
+		if (m_Ui.iconButton("arrange.back", l_Place(), ui::Icon::SendToBack, false, l_Editable, tr("tip.toBack")))
 			m_Editor.reorderSelection(ZOrderMove::ToBack);
-		if (m_Ui.iconButton("arrange.fliph", l_Place(), ui::Icon::FlipH, false, l_Editable, "Flip horizontally"))
+		if (m_Ui.iconButton("arrange.fliph", l_Place(), ui::Icon::FlipH, false, l_Editable, tr("tip.flipH")))
 			m_Editor.flipSelection(true);
-		if (m_Ui.iconButton("arrange.flipv", l_Place(), ui::Icon::FlipV, false, l_Editable, "Flip vertically"))
+		if (m_Ui.iconButton("arrange.flipv", l_Place(), ui::Icon::FlipV, false, l_Editable, tr("tip.flipV")))
 			m_Editor.flipSelection(false);
 		if (l_Actions.tilted)
 		{
-			if (m_Ui.iconButton("arrange.reset", l_Place(), ui::Icon::ResetTransform, false, true, "Make upright: remove rotation and flips"))
+			if (m_Ui.iconButton("arrange.reset", l_Place(), ui::Icon::ResetTransform, false, true, tr("tip.upright")))
 				m_Editor.resetSelectionTransform();
 		}
 		if (l_Actions.spaceToggle)
 		{
 			tools::SelectState& l_Select = m_Editor.selectState();
 			const bool l_Local = l_Select.space == tools::TransformSpace::Local;
-			if (m_Ui.iconButton("arrange.space", l_Place(), ui::Icon::TransformSpace, l_Local, true, l_Local ? "Transform box follows the object. Click for the board's axes" : "Transform box uses the board's axes. Click to follow the object"))
+			if (m_Ui.iconButton("arrange.space", l_Place(), ui::Icon::TransformSpace, l_Local, true, tr(l_Local ? "tip.space.local" : "tip.space.global")))
 				l_Select.space = l_Local ? tools::TransformSpace::Global : tools::TransformSpace::Local;
 		}
 		if (l_Actions.canCrop)
 		{
-			if (m_Ui.iconButton("arrange.crop", l_Place(), ui::Icon::Crop, false, l_Editable, "Crop the picture or video (a picture also by double-click). The file is not changed: the crop can be widened again"))
+			if (m_Ui.iconButton("arrange.crop", l_Place(), ui::Icon::Crop, false, l_Editable, tr("tip.crop")))
 			{
 				closePopup("crop started");
 				m_Editor.beginCropSelected();
@@ -275,16 +276,16 @@ void App::buildPopover()
 			l_Top += l_Button + l_RowGap;
 			for (const Entry& l_Entry : ALIGN)
 			{
-				if (m_Ui.iconButton(std::string("align.") + l_Entry.tip, l_Place(), l_Entry.icon, false, l_Editable, l_Entry.tip))
+				if (m_Ui.iconButton(std::string("align.") + l_Entry.tip, l_Place(), l_Entry.icon, false, l_Editable, tr(l_Entry.tip)))
 					m_Editor.alignSelection(l_Entry.mode);
 			}
 			l_X += -l_Gap + l_Separator * 0.5f;
 			m_Ui.draw().line(Vec2{ l_X, l_Top + m_Ui.px(12.f) }, Vec2{ l_X, l_Top + l_Button - m_Ui.px(12.f) }, 1.f, m_Ui.theme().divider);
 			l_X += l_Separator * 0.5f + l_Gap;
 			const bool l_Enough = m_Editor.selection().size() >= 3 && l_Editable;
-			if (m_Ui.iconButton("align.spacex", l_Place(), ui::Icon::DistributeX, false, l_Enough, "Space evenly across"))
+			if (m_Ui.iconButton("align.spacex", l_Place(), ui::Icon::DistributeX, false, l_Enough, tr("tip.spaceX")))
 				m_Editor.alignSelection(AlignMode::DistributeX);
-			if (m_Ui.iconButton("align.spacey", l_Place(), ui::Icon::DistributeY, false, l_Enough, "Space evenly down"))
+			if (m_Ui.iconButton("align.spacey", l_Place(), ui::Icon::DistributeY, false, l_Enough, tr("tip.spaceY")))
 				m_Editor.alignSelection(AlignMode::DistributeY);
 		}
 		endPopover(m_Ui);
@@ -304,11 +305,11 @@ void App::buildPopover()
 		float l_X = l_Rect.min.x + l_Pad;
 		const float l_Top = l_Rect.min.y + l_Pad;
 		const auto l_Place = [&] { const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_X, l_Top }, Vec2{ l_Button }); l_X += l_Button + l_Gap; return l_Slot; };
-		if (m_Ui.iconButton("media.shrink", l_Place(), ui::Icon::ShrinkImage, false, true, "Reduce the file size of the selected pictures"))
+		if (m_Ui.iconButton("media.shrink", l_Place(), ui::Icon::ShrinkImage, false, true, tr("tip.shrink")))
 			compressSelectedPictures();
 		const ImageAsset* l_Asset = m_Editor.document().findAsset(l_Actions.mediaAsset);
 		const bool l_Here = l_Asset != nullptr && l_Asset->complete();
-		if (m_Ui.iconButton("media.savefile", l_Place(), ui::Icon::SaveAs, false, l_Here, l_Here ? "Save this file to your computer" : "Still arriving: it can be saved when it has finished"))
+		if (m_Ui.iconButton("media.savefile", l_Place(), ui::Icon::SaveAs, false, l_Here, tr(l_Here ? "tip.saveFile" : "tip.saveFileLater")))
 		{
 			closePopup("save dialog");
 			showSaveMediaDialog(l_Actions.mediaAsset);
@@ -380,12 +381,12 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	if (m_PickerOpen)
 	{
 		// Custom colour page
-		if (m_Ui.iconButton("pen.back", Rect2::fromPosSize(Vec2{ l_Left - m_Ui.px(8.f), l_Y }, Vec2{ m_Ui.px(34.f) }), ui::Icon::ChevronLeft, false, true, "Back"))
+		if (m_Ui.iconButton("pen.back", Rect2::fromPosSize(Vec2{ l_Left - m_Ui.px(8.f), l_Y }, Vec2{ m_Ui.px(34.f) }), ui::Icon::ChevronLeft, false, true, tr("common.back")))
 		{
 			pushRecentColor(l_Brush.color);
 			m_PickerOpen = false;
 		}
-		m_Ui.label(Vec2{ l_Left + m_Ui.px(32.f), l_Y + m_Ui.px(17.f) }, "Custom colour", 15.f, l_Theme.text);
+		m_Ui.label(Vec2{ l_Left + m_Ui.px(32.f), l_Y + m_Ui.px(17.f) }, tr("pop.customColor"), 15.f, l_Theme.text);
 		const Vec2 l_Current{ l_Left + l_Inner - m_Ui.px(13.f), l_Y + m_Ui.px(17.f) };
 		l_Draw.circle(l_Current, m_Ui.px(12.f), l_Brush.color);
 		l_Draw.ring(l_Current, m_Ui.px(12.f), ui::withAlpha(l_Theme.text, 0.18f), 1.f);
@@ -419,13 +420,13 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	if (l_Shapes)
 	{
 		static constexpr std::array<ui::Icon, SHAPE_KIND_COUNT> SHAPE_ICONS{ ui::Icon::Line, ui::Icon::Arrow, ui::Icon::Square, ui::Icon::Circle, ui::Icon::Triangle, ui::Icon::Diamond };
-		static constexpr std::array<const char*, SHAPE_KIND_COUNT> SHAPE_TIPS{ "Line", "Arrow", "Rectangle", "Ellipse", "Triangle", "Diamond" };
+		static constexpr std::array<const char*, SHAPE_KIND_COUNT> SHAPE_TIPS{ "shape.line", "shape.arrow", "shape.rectangle", "shape.ellipse", "shape.triangle", "shape.diamond" };
 		const float l_ShapeGap = m_Ui.px(2.f);
 		const float l_ShapeButton = (l_Inner - l_ShapeGap * static_cast<float>(SHAPE_KIND_COUNT - 1)) / static_cast<float>(SHAPE_KIND_COUNT);
 		for (int i = 0; i < SHAPE_KIND_COUNT; ++i)
 		{
 			const Rect2 l_Slot = Rect2::fromPosSize(Vec2{ l_Left + static_cast<float>(i) * (l_ShapeButton + l_ShapeGap), l_Y }, Vec2{ l_ShapeButton, l_ShapeRow });
-			if (m_Ui.iconButton("shape.kind." + std::to_string(i), l_Slot, SHAPE_ICONS[static_cast<size_t>(i)], static_cast<int>(m_Editor.shapeState().kind) == i, true, SHAPE_TIPS[static_cast<size_t>(i)]))
+			if (m_Ui.iconButton("shape.kind." + std::to_string(i), l_Slot, SHAPE_ICONS[static_cast<size_t>(i)], static_cast<int>(m_Editor.shapeState().kind) == i, true, tr(SHAPE_TIPS[static_cast<size_t>(i)])))
 				m_Editor.shapeState().kind = static_cast<ShapeKind>(i);
 		}
 		l_Y += l_ShapeRow + m_Ui.px(14.f);
@@ -447,7 +448,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 		l_Draw.hueBar(l_Custom.shrunk(l_Inset), l_Diameter * 0.5f);
 		l_Draw.ring(l_Custom.center(), l_Diameter * 0.5f - l_Inset, ui::withAlpha(l_Theme.text, 0.18f), 1.f);
 		l_Draw.icon(ui::Icon::Plus, l_Custom.center(), m_Ui.fontPx(18.f), Color{ 1.f, 1.f, 1.f, 1.f });
-		m_Ui.noteTooltip(l_Id, l_Custom, "Custom colour", l_State.hovered);
+		m_Ui.noteTooltip(l_Id, l_Custom, tr("pop.customColor"), l_State.hovered);
 		if (l_State.clicked)
 		{
 			const ui::Hsv l_FromBrush = ui::rgbToHsv(l_Brush.color);
@@ -470,7 +471,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	const auto l_SmoothRow = [&](const float p_Y)
 	{
 		float l_Value = std::clamp(std::log(12.f / l_Settings.smoothingMinCutoff) / std::log(48.f), 0.f, 1.f);
-		m_Ui.label(Vec2{ l_Left, p_Y + l_LabelHeight * 0.5f }, "Smoothing", 13.f, l_Theme.textMuted);
+		m_Ui.label(Vec2{ l_Left, p_Y + l_LabelHeight * 0.5f }, tr("pop.smoothing"), 13.f, l_Theme.textMuted);
 		m_Ui.label(Vec2{ l_Left + l_Inner, p_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f%%", static_cast<double>(l_Value) * 100.0), 13.f, l_Theme.text, ui::TextAlign::Right);
 		const float l_Inset = m_Ui.px(10.f);
 		if (m_Ui.slider("pen.smoothing", Rect2{ Vec2{ l_Left - l_Inset, p_Y + l_LabelHeight }, Vec2{ l_Left + l_Inner + l_Inset, p_Y + l_LabelHeight + l_SliderHeight } }, l_Value, 0.f, 1.f, false))
@@ -480,7 +481,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 			l_Settings.ropePx = 44.f * std::pow(std::clamp((l_Value - 0.4f) / 0.6f, 0.f, 1.f), 1.3f);
 		}
 	};
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("pop.size"), 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.1f pt", l_Brush.sizePoints), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	l_Slider("pen.size", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Brush.sizePoints, l_Marker ? 6.f : 0.5f, l_Marker ? 80.f : 40.f, true);
@@ -505,7 +506,7 @@ void App::buildPenPopover(const Rect2 p_Anchor)
 	l_Y += l_PreviewHeight + m_Ui.px(10.f);
 
 	// Pressure
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Pen pressure", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("pop.penPressure"), 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f%%", l_Settings.pressureSensitivity * 100.0), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	l_Slider("pen.pressure", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, l_SliderHeight }), l_Settings.pressureSensitivity, 0.f, 1.f, false);
@@ -527,7 +528,7 @@ void App::buildEraserPopover(const Rect2 p_Anchor)
 	const ui::Theme& l_Theme = m_Ui.theme();
 
 	const bool l_Segment = l_Eraser.mode == tools::EraserMode::Segment;
-	const std::vector<std::string> l_Hint = hintLines(m_Ui, l_Segment ? "Cuts strokes exactly where the eraser touches them." : "Removes every whole stroke the eraser touches.", l_Inner);
+	const std::vector<std::string> l_Hint = hintLines(m_Ui, tr(l_Segment ? "pop.eraser.segment.hint" : "pop.eraser.stroke.hint"), l_Inner);
 	const float l_HintHeight = m_Ui.px(17.f) * static_cast<float>(l_Hint.size());
 	const float l_Height = l_Pad * 2.f + m_Ui.px(40.f) + m_Ui.px(10.f) + m_Ui.px(34.f) + m_Ui.px(8.f) + l_LabelHeight + l_SliderHeight + m_Ui.px(8.f) + l_PreviewHeight;
 	(void)l_HintHeight;
@@ -538,7 +539,7 @@ void App::buildEraserPopover(const Rect2 p_Anchor)
 	float l_Y = l_Rect.min.y + l_Pad;
 
 	int l_Mode = l_Segment ? 0 : 1;
-	static constexpr std::array<std::string_view, 2> LABELS{ "Segment", "Stroke" };
+	const std::array<std::string_view, 2> LABELS{ tr("pop.eraser.segment"), tr("pop.eraser.stroke") };
 	static constexpr std::array<ui::Icon, 2> NO_ICONS{ ui::Icon::None, ui::Icon::None };
 	if (m_Ui.segmented("eraser.mode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(40.f) }), LABELS, NO_ICONS, l_Mode))
 		l_Eraser.mode = l_Mode == 0 ? tools::EraserMode::Segment : tools::EraserMode::Stroke;
@@ -546,7 +547,7 @@ void App::buildEraserPopover(const Rect2 p_Anchor)
 	drawHint(m_Ui, Vec2{ l_Left, l_Y }, l_Hint);
 	l_Y += m_Ui.px(34.f) + m_Ui.px(8.f);
 
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("pop.size"), 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.0f pt", l_Eraser.sizePoints), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	const float l_Inset = m_Ui.px(10.f);
@@ -580,7 +581,7 @@ void App::buildLaserPopover(const Rect2 p_Anchor)
 	float l_Y = l_Rect.min.y + l_Pad;
 
 	float l_Seconds = l_Laser.trailSeconds();
-	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Trail length", 13.f, l_Theme.textMuted);
+	m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("pop.trailLength"), 13.f, l_Theme.textMuted);
 	m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, formatNumber("%.1f s", l_Seconds), 13.f, l_Theme.text, ui::TextAlign::Right);
 	l_Y += l_LabelHeight;
 	const float l_Inset = m_Ui.px(10.f);
@@ -620,7 +621,7 @@ void App::buildSelectPopover(const Rect2 p_Anchor)
 	tools::SelectState& l_Select = m_Editor.selectState();
 
 	const bool l_Box = l_Select.mode == tools::SelectMode::Box;
-	const std::vector<std::string> l_Hint = hintLines(m_Ui, l_Box ? "Drag a rectangle around what to select. Hold Shift to add to the selection." : "Draw around what to select. Anything the line touches is selected.", l_Inner);
+	const std::vector<std::string> l_Hint = hintLines(m_Ui, tr(l_Box ? "pop.select.box.hint" : "pop.select.lasso.hint"), l_Inner);
 	const float l_Height = l_Pad * 2.f + m_Ui.px(40.f) + m_Ui.px(12.f) + m_Ui.px(17.f) * 3.f;
 
 	const Rect2 l_Rect = beginPopover(m_Ui, p_Anchor, l_Width, l_Height, false);
@@ -629,7 +630,7 @@ void App::buildSelectPopover(const Rect2 p_Anchor)
 	float l_Y = l_Rect.min.y + l_Pad;
 
 	int l_Mode = l_Box ? 0 : 1;
-	static constexpr std::array<std::string_view, 2> LABELS{ "Box", "Lasso" };
+	const std::array<std::string_view, 2> LABELS{ tr("pop.select.box"), tr("pop.select.lasso") };
 	static constexpr std::array<ui::Icon, 2> ICONS{ ui::Icon::BoxSelect, ui::Icon::Lasso };
 	if (m_Ui.segmented("select.mode", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(40.f) }), LABELS, ICONS, l_Mode))
 		l_Select.mode = l_Mode == 0 ? tools::SelectMode::Box : tools::SelectMode::Lasso;

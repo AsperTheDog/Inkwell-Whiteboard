@@ -25,6 +25,7 @@ import wb.gfx.commands;
 import wb.gfx.context;
 import wb.gfx.frames;
 import wb.gfx.image;
+import wb.io.locale;
 import wb.render.image_store;
 import wb.text.subtitles;
 import wb.video.media;
@@ -95,7 +96,7 @@ void VideoStore::startOpen(Entry& p_Entry, const Document& p_Document)
 	if (l_Asset == nullptr)
 	{
 		p_Entry.state = Entry::State::Failed;
-		p_Entry.error = "The video is missing from the board.";
+		p_Entry.error = tr("media.videoMissing");
 		return;
 	}
 	// Videos of one asset (and a video that scrolls out of view and back) share one source. A big video is never copied
@@ -286,7 +287,7 @@ void VideoStore::update(const gfx::GraphicsContext& p_Context, gfx::FrameSchedul
 				{
 					l_Entry.player.reset();
 					l_Entry.state = Entry::State::Failed;
-					l_Entry.error = "The video is too big for this graphics card.";
+					l_Entry.error = tr("media.videoTooBig");
 				}
 				else
 				{

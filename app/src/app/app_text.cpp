@@ -30,6 +30,7 @@ import wb.doc.object;
 import wb.editor;
 import wb.editor.text_session;
 import wb.io.file;
+import wb.io.locale;
 import wb.math;
 import wb.platform.input;
 import wb.text.fonts;
@@ -223,7 +224,7 @@ void App::buildTextBar()
 			l_Draw.rect(l_Chip, m_Ui.px(12.f), ui::withAlpha(l_Theme.hover, l_Theme.hover.a * l_Hover));
 		l_Draw.text(Vec2{ l_Chip.min.x + m_Ui.px(12.f), l_Chip.center().y }, l_Family, l_FamilyPx, l_Theme.text);
 		l_Draw.icon(ui::Icon::ChevronDown, Vec2{ l_Chip.max.x - m_Ui.px(14.f), l_Chip.center().y }, m_Ui.fontPx(13.f), l_Theme.textMuted);
-		m_Ui.noteTooltip(l_Id, l_Chip, "Font, size and colour", l_State.hovered);
+		m_Ui.noteTooltip(l_Id, l_Chip, tr("tip.textFormat"), l_State.hovered);
 		if (l_State.clicked)
 			openTextPopup(false);
 		l_Cursor += l_FamilyWidth;
@@ -241,13 +242,13 @@ void App::buildTextBar()
 		return l_Rect;
 	};
 	l_Divider();
-	if (m_Ui.iconButton("textbar.bold", l_Next(), ui::Icon::Bold, (l_Data.style & TextStyle::Bold) != 0, true, "Bold (Ctrl+B)"))
+	if (m_Ui.iconButton("textbar.bold", l_Next(), ui::Icon::Bold, (l_Data.style & TextStyle::Bold) != 0, true, tr("tip.bold")))
 	{
 		const bool l_On = (l_Data.style & TextStyle::Bold) == 0;
 		m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.style = static_cast<uint8_t>(l_On ? (p_Data.style | TextStyle::Bold) : (p_Data.style & ~TextStyle::Bold)); });
 		m_Editor.textState().style = static_cast<uint8_t>(l_On ? (m_Editor.textState().style | TextStyle::Bold) : (m_Editor.textState().style & ~TextStyle::Bold));
 	}
-	if (m_Ui.iconButton("textbar.italic", l_Next(), ui::Icon::Italic, (l_Data.style & TextStyle::Italic) != 0, true, "Italic (Ctrl+I)"))
+	if (m_Ui.iconButton("textbar.italic", l_Next(), ui::Icon::Italic, (l_Data.style & TextStyle::Italic) != 0, true, tr("tip.italic")))
 	{
 		const bool l_On = (l_Data.style & TextStyle::Italic) == 0;
 		m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.style = static_cast<uint8_t>(l_On ? (p_Data.style | TextStyle::Italic) : (p_Data.style & ~TextStyle::Italic)); });
@@ -256,10 +257,10 @@ void App::buildTextBar()
 	l_Cursor -= l_Gap;
 	l_Divider();
 	constexpr std::array<std::pair<TextAlign, ui::Icon>, 3> ALIGNS{ { { TextAlign::Left, ui::Icon::AlignLeft }, { TextAlign::Center, ui::Icon::AlignCenter }, { TextAlign::Right, ui::Icon::AlignRight } } };
-	constexpr std::array<const char*, 3> ALIGN_TIPS{ "Align left", "Centre", "Align right" };
+	const std::array<const char*, 3> ALIGN_TIPS{ "tip.textAlign.left", "tip.textAlign.center", "tip.textAlign.right" };
 	for (size_t i = 0; i < ALIGNS.size(); ++i)
 	{
-		if (m_Ui.iconButton(std::string("textbar.align") + std::to_string(i), l_Next(), ALIGNS[i].second, l_Data.align == ALIGNS[i].first, true, ALIGN_TIPS[i]))
+		if (m_Ui.iconButton(std::string("textbar.align") + std::to_string(i), l_Next(), ALIGNS[i].second, l_Data.align == ALIGNS[i].first, true, tr(ALIGN_TIPS[i])))
 		{
 			const TextAlign l_Align = ALIGNS[i].first;
 			m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.align = l_Align; });
@@ -276,7 +277,7 @@ void App::buildTextBar()
 		const float l_Radius = m_Ui.px(11.f + 1.5f * l_Hover);
 		l_Draw.circle(l_Dot.center(), l_Radius, l_Data.color);
 		l_Draw.ring(l_Dot.center(), l_Radius, ui::withAlpha(l_Theme.text, 0.2f), 1.f);
-		m_Ui.noteTooltip(l_Id, l_Dot, "Colour", l_State.hovered);
+		m_Ui.noteTooltip(l_Id, l_Dot, tr("tip.colour"), l_State.hovered);
 		if (l_State.clicked)
 		{
 			m_TextAnchor = l_Dot;
@@ -320,7 +321,7 @@ void App::buildTextPopover(const Rect2 p_Anchor)
 	float l_Y = l_Rect.min.y + l_Pad;
 
 	// Search
-	m_Ui.textField("text.search", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(38.f) }), m_FontFilter, "Search fonts", {}, 64, ui::Icon::Search);
+	m_Ui.textField("text.search", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(38.f) }), m_FontFilter, tr("text.searchFonts"), {}, 64, ui::Icon::Search);
 	l_Y += m_Ui.px(38.f) + m_Ui.px(8.f);
 
 	// Font list
@@ -350,7 +351,7 @@ void App::buildTextPopover(const Rect2 p_Anchor)
 	const float l_Scroll = m_Ui.anim(ui::Context::id("font.scroll"), m_FontScroll, 30.f);
 
 	if (l_Shown.empty())
-		m_Ui.label(l_List.center(), "No font with that name", 13.f, l_Theme.textMuted, ui::TextAlign::Center);
+		m_Ui.label(l_List.center(), tr("text.noFont"), 13.f, l_Theme.textMuted, ui::TextAlign::Center);
 	l_Draw.pushClip(l_List);
 	const int l_NamePx = m_Ui.fontPx(15.f);
 	const size_t l_FirstRow = static_cast<size_t>(std::max(0.f, std::floor(l_Scroll / l_Row)));
@@ -424,7 +425,7 @@ void App::buildTextPopover(const Rect2 p_Anchor)
 	}
 	l_Y += l_ListHeight + m_Ui.px(8.f);
 
-	if (m_Ui.button("text.addfont", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(36.f) }), "Add a font...", ui::ButtonStyle::Secondary, true, ui::Icon::Upload))
+	if (m_Ui.button("text.addfont", Rect2::fromPosSize(Vec2{ l_Left, l_Y }, Vec2{ l_Inner, m_Ui.px(36.f) }), tr("text.addFont"), ui::ButtonStyle::Secondary, true, ui::Icon::Upload))
 		showInsertFontDialog();
 	l_Y += m_Ui.px(36.f) + m_Ui.px(14.f);
 	m_Ui.divider(Vec2{ l_Left, l_Y }, Vec2{ l_Left + l_Inner, l_Y });
@@ -434,13 +435,13 @@ void App::buildTextPopover(const Rect2 p_Anchor)
 	{
 		const float l_Button = m_Ui.px(40.f);
 		const Rect2 l_BoldRect = Rect2::fromPosSize(Vec2{ l_Left - m_Ui.px(2.f), l_Y }, Vec2{ l_Button });
-		if (m_Ui.iconButton("text.bold", l_BoldRect, ui::Icon::Bold, (l_Style & TextStyle::Bold) != 0, true, "Bold (Ctrl+B)"))
+		if (m_Ui.iconButton("text.bold", l_BoldRect, ui::Icon::Bold, (l_Style & TextStyle::Bold) != 0, true, tr("tip.bold")))
 		{
 			const bool l_On = (l_Style & TextStyle::Bold) == 0;
 			l_State.style = static_cast<uint8_t>(l_On ? (l_State.style | TextStyle::Bold) : (l_State.style & ~TextStyle::Bold));
 			m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.style = static_cast<uint8_t>(l_On ? (p_Data.style | TextStyle::Bold) : (p_Data.style & ~TextStyle::Bold)); });
 		}
-		if (m_Ui.iconButton("text.italic", Rect2::fromPosSize(Vec2{ l_BoldRect.max.x + m_Ui.px(2.f), l_Y }, Vec2{ l_Button }), ui::Icon::Italic, (l_Style & TextStyle::Italic) != 0, true, "Italic (Ctrl+I)"))
+		if (m_Ui.iconButton("text.italic", Rect2::fromPosSize(Vec2{ l_BoldRect.max.x + m_Ui.px(2.f), l_Y }, Vec2{ l_Button }), ui::Icon::Italic, (l_Style & TextStyle::Italic) != 0, true, tr("tip.italic")))
 		{
 			const bool l_On = (l_Style & TextStyle::Italic) == 0;
 			l_State.style = static_cast<uint8_t>(l_On ? (l_State.style | TextStyle::Italic) : (l_State.style & ~TextStyle::Italic));
@@ -462,7 +463,7 @@ void App::buildTextPopover(const Rect2 p_Anchor)
 	// Size: as it looks on screen right now
 	{
 		const float l_LabelHeight = m_Ui.px(22.f);
-		m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, "Size", 13.f, l_Theme.textMuted);
+		m_Ui.label(Vec2{ l_Left, l_Y + l_LabelHeight * 0.5f }, tr("pop.size"), 13.f, l_Theme.textMuted);
 		char l_Text[32];
 		std::snprintf(l_Text, sizeof(l_Text), "%.0f pt", static_cast<double>(l_Points));
 		m_Ui.label(Vec2{ l_Left + l_Inner, l_Y + l_LabelHeight * 0.5f }, l_Text, 13.f, l_Theme.text, ui::TextAlign::Right);
@@ -508,7 +509,8 @@ void App::showInsertFontDialog()
 {
 	if (m_DialogKind != DialogKind::None)
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Fonts", "ttf;otf;ttc;otc" } };
+	static SDL_DialogFileFilter s_Filters[1]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("text.fontFiles").c_str(), "ttf;otf;ttc;otc" };
 	m_DialogKind = DialogKind::Fonts;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 1, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), true);
 }
@@ -536,7 +538,7 @@ void App::importFontFiles(const std::vector<std::string>& p_Paths)
 	m_Editor.applyTextStyle([&](TextData& p_Data) { p_Data.family = l_Last; });
 	m_FontFilter.clear();
 	m_FontScrollToSelected = true;
-	showToast(l_Imported == 1 ? "Added the font " + l_Last : "Added " + std::to_string(l_Imported) + " fonts");
+	showToast(l_Imported == 1 ? tr("text.addedFont", { l_Last }) : tr("text.addedFonts", { std::to_string(l_Imported) }));
 	requestRedraw();
 }
 } // namespace wb

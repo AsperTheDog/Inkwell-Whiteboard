@@ -21,6 +21,7 @@ import wb.doc.commands;
 import wb.editor;
 import wb.io.blob;
 import wb.io.file;
+import wb.io.locale;
 import wb.io.settings;
 import wb.math;
 import wb.platform.input;
@@ -83,6 +84,8 @@ void App::loadSettings()
 	m_Settings.load(m_PrefDir / "settings.ini");
 	const Settings& l_S = m_Settings;
 
+	setUiLanguage(l_S.getString("ui.language"));
+
 	m_DarkTheme = l_S.getBool("ui.dark", m_DarkTheme);
 	m_PlayAnimations = l_S.getBool("anim.play", m_PlayAnimations);
 	m_ShowGrid = l_S.getBool("ui.grid", m_ShowGrid);
@@ -141,6 +144,8 @@ void App::loadSettings()
 void App::saveSettings()
 {
 	Settings l_S = m_Settings; // keeps keys written by other versions
+	if (SDL_getenv("WB_LANG") == nullptr)
+		l_S.set("ui.language", m_LanguageSetting); // WB_LANG is only for trying a language out
 	l_S.setBool("ui.dark", m_DarkTheme);
 	l_S.setBool("anim.play", m_PlayAnimations);
 	l_S.setBool("ui.grid", m_ShowGrid);
@@ -204,7 +209,7 @@ void App::requestAction(const Action p_Action)
 	// A board that belongs to the host cannot be swapped for another one underneath its collaborators
 	if (m_Collab && m_Collab->role() == net::Role::Client && (p_Action == Action::NewBoard || p_Action == Action::OpenFile))
 	{
-		showMessage("You are in somebody else's session. Leave it first (menu > Collaborate) to start or open another board.");
+		showMessage(tr("file.inSession"));
 		return;
 	}
 	if (m_Options.smokeTestFrames > 0 || !m_Session.dirty())
@@ -226,7 +231,7 @@ void App::performAction(const Action p_Action)
 	case Action::NewBoard:
 		m_Session.newBoard();
 		updateTitle();
-		showToast("New board");
+		showToast(tr("toast.newBoard"));
 		return;
 	case Action::OpenFile:
 		showOpenDialog();
@@ -252,19 +257,19 @@ void App::saveToPath(const std::filesystem::path& p_Path, const Action p_After)
 {
 	if (m_Session.saving())
 	{
-		showToast("The board is still being saved");
+		showToast(tr("file.stillSaving"));
 		return;
 	}
 	// Pictures and videos still on their way are left out of the file (everything else is saved)
 	m_SaveUnfinished = m_Collab ? m_Collab->assetProgress().files : 0;
 	if (const IoResult l_Started = m_Session.beginSave(p_Path); !l_Started.ok)
 	{
-		showMessage("The board could not be saved.\n\n" + l_Started.error);
+		showMessage(tr("file.saveFailed", { l_Started.error }));
 		return; // a pending Quit / New / Open is dropped so nothing is lost
 	}
 	m_SaveAfter = p_After;
 	m_SaveToastNs = 0;
-	showToast("Saving " + pathToUtf8(p_Path.filename()) + "...");
+	showToast(tr("file.savingName", { pathToUtf8(p_Path.filename()) }));
 }
 
 // Once per frame: follows the background save and the background copy of a picture or video
@@ -278,7 +283,7 @@ void App::pollSave()
 		{
 			m_SaveToastNs = l_Now;
 			const double l_Progress = m_Session.saveProgress();
-			showToast("Saving..." + (l_Progress > 0.0 ? " " + std::to_string(static_cast<int>(l_Progress * 100.0)) + "%" : std::string()));
+			showToast(l_Progress > 0.0 ? tr("file.savingPercent", { std::to_string(static_cast<int>(l_Progress * 100.0)) }) : tr("file.saving"));
 		}
 		requestRedraw(2);
 	}
@@ -288,12 +293,12 @@ void App::pollSave()
 		const Action l_After = std::exchange(m_SaveAfter, Action::None);
 		if (!l_Done->ok)
 		{
-			showMessage("The board could not be saved.\n\n" + l_Done->error);
+			showMessage(tr("file.saveFailed", { l_Done->error }));
 			return; // a pending Quit / New / Open is dropped so nothing is lost
 		}
 		m_LastDirectory = pathToUtf8(l_Done->path.parent_path());
 		updateTitle();
-		showToast("Saved " + m_Session.displayName() + (m_SaveUnfinished > 0 ? " (without " + std::to_string(m_SaveUnfinished) + " picture/video still being received)" : std::string()));
+		showToast(m_SaveUnfinished > 0 ? tr("file.savedWithout", { m_Session.displayName(), std::to_string(m_SaveUnfinished) }) : tr("file.saved", { m_Session.displayName() }));
 		performAction(l_After);
 	}
 	if (m_MediaCopy.valid())
@@ -302,9 +307,9 @@ void App::pollSave()
 		{
 			const IoResult l_Result = m_MediaCopy.get();
 			if (!l_Result.ok)
-				showMessage("The file could not be saved.\n\n" + l_Result.error);
+				showMessage(tr("file.mediaSaveFailed", { l_Result.error }));
 			else
-				showToast("Saved " + m_MediaCopyName);
+				showToast(tr("file.saved", { m_MediaCopyName }));
 		}
 		else
 		{
@@ -319,12 +324,12 @@ void App::openPath(const std::filesystem::path& p_Path)
 	requestRedraw();
 	if (!l_Result.ok)
 	{
-		showMessage("The board could not be opened.\n\n" + l_Result.error);
+		showMessage(tr("file.openFailed", { l_Result.error }));
 		return;
 	}
 	m_LastDirectory = pathToUtf8(p_Path.parent_path());
 	updateTitle();
-	showToast("Opened " + m_Session.displayName());
+	showToast(tr("file.opened", { m_Session.displayName() }));
 	if (std::string l_Warning = m_Session.takeWarning(); !l_Warning.empty())
 		showMessage(std::move(l_Warning));
 }
@@ -335,7 +340,8 @@ void App::showOpenDialog()
 {
 	if (m_DialogKind != DialogKind::None)
 		return; // one dialog at a time
-	static const SDL_DialogFileFilter s_Filters[] = { { "Inkwell boards", "wbrd" } };
+	static SDL_DialogFileFilter s_Filters[1]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("file.boardFiles").c_str(), "wbrd" };
 	m_DialogKind = DialogKind::Open;
 	SDL_ShowOpenFileDialog(&App::dialogCallback, this, m_Window.handle(), s_Filters, 1, m_LastDirectory.empty() ? nullptr : m_LastDirectory.c_str(), false);
 }
@@ -344,7 +350,8 @@ void App::showSaveDialog(const Action p_After)
 {
 	if (m_DialogKind != DialogKind::None)
 		return;
-	static const SDL_DialogFileFilter s_Filters[] = { { "Inkwell boards", "wbrd" } };
+	static SDL_DialogFileFilter s_Filters[1]; // read while the dialog is open, so it has to outlive this call
+	s_Filters[0] = { tr("file.boardFiles").c_str(), "wbrd" };
 	m_DialogKind = DialogKind::Save;
 	m_DialogAfter = p_After;
 
@@ -369,7 +376,7 @@ void App::showSaveMediaDialog(const AssetId p_Asset)
 	// Only the file name of whatever the sender called it
 	std::string l_Name = pathToUtf8(pathFromUtf8(l_Asset->name).filename());
 	if (l_Name.empty())
-		l_Name = "file";
+		l_Name = tr("file.defaultName");
 	std::string l_Start = l_Name;
 	if (!m_LastDirectory.empty())
 		l_Start = pathToUtf8(pathFromUtf8(m_LastDirectory) / pathFromUtf8(l_Name));
@@ -425,23 +432,23 @@ void App::handleDialogResult()
 		const ImageAsset* l_Asset = m_Editor.document().findAsset(m_SaveMediaAsset);
 		if (l_Asset == nullptr)
 		{
-			showMessage("The file is no longer on the board, so it could not be saved.");
+			showMessage(tr("file.mediaGone"));
 			return;
 		}
 		if (!l_Asset->complete())
 		{
-			showMessage("The file is still arriving: it can be saved when it has finished.");
+			showMessage(tr("file.mediaArriving"));
 			return;
 		}
 		if (m_MediaCopy.valid())
 		{
-			showToast("Another file is still being saved");
+			showToast(tr("file.mediaBusy"));
 			return;
 		}
 		// A video can be many gigabytes: copied by a background job from wherever it is read
 		m_MediaCopyName = pathToUtf8(l_Target.filename());
 		m_MediaCopy = std::async(std::launch::async, [l_Source = l_Asset->source(), l_Target]() { return copySourceToFile(*l_Source, l_Target); });
-		showToast("Saving " + m_MediaCopyName + "...");
+		showToast(tr("file.savingName", { m_MediaCopyName }));
 		return;
 	}
 	if (l_Kind == DialogKind::Subtitles)
@@ -526,7 +533,7 @@ void App::updateTitle()
 	std::string l_Title = m_Session.displayName();
 	if (m_Session.dirty())
 		l_Title += "*";
-	l_Title += " - Inkwell";
+	l_Title += " - " + tr("app.name");
 	if (l_Title == m_LastTitle)
 		return;
 	m_LastTitle = l_Title;

@@ -22,6 +22,7 @@ module;
 
 module wb.render.image_store;
 
+import wb.io.locale;
 import wb.math;
 import wb.doc.object;
 import wb.doc.document;
@@ -353,7 +354,7 @@ void ImageStore::update(const gfx::GraphicsContext& p_Context, gfx::FrameSchedul
 		if (!upload(p_Context, p_Frames, p_Cmd, l_Decoded, l_Entry.image, l_Entry.set))
 		{
 			l_Entry.state = Entry::State::Failed;
-			l_Entry.error = "The picture could not be uploaded.";
+			l_Entry.error = tr("media.uploadFailed");
 			continue;
 		}
 		++l_Uploads;

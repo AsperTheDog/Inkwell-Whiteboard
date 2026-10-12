@@ -25,6 +25,7 @@ module;
 
 module wb.steam;
 
+import wb.io.locale;
 import wb.net.protocol;
 import wb.net.stream;
 
@@ -948,7 +949,7 @@ net::Connector Steam::connector(const uint64_t p_Host)
 	{
 		if (!l_Impl || !l_Impl->alive.load())
 		{
-			p_Error = "Steam is not available";
+			p_Error = tr("steam.unavailable");
 			return nullptr;
 		}
 		p_Trace("Contacting Steam user " + std::to_string(p_Host) + " through the Steam relay network");
@@ -962,7 +963,7 @@ net::Connector Steam::connector(const uint64_t p_Host)
 			l_Link->conn = l_Impl->api.ISteamNetworkingSockets_ConnectP2P(l_Impl->api.sockets, &l_Identity, VIRTUAL_PORT, 0, nullptr);
 			if (l_Link->conn == 0)
 			{
-				p_Error = "Steam could not start the connection. Is that Steam ID right?";
+				p_Error = tr("steam.startFailed");
 				return nullptr;
 			}
 			l_Impl->links.emplace(l_Link->conn, l_Link);
@@ -984,11 +985,11 @@ net::Connector Steam::connector(const uint64_t p_Host)
 		l_Lock.unlock();
 		l_Impl->closeLink(l_Link);
 		if (l_Cancelled)
-			p_Error = "Cancelled";
+			p_Error = tr("net.reason.cancelled");
 		else if (!l_Reason.empty())
-			p_Error = "Steam could not reach the host: " + l_Reason + ". The host must be running Inkwell with Steam sessions on, and be signed in to Steam.";
+			p_Error = tr("steam.unreachable", { l_Reason });
 		else
-			p_Error = "No answer from the host through Steam after " + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(CONNECT_TIMEOUT).count()) + " s. The host must be running Inkwell with Steam sessions on, and be signed in to Steam.";
+			p_Error = tr("steam.noAnswer", { std::to_string(std::chrono::duration_cast<std::chrono::seconds>(CONNECT_TIMEOUT).count()) });
 		return nullptr;
 	};
 }

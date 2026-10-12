@@ -27,6 +27,7 @@ module;
 
 module wb.text.fonts;
 
+import wb.io.locale;
 import wb.math;
 import wb.doc.object;
 import wb.text.layout;
@@ -475,13 +476,13 @@ std::string FontRegistry::importFont(const fs::path& p_File, std::string& p_Erro
 	std::error_code l_Error;
 	if (!fs::is_regular_file(p_File, l_Error) || !isFontFile(p_File))
 	{
-		p_Error = "That is not a font file (.ttf, .otf or .ttc).";
+		p_Error = tr("text.notFont");
 		return {};
 	}
 	const std::vector<FileFace> l_Faces = readFileFaces(p_File);
 	if (l_Faces.empty())
 	{
-		p_Error = "This font file could not be read.";
+		p_Error = tr("text.fontUnreadable");
 		return {};
 	}
 	fs::path l_Target = p_File;
@@ -494,7 +495,7 @@ std::string FontRegistry::importFont(const fs::path& p_File, std::string& p_Erro
 		fs::copy_file(p_File, l_Target, fs::copy_options::overwrite_existing, l_Error);
 		if (l_Error)
 		{
-			p_Error = "The font could not be copied into the app's font folder.";
+			p_Error = tr("text.fontCopyFailed");
 			return {};
 		}
 	}
@@ -727,6 +728,11 @@ const uint8_t* FontRegistry::faceData(const FaceId p_Face, size_t& p_Size) const
 	}
 	p_Size = m_Faces[p_Face]->data.size();
 	return m_Faces[p_Face]->data.data();
+}
+
+int FontRegistry::faceStart(const FaceId p_Face) const
+{
+	return p_Face < m_Faces.size() ? m_Faces[p_Face]->info.fontstart : -1;
 }
 
 // ------------------------------------------------------------------------------------------------ metrics

@@ -22,3 +22,6 @@ compile_commands.json
 # Release archives (scripts/package_release.py)
 /dist/
 *.log
+
+# Source fonts for scripts/make_ui_fonts.py
+/scripts/.font_cache/
