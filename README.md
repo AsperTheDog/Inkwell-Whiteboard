@@ -16,7 +16,7 @@ Windows and Linux.
 - Undo/redo, autosave with recovery, save files, PNG export
 - Light and dark themes
 - Live collaboration over the network (encrypted)
-- The interface is available in 23 languages (translations are my own and have not been reviewed by native speakers, corrections are welcome)
+- The interface is available in 23 languages (translations are generated and have not been reviewed by native speakers, corrections are welcome)
 
 ## Collaborating
 
