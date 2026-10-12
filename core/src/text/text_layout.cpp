@@ -606,6 +606,55 @@ bool rightToLeftAt(const TextLayout& p_Layout, const size_t p_Byte)
 	return l_Line.rtl;
 }
 
+size_t moveVisually(const TextLayout& p_Layout, const size_t p_Byte, const int p_Direction)
+{
+	const uint32_t l_Index = lineIndexFor(p_Layout, p_Byte, false);
+	const LaidLine& l_Line = p_Layout.lines[l_Index];
+	if (!l_Line.bidi || l_Line.glyphBegin == l_Line.glyphEnd)
+		return NO_VISUAL_MOVE;
+
+	// Every place the caret can stand on this line: glyph edges, except those between a letter and its marks
+	std::vector<uint32_t> l_Positions;
+	l_Positions.push_back(l_Line.byteBegin);
+	for (uint32_t i = l_Line.glyphBegin; i < l_Line.glyphEnd; ++i)
+	{
+		const LaidGlyph& l_Glyph = p_Layout.glyphs[i];
+		if (!isCombining(l_Glyph.codepoint))
+			l_Positions.push_back(l_Glyph.byteBegin);
+		l_Positions.push_back(l_Glyph.byteEnd);
+	}
+	std::ranges::sort(l_Positions);
+	l_Positions.erase(std::unique(l_Positions.begin(), l_Positions.end()), l_Positions.end());
+	const size_t l_Last = lineEndByte(p_Layout, l_Line);
+
+	const float l_From = caretXBidi(p_Layout, l_Line, p_Byte);
+	constexpr float EPSILON = 0.001f;
+	size_t l_Best = NO_VISUAL_MOVE;
+	float l_BestGap = std::numeric_limits<float>::max();
+	for (const uint32_t l_Position : l_Positions)
+	{
+		if (l_Position < l_Line.byteBegin || l_Position > l_Last || l_Position == p_Byte)
+			continue;
+		const float l_Shift = (caretXBidi(p_Layout, l_Line, l_Position) - l_From) * static_cast<float>(p_Direction);
+		if (l_Shift <= EPSILON) // not further along in that direction (positions sharing a spot are one place)
+			continue;
+		const size_t l_Distance = l_Position > p_Byte ? l_Position - p_Byte : p_Byte - l_Position;
+		if (l_Shift < l_BestGap - EPSILON || (std::abs(l_Shift - l_BestGap) <= EPSILON && l_Distance < (l_Best > p_Byte ? l_Best - p_Byte : p_Byte - l_Best)))
+		{
+			l_BestGap = l_Shift;
+			l_Best = l_Position;
+		}
+	}
+	if (l_Best != NO_VISUAL_MOVE)
+		return l_Best;
+
+	// The edge of the line: on to the line that continues it. The left edge of a right-to-left line is its end.
+	const bool l_ToEnd = (p_Direction > 0) != l_Line.rtl; // arriving at the logical end of this line
+	if (l_ToEnd)
+		return l_Index + 1 < p_Layout.lines.size() ? p_Layout.lines[l_Index + 1].byteBegin : l_Last;
+	return l_Index > 0 ? lineEndByte(p_Layout, p_Layout.lines[l_Index - 1]) : l_Line.byteBegin;
+}
+
 std::vector<Rect> selectionRects(const TextLayout& p_Layout, const size_t p_Begin, const size_t p_End)
 {
 	std::vector<Rect> l_Rects;

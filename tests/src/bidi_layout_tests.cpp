@@ -430,3 +430,78 @@ TEST(BidiLayout, RandomTextKeepsItsInvariants)
 		}
 	}
 }
+
+// The arrow keys move on the screen: the caret may not turn back when it crosses from one direction's run to the other
+TEST(BidiLayout, ArrowKeysKeepGoingTheSameWayOnScreen)
+{
+	const std::vector<std::string> l_Texts = {
+		SHALOM,
+		"ab " + SHALOM + " cd",
+		SHALOM + " abc",
+		SHALOM + " 123 " + SHALOM,
+		"x " + SHALOM + " " + SHALOM + " y",
+	};
+	for (const std::string& l_Text : l_Texts)
+	{
+		const TextLayout l_Layout = layout(l_Text);
+		for (const int l_Direction : { 1, -1 })
+		{
+			// Start at the screen's far end and walk to the other
+			size_t l_Byte = 0;
+			float l_Far = l_Direction > 0 ? 1e9f : -1e9f;
+			for (size_t b = 0; b <= l_Text.size(); b = wb::text::nextCluster(l_Text, b))
+			{
+				const float l_X = wb::text::caretAt(l_Layout, b).x;
+				if ((l_Direction > 0 && l_X < l_Far) || (l_Direction < 0 && l_X > l_Far))
+				{
+					l_Far = l_X;
+					l_Byte = b;
+				}
+				if (b == l_Text.size())
+					break;
+			}
+			float l_Previous = wb::text::caretAt(l_Layout, l_Byte).x;
+			size_t l_Steps = 0;
+			while (l_Steps < 64)
+			{
+				const size_t l_Next = wb::text::moveVisually(l_Layout, l_Byte, l_Direction);
+				ASSERT_NE(l_Next, wb::text::NO_VISUAL_MOVE) << l_Text;
+				const float l_X = wb::text::caretAt(l_Layout, l_Next).x;
+				if (l_Next == l_Byte || (l_Direction > 0 ? l_X <= l_Previous + 0.001f : l_X >= l_Previous - 0.001f))
+					break; // at the far end, the caret stays
+				EXPECT_GT((l_X - l_Previous) * static_cast<float>(l_Direction), 0.f) << "text " << l_Text << " direction " << l_Direction << " step " << l_Steps;
+				l_Previous = l_X;
+				l_Byte = l_Next;
+				++l_Steps;
+			}
+			// It got all the way across: as many steps as there are distinct caret positions, less one
+			EXPECT_GE(l_Steps, 4u) << l_Text;
+			EXPECT_NEAR(l_Previous, l_Direction > 0 ? l_Layout.size.x : 0.f, 0.001f) << "did not reach the far end of " << l_Text;
+		}
+	}
+}
+
+TEST(BidiLayout, ArrowKeysInPlainTextAreLeftToTheEditor)
+{
+	const TextLayout l_Layout = layout("hello");
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 2, 1), wb::text::NO_VISUAL_MOVE);
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 2, -1), wb::text::NO_VISUAL_MOVE);
+}
+
+TEST(BidiLayout, ArrowKeysInHebrewGoForwardInTheTextWhenPressingLeft)
+{
+	const TextLayout l_Layout = layout(SHALOM);
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 0, -1), 2u); // Left from the start (the right edge)
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 2, 1), 0u);  // Right goes back
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 8, -1), 8u); // Left at the left edge: nowhere to go (single line)
+}
+
+TEST(BidiLayout, ArrowKeysContinueOnTheNextLine)
+{
+	const std::string l_Text = SHALOM + "\n" + SHALOM; // two right-to-left lines
+	const TextLayout l_Layout = layout(l_Text);
+	// Left at the left edge of the first line (its end) continues at the start of the second: its right edge
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 8, -1), 9u);
+	// Right at the right edge of the second line (its start) goes back to the end of the first
+	EXPECT_EQ(wb::text::moveVisually(l_Layout, 9, 1), 8u);
+}

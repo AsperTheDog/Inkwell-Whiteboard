@@ -398,9 +398,21 @@ bool TextSession::key(const SDL_KeyboardEvent& p_Event)
 	case SDLK_LEFT:
 	case SDLK_RIGHT:
 	{
-		// Arrows move on the screen: in a right-to-left run Left goes forward in the text
+		// Arrows move on the screen. In lines with right-to-left text the caret goes to the next caret position to the
+		// left or right, whichever way the text runs there.
 		const text::TextLayout& l_Layout = m_TextSystem.layout([&] { TextData l_Data = m_Data; l_Data.text = m_Editor.text(); return l_Data; }());
-		const bool l_Forward = (l_Key == SDLK_RIGHT) != text::rightToLeftAt(l_Layout, m_Editor.caret());
+		const bool l_Right = l_Key == SDLK_RIGHT;
+		if (!l_Ctrl)
+		{
+			const size_t l_Target = text::moveVisually(l_Layout, m_Editor.caret(), l_Right ? 1 : -1);
+			if (l_Target != text::NO_VISUAL_MOVE)
+			{
+				m_Editor.moveTo(l_Target, l_Shift);
+				break;
+			}
+		}
+		// Words (and plain lines): a step through the text, turned around inside a right-to-left run
+		const bool l_Forward = l_Right != text::rightToLeftAt(l_Layout, m_Editor.caret());
 		if (l_Forward)
 			m_Editor.moveRight(l_Shift, l_Ctrl);
 		else

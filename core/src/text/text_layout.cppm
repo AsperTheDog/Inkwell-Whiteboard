@@ -152,4 +152,10 @@ struct CaretPosition
 // True when the character at p_Byte (the one the caret is before) is in a right-to-left run: the Left arrow then
 // moves forward in the text
 [[nodiscard]] bool rightToLeftAt(const TextLayout& p_Layout, size_t p_Byte);
+// The Left (-1) or Right (+1) arrow key on the screen: the byte offset whose caret is the next one to the left or
+// right of the caret at p_Byte on its line, so a caret crossing right-to-left and left-to-right runs keeps going the
+// same way on screen. At the end of a line it continues on the neighbouring line. Returns npos for a line that has no
+// right-to-left glyphs: there the arrows are plain steps through the text.
+inline constexpr size_t NO_VISUAL_MOVE = static_cast<size_t>(-1);
+[[nodiscard]] size_t moveVisually(const TextLayout& p_Layout, size_t p_Byte, int p_Direction);
 } // namespace wb::text
