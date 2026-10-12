@@ -56,6 +56,22 @@ FetchContent_Declare(spdlog
     GIT_TAG v1.17.0
     GIT_SHALLOW TRUE
 )
+set(HB_BUILD_UTILS "OFF" CACHE BOOL "" FORCE)
+set(HB_BUILD_SUBSET "OFF" CACHE BOOL "" FORCE)
+set(HB_HAVE_FREETYPE "OFF" CACHE BOOL "" FORCE)
+set(HB_HAVE_GLIB "OFF" CACHE BOOL "" FORCE)
+set(HB_HAVE_ICU "OFF" CACHE BOOL "" FORCE)
+set(HB_HAVE_GRAPHITE2 "OFF" CACHE BOOL "" FORCE)
+FetchContent_Declare(harfbuzz
+    GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+    GIT_TAG 14.6.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_Declare(sheenbidi
+    GIT_REPOSITORY https://github.com/Tehreer/SheenBidi.git
+    GIT_TAG v3.0.0
+    GIT_SHALLOW TRUE
+)
 set(INSTALL_GTEST "OFF" CACHE BOOL "" FORCE)
 set(BUILD_GMOCK "OFF" CACHE BOOL "" FORCE)
 set(gtest_force_shared_crt "ON" CACHE BOOL "" FORCE)
@@ -71,12 +87,15 @@ FetchContent_MakeAvailable(volk)
 FetchContent_MakeAvailable(vma)
 FetchContent_MakeAvailable(glm_src)
 FetchContent_MakeAvailable(spdlog)
+FetchContent_MakeAvailable(harfbuzz)
+FetchContent_MakeAvailable(sheenbidi)
 FetchContent_MakeAvailable(GTest)
 
 enable_testing()
 
 add_subdirectory(libs/SDL3)
 add_subdirectory(libs/Vulkan)
+add_subdirectory(libs/Shaping)
 add_subdirectory(libs/glm)
 add_subdirectory(libs/stb)
 add_subdirectory(libs/Monocypher)

@@ -128,7 +128,7 @@ TEST(Locale, TheProgramsEnglishFileLoads)
 	EXPECT_EQ(wb::tr("dialog.prompt.body", { "Plan.wbrd" }), "\"Plan.wbrd\" has changes that are not saved.");
 }
 
-// A translation may reorder placeholders but must not lose or invent them, or the program would show "{1}" to a user
+// A translation may reorder placeholders or leave one out, but must not invent one, or the program would show "{1}" to a user
 TEST(Locale, EveryShippedLanguageKeepsTheEnglishPlaceholders)
 {
 	const auto l_Placeholders = [](const std::string& p_Text)
@@ -159,7 +159,7 @@ TEST(Locale, EveryShippedLanguageKeepsTheEnglishPlaceholders)
 		{
 			const auto l_It = l_English.find(l_Key);
 			ASSERT_NE(l_It, l_English.end()) << l_Language.code << ": " << l_Key << " does not exist in English";
-			EXPECT_EQ(l_Placeholders(l_Value), l_Placeholders(l_It->second)) << l_Language.code << ": " << l_Key;
+			EXPECT_TRUE(std::ranges::includes(l_Placeholders(l_It->second), l_Placeholders(l_Value))) << l_Language.code << ": " << l_Key; // leaving one out is fine
 		}
 	}
 }

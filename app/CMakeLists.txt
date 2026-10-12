@@ -7,6 +7,7 @@ target_link_libraries(inkwell PRIVATE VulkanDeps)
 target_link_libraries(inkwell PRIVATE ImGui)
 target_link_libraries(inkwell PRIVATE STB)
 target_link_libraries(inkwell PRIVATE spdlog)
+target_link_libraries(inkwell PRIVATE ShapingDeps)
 
 file(GLOB_RECURSE inkwell_SOURCES_0 CONFIGURE_DEPENDS
     "src/*.cpp"

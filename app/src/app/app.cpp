@@ -158,6 +158,7 @@ void App::setUiLanguage(const std::string& p_Code)
 	setLanguage(m_LanguageDir, l_Code.empty() ? "en" : l_Code);
 	// The language's own font holds the glyphs of its texts (the key is absent, so the id comes back, for Latin ones)
 	const std::string& l_Font = tr("language.font");
+	m_FontAtlas.setRightToLeft(tr("language.rtl") == "1");
 	m_FontAtlas.setLanguageFont(l_Font == "language.font" || l_Font.empty() ? std::filesystem::path() : fontDirectory() / "ui" / pathFromUtf8(l_Font));
 	m_LastTitle.clear();
 	updateTitle();
@@ -258,7 +259,7 @@ void App::init()
 			const text::FaceId l_Face = l_Fonts.fallbackFor(p_Codepoint, 0);
 			size_t l_Size = 0;
 			const uint8_t* l_Data = l_Fonts.faceData(l_Face, l_Size);
-			return ui::FallbackFace{ l_Data, l_Fonts.faceStart(l_Face), l_Face };
+			return ui::FallbackFace{ l_Data, l_Fonts.faceStart(l_Face), l_Face, l_Size };
 		});
 		m_Ui.init(m_FontAtlas);
 		m_UiRenderer.init(m_Context, m_Swapchain.format());

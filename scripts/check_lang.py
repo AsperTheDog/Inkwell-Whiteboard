@@ -153,11 +153,12 @@ def main() -> int:
             if key not in english:
                 print(f"error: {path.name}: {key} does not exist in en.txt")
                 errors += 1
-            elif placeholders(text) != placeholders(english[key]):
+            elif not placeholders(text) <= placeholders(english[key]):
+                # Leaving one out is fine (a singular form may say "one picture" without the number); inventing one is not
                 print(f"error: {path.name}: {key} uses placeholders {sorted(placeholders(text))}, English has {sorted(placeholders(english[key]))}")
                 errors += 1
-        # An empty English text ("language.font") is a setting that most languages leave alone
-        translatable = [key for key, text in english.items() if text]
+        # "language.*" keys beyond the name are settings that most languages leave alone
+        translatable = [key for key, text in english.items() if text and not key.startswith("language.")]
         missing = [key for key in translatable if key not in texts]
         done = len(translatable) - len(missing)
         print(f"{path.stem}: {done}/{len(translatable)} texts ({100 * done // len(translatable)}%)")

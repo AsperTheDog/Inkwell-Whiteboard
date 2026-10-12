@@ -11,6 +11,8 @@ language.name=English
 # A font file in assets/fonts/ui with the characters of this language that Inter lacks (Latin, Greek and Cyrillic
 # need none). Other characters come from the fonts installed on the system.
 language.font=
+# 1 for languages written right to left (Arabic, Hebrew): the text direction of the interface
+language.rtl=0
 
 # ---- Common words
 common.ok=OK

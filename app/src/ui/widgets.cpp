@@ -307,21 +307,23 @@ bool Context::colorPicker(const std::string_view p_Key, const Rect2 p_Rect, Hsv&
 
 namespace
 {
-// Byte offset in p_Text whose left edge is nearest to p_X (measured from the start of the text)
+// Byte offset in p_Text whose caret is nearest to p_X (measured from the left of the text as drawn)
 size_t indexAtX(const FontAtlas& p_Font, const std::string& p_Text, const int p_PixelSize, const float p_X)
 {
+	size_t l_Best = 0;
+	float l_BestDistance = std::abs(p_Font.caretX(p_Text, 0, p_PixelSize) - p_X);
 	size_t l_Index = 0;
-	float l_Previous = 0.f;
 	while (l_Index < p_Text.size())
 	{
-		const size_t l_Next = text::nextCluster(p_Text, l_Index);
-		const float l_Right = p_Font.measure(std::string_view(p_Text).substr(0, l_Next), p_PixelSize);
-		if (p_X < (l_Previous + l_Right) * 0.5f)
-			return l_Index;
-		l_Previous = l_Right;
-		l_Index = l_Next;
+		l_Index = text::nextCluster(p_Text, l_Index);
+		const float l_Distance = std::abs(p_Font.caretX(p_Text, l_Index, p_PixelSize) - p_X);
+		if (l_Distance < l_BestDistance)
+		{
+			l_BestDistance = l_Distance;
+			l_Best = l_Index;
+		}
 	}
-	return p_Text.size();
+	return l_Best;
 }
 } // namespace
 
@@ -385,7 +387,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		m_Draw.icon(p_Icon, Vec2{ p_Rect.min.x + l_Pad + px(7.f), p_Rect.center().y }, fontPx(15.f), m_Theme.textMuted);
 
 	const std::string& l_Shown = l_Focused ? m_Field.text() : p_Text;
-	const float l_CaretOffset = l_Focused ? m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.caret()), l_PixelSize) : 0.f;
+	const float l_CaretOffset = l_Focused ? m_Font->caretX(l_Shown, m_Field.caret(), l_PixelSize) : 0.f;
 	if (l_Focused)
 	{
 		if (l_CaretOffset - m_FieldScroll > l_TextWidth - px(2.f))
@@ -398,10 +400,10 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 	const float l_Origin = l_TextLeft - (l_Focused ? m_FieldScroll : 0.f);
 	if (l_Focused && m_Field.hasSelection())
 	{
-		const float l_From = m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.selectionBegin()), l_PixelSize);
-		const float l_To = m_Font->measure(std::string_view(l_Shown).substr(0, m_Field.selectionEnd()), l_PixelSize);
+		const float l_From = m_Font->caretX(l_Shown, m_Field.selectionBegin(), l_PixelSize);
+		const float l_To = m_Font->caretX(l_Shown, m_Field.selectionEnd(), l_PixelSize);
 		const float l_HalfHeight = px(11.f);
-		m_Draw.rect(Rect2{ Vec2{ l_Origin + l_From, p_Rect.center().y - l_HalfHeight }, Vec2{ l_Origin + l_To, p_Rect.center().y + l_HalfHeight } }, px(3.f), withAlpha(m_Theme.accent, 0.3f));
+		m_Draw.rect(Rect2{ Vec2{ l_Origin + std::min(l_From, l_To), p_Rect.center().y - l_HalfHeight }, Vec2{ l_Origin + std::max(l_From, l_To), p_Rect.center().y + l_HalfHeight } }, px(3.f), withAlpha(m_Theme.accent, 0.3f));
 	}
 	if (l_Shown.empty() && !l_Focused)
 		m_Draw.text(Vec2{ l_Origin, p_Rect.center().y }, p_Placeholder, l_PixelSize, m_Theme.textFaint);

@@ -7,6 +7,9 @@
 // Inter has Latin, Greek and Cyrillic. A character it lacks is looked up, in this order, in the language's own font
 // (setLanguageFont: a file shipped with the app that holds the glyphs of that language's texts, so the interface is
 // readable on any machine) and then in whatever the fallback finder offers (the fonts installed on the system).
+//
+// Scripts that need more than one glyph per character, or run right to left (Arabic, Hebrew, Indic, Thai...), are
+// shaped with HarfBuzz and ordered with SheenBidi (see shape()); everything else keeps the plain, fast path.
 module;
 #include <cstdint>
 #include <filesystem>
@@ -142,6 +145,26 @@ struct FallbackFace
 	const uint8_t* data = nullptr; // must stay alive and unchanged for as long as the atlas is used
 	int offset = 0;                // where the font starts in the data (a collection holds several)
 	uint64_t id = 0;
+	size_t size = 0;               // bytes in data
+};
+
+// One glyph of shaped text, in the order it is drawn left to right
+struct ShapedGlyph
+{
+	FontFace face = FontFace::Text;
+	uint32_t glyph = 0;     // glyph index in the face (not a code point)
+	float advance = 0.f;    // pixels
+	float xOffset = 0.f;    // pixels, from the pen position
+	float yOffset = 0.f;    // pixels, up is positive
+	uint32_t cluster = 0;   // byte offset in the source text of the characters this glyph draws
+	bool rtl = false;       // belongs to a right-to-left run
+};
+
+struct ShapedText
+{
+	std::vector<ShapedGlyph> glyphs;
+	float width = 0.f;
+	bool rtl = false; // the paragraph direction
 };
 
 class FontAtlas
@@ -167,6 +190,18 @@ public:
 	// The font for the characters of the current language that Inter lacks (an empty path: none). False when the file
 	// cannot be read. Glyphs already drawn from another language font are forgotten.
 	bool setLanguageFont(const std::filesystem::path& p_Path);
+	// Paragraph direction for text without strong characters (digits, punctuation): the interface language's
+	void setRightToLeft(bool p_Rtl);
+	[[nodiscard]] bool rightToLeft() const { return m_BaseRtl; }
+	// True for text that has to be shaped: it has characters of scripts that join, reorder or run right to left
+	[[nodiscard]] static bool needsShaping(std::string_view p_Text);
+	// Shapes p_Text into glyphs in drawing order (reordered for mixed directions). Cached for the next calls.
+	[[nodiscard]] const ShapedText& shape(std::string_view p_Text, int p_PixelSize) const;
+	// Where the caret sits for the character at byte p_Index, measured from the left of the text as drawn
+	[[nodiscard]] float caretX(std::string_view p_Text, size_t p_Index, int p_PixelSize) const;
+	// A glyph by its index in the face, as shape() reports them
+	[[nodiscard]] const GlyphQuad* glyphByIndex(FontFace p_Face, uint32_t p_Glyph, int p_PixelSize);
+
 	// Asked once per character that neither Inter nor the language font has
 	void setFallbackFinder(FallbackFinder p_Finder);
 	// Call when the fallback finder may know more than before (the installed fonts were scanned): characters that had
@@ -201,7 +236,9 @@ public:
 private:
 	// The face that draws p_Codepoint when p_Face is asked to: Inter, or the language font, or a fallback
 	[[nodiscard]] FontFace resolve(FontFace p_Face, uint32_t p_Codepoint) const;
-	FontFace addBorrowed(const uint8_t* p_Data, int p_Offset) const;
+	FontFace addBorrowed(const uint8_t* p_Data, int p_Offset, size_t p_Size) const;
+	[[nodiscard]] const GlyphQuad* place(uint64_t p_Key, const Font& p_Font, int p_Glyph, int p_PixelSize);
+	[[nodiscard]] ShapedText shapeUncached(std::string_view p_Text, int p_PixelSize) const;
 	[[nodiscard]] static uint64_t key(FontFace p_Face, uint32_t p_Codepoint, int p_PixelSize);
 	[[nodiscard]] bool pack(uint32_t p_Width, uint32_t p_Height, uint32_t& p_X, uint32_t& p_Y);
 	void reset();
@@ -214,6 +251,8 @@ private:
 	std::unordered_map<std::string, FontFace> m_LanguageFaces; // by file, so switching back and forth reads each once
 	mutable std::unordered_map<uint32_t, FontFace> m_Resolved;  // characters Inter lacks -> their face (Text: none found)
 	mutable std::unordered_map<uint64_t, FontFace> m_FallbackFaces;
+	bool m_BaseRtl = false;
+	mutable std::unordered_map<std::string, ShapedText> m_Shaped;
 	[[nodiscard]] const Font& fontFor(FontFace p_Face) const;
 	std::vector<uint8_t> m_Pixels;
 	std::unordered_map<uint64_t, GlyphQuad> m_Glyphs;

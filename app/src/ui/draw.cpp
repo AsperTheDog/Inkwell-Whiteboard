@@ -139,6 +139,24 @@ float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const
 	const float l_Baseline = std::round(p_Position.y + m_Font->capHeight(p_PixelSize) * 0.5f);
 	const std::array<float, 4> l_Color = premultiplied(p_Color);
 
+	if (p_Face == FontFace::Text && FontAtlas::needsShaping(p_Text))
+	{
+		// Shaped text: glyphs come in drawing order, each with its own advance and offset
+		for (const ShapedGlyph& l_Shaped : m_Font->shape(p_Text, p_PixelSize).glyphs)
+		{
+			const GlyphQuad* l_Glyph = m_Font->glyphByIndex(l_Shaped.face, l_Shaped.glyph, p_PixelSize);
+			if (l_Glyph != nullptr && l_Glyph->size.x > 0.f)
+			{
+				const Vec2 l_Min{ std::round(l_Pen + l_Shaped.xOffset) + l_Glyph->offset.x, l_Baseline - std::round(l_Shaped.yOffset) + l_Glyph->offset.y };
+				Prim& l_Prim = add(Rect2{ l_Min, l_Min + l_Glyph->size }, MODE_GLYPH);
+				l_Prim.uv = { l_Glyph->uv0.x, l_Glyph->uv0.y, l_Glyph->uv1.x, l_Glyph->uv1.y };
+				l_Prim.color = l_Color;
+			}
+			l_Pen += l_Shaped.advance;
+		}
+		return l_Width;
+	}
+
 	size_t l_Index = 0;
 	while (l_Index < p_Text.size())
 	{

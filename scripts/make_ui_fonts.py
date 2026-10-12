@@ -25,11 +25,14 @@ OUT_DIR = ROOT / "app" / "assets" / "fonts" / "ui"
 CACHE = Path(__file__).resolve().parent / ".font_cache"
 
 BASE = "https://github.com/google/fonts/raw/main/ofl/"
-# output file -> (source font, licence)
+# output file -> (source font, licence, layout features kept). CJK needs none of the shaping tables; scripts that join
+# or reorder letters (Arabic, Hebrew...) need all of them.
 SOURCES = {
-    "NotoSansSC-UI.ttf": (BASE + "notosanssc/NotoSansSC%5Bwght%5D.ttf", BASE + "notosanssc/OFL.txt"),
-    "NotoSansJP-UI.ttf": (BASE + "notosansjp/NotoSansJP%5Bwght%5D.ttf", BASE + "notosansjp/OFL.txt"),
-    "NotoSansKR-UI.ttf": (BASE + "notosanskr/NotoSansKR%5Bwght%5D.ttf", BASE + "notosanskr/OFL.txt"),
+    "NotoSansSC-UI.ttf": (BASE + "notosanssc/NotoSansSC%5Bwght%5D.ttf", BASE + "notosanssc/OFL.txt", ["kern", "vert"]),
+    "NotoSansJP-UI.ttf": (BASE + "notosansjp/NotoSansJP%5Bwght%5D.ttf", BASE + "notosansjp/OFL.txt", ["kern", "vert"]),
+    "NotoSansKR-UI.ttf": (BASE + "notosanskr/NotoSansKR%5Bwght%5D.ttf", BASE + "notosanskr/OFL.txt", ["kern", "vert"]),
+    "NotoSansArabic-UI.ttf": (BASE + "notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf", BASE + "notosansarabic/OFL.txt", ["*"]),
+    "NotoSansHebrew-UI.ttf": (BASE + "notosanshebrew/NotoSansHebrew%5Bwdth%2Cwght%5D.ttf", BASE + "notosanshebrew/OFL.txt", ["*"]),
 }
 
 
@@ -46,7 +49,7 @@ def language_files() -> dict:
 
 def download(url: str, refresh: bool) -> Path:
     CACHE.mkdir(exist_ok=True)
-    target = CACHE / url.rsplit("/", 1)[1].replace("%5B", "[").replace("%5D", "]")
+    target = CACHE / url.rsplit("/", 1)[1].replace("%5B", "[").replace("%5D", "]").replace("%2C", ",")
     if refresh or not target.exists():
         print("downloading", url)
         urllib.request.urlretrieve(url, target)
@@ -63,17 +66,19 @@ def main() -> int:
         if name not in SOURCES:
             print(f"error: {name} is named by a language file but has no source in this script")
             return 1
-        url, licence_url = SOURCES[name]
+        url, licence_url, features = SOURCES[name]
         characters = {chr(c) for c in range(0x20, 0x7F)} | set("".join(texts)) | set("…—–·•")
         characters.discard("\n")
 
         font = TTFont(download(url, args.refresh))
         if "fvar" in font:
-            font = instancer.instantiateVariableFont(font, {"wght": 400})  # the regular weight
+            # The regular weight at normal width: every axis at its default, except weight
+            pins = {axis.axisTag: (400 if axis.axisTag == "wght" else axis.defaultValue) for axis in font["fvar"].axes}
+            font = instancer.instantiateVariableFont(font, pins)
 
         options = subset.Options()
         options.hinting = False
-        options.layout_features = ["kern", "vert"]
+        options.layout_features = features
         options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14]  # names and the licence stay
         options.notdef_outline = True
         options.glyph_names = False
@@ -87,7 +92,7 @@ def main() -> int:
 
     licence = OUT_DIR / "LICENSE-noto.txt"
     if not licence.exists():
-        urllib.request.urlretrieve(SOURCES["NotoSansSC-UI.ttf"][1], licence)
+        urllib.request.urlretrieve(SOURCES["NotoSansSC-UI.ttf"][1], licence)  # the same licence for every Noto Sans
     return 0
 
 

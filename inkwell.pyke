@@ -9,6 +9,8 @@ from github import "zeux/volk" as volk, tag="vulkan-sdk-1.4.357.0", options={"VO
 from github import "GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator" as vma, tag="v3.4.0", options={"VMA_BUILD_SAMPLES": False, "VMA_BUILD_DOCUMENTATION": False}
 from github import "g-truc/glm" as glm_src, tag="1.0.3", options={"GLM_BUILD_TESTS": False, "GLM_BUILD_LIBRARY": False, "GLM_ENABLE_CXX_20": True}
 from github import "gabime/spdlog" as spdlog, tag="v1.17.0", options={"SPDLOG_BUILD_EXAMPLE": False, "SPDLOG_INSTALL": False}
+from github import "harfbuzz/harfbuzz" as harfbuzz, tag="14.6.0", options={"HB_BUILD_UTILS": False, "HB_BUILD_SUBSET": False, "HB_HAVE_FREETYPE": False, "HB_HAVE_GLIB": False, "HB_HAVE_ICU": False, "HB_HAVE_GRAPHITE2": False}
+from github import "Tehreer/SheenBidi" as sheenbidi, tag="v3.0.0"
 from github import "google/googletest" as GTest, tag="v1.18.0", options={"INSTALL_GTEST": False, "BUILD_GMOCK": False, "gtest_force_shared_crt": True}
 
 project("Inkwell", version="1.3.0", lang="c++23", presets=True)
@@ -32,6 +34,13 @@ target VulkanDeps():
     def configure(self):
         self.link += ["Vulkan::Headers", "volk::volk", "GPUOpen::VulkanMemoryAllocator"]
         self.exports.definitions = {"VK_NO_PROTOTYPES": 1}
+
+# HarfBuzz (MIT) shapes text (Arabic letter forms, Indic scripts...) and SheenBidi (Apache-2.0) orders mixed left-to-right
+# and right-to-left text; the interface's glyph atlas uses both for scripts that need them
+@HeaderOnly("libs/Shaping")
+target ShapingDeps():
+    def configure(self):
+        self.link += ["harfbuzz", "SheenBidi"]
 
 @HeaderOnly("libs/glm")
 target GLM():
@@ -93,7 +102,7 @@ endif()"
 # ---------------------------------------------------------------------------
 
 @Executable("app", copy_dlls=True)
-target inkwell(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui, PRIVATE STB, PRIVATE spdlog):
+target inkwell(PRIVATE wb_core, PRIVATE SDL3, PRIVATE VulkanDeps, PRIVATE ImGui, PRIVATE STB, PRIVATE spdlog, PRIVATE ShapingDeps):
     def configure(self):
         self.sources = ["src/**/*.cpp", "src/**/*.hpp"]
         self.modules = ["src/**/*.cppm"]

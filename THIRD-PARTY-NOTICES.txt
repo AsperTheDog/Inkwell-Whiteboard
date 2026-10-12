@@ -767,6 +767,34 @@ BLAKE2b, Argon2id). Source in vendor/monocypher; see vendor/monocypher/LICENCE.m
 for the full licence texts. Copyright (c) 2017-2023, Loup Vaillant, Michael
 Savage, Fabio Scotoni.
 
+------------------------------------------------------------------------------
+HarfBuzz (MIT)  https://github.com/harfbuzz/harfbuzz
+------------------------------------------------------------------------------
+
+Shapes interface text for scripts that join or reorder letters (Arabic, Hebrew,
+Indic scripts, Thai). Copyright (c) the HarfBuzz authors; see the COPYING file
+of the HarfBuzz source (fetched at build time) for the licence text.
+
+
+------------------------------------------------------------------------------
+SheenBidi (Apache-2.0)  https://github.com/Tehreer/SheenBidi
+------------------------------------------------------------------------------
+
+Implements the Unicode Bidirectional Algorithm, which orders text that mixes
+left-to-right and right-to-left scripts. Copyright (c) Muhammad Tayyab Akram;
+licensed under the Apache License, Version 2.0 (fetched at build time).
+
+
+------------------------------------------------------------------------------
+Noto Sans SC / JP / KR / Arabic / Hebrew, reduced (SIL OFL 1.1)  https://fonts.google.com/noto
+------------------------------------------------------------------------------
+
+assets/fonts/ui holds subsets of these fonts, cut down to the characters the
+interface texts of Chinese, Japanese, Korean, Arabic and Hebrew use (see
+scripts/make_ui_fonts.py). Copyright 2022 The Noto Project Authors
+(https://github.com/notofonts); the licence is in assets/fonts/ui/LICENSE-noto.txt.
+
+
 Steamworks: Inkwell can use the Steam client's networking and matchmaking when the Steam library (steam_api64.dll /
 libsteam_api.so) is present next to the program. The library and the Steamworks SDK are not part of Inkwell, are not
 included in its releases, and nothing from the SDK is compiled in: the few functions used are declared in
