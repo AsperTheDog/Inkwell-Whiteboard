@@ -158,7 +158,11 @@ void App::setUiLanguage(const std::string& p_Code)
 	setLanguage(m_LanguageDir, l_Code.empty() ? "en" : l_Code);
 	// The language's own font holds the glyphs of its texts (the key is absent, so the id comes back, for Latin ones)
 	const std::string& l_Font = tr("language.font");
-	m_FontAtlas.setRightToLeft(tr("language.rtl") == "1");
+	const bool l_Rtl = tr("language.rtl") == "1";
+	if (l_Rtl != m_FontAtlas.rightToLeft())
+		m_Editor.textState().align = l_Rtl ? TextAlign::Right : TextAlign::Left; // new text starts at the reading edge
+	m_FontAtlas.setRightToLeft(l_Rtl);
+	m_Ui.setRightToLeftLayout(l_Rtl);
 	m_FontAtlas.setLanguageFont(l_Font == "language.font" || l_Font.empty() ? std::filesystem::path() : fontDirectory() / "ui" / pathFromUtf8(l_Font));
 	m_LastTitle.clear();
 	updateTitle();
@@ -723,27 +727,34 @@ void App::updateTheme(const double p_Dt)
 // Order matters: later things are drawn on top and block the pointer for everything below
 void App::buildUi()
 {
+	smokeKeepUiOpen();
+	// In a right-to-left language the interface is mirrored: bars, menus, popups and dialogs. What belongs to the board
+	// (selection handles, the bars that follow a selection, the video controls) keeps its place.
+	const auto l_Mirrored = [this](const auto& p_Build)
+	{
+		m_Ui.beginMirror();
+		p_Build();
+		m_Ui.endMirror();
+	};
 	if (m_HideUi)
 	{
 		// Only the board: selection handles and dialogs stay, the panels do not
 		buildCanvasOverlays();
-		buildToast();
-		buildDialogs();
+		l_Mirrored([&] { buildToast(); buildDialogs(); });
 		return;
 	}
 	buildCanvasOverlays();
 	buildVideoViewer();
 	buildSelectionBar();
 	buildTextBar();
-	buildTopBar();
-	buildZoomPill();
-	buildToolbar();
-	buildPopover();
-	buildMenu();
-	buildToast();
-	buildShortcuts();
-	buildSettings();
-	buildDialogs();
+	l_Mirrored([&] { buildTopBar(); buildZoomPill(); buildToolbar(); });
+	// Popups that hang from a toolbar button mirror with it; those that hang from the board's selection do not
+	const bool l_FromToolbar = m_Popup == Popup::Pen || m_Popup == Popup::Highlighter || m_Popup == Popup::Shape || m_Popup == Popup::Laser || m_Popup == Popup::Eraser || m_Popup == Popup::Select || (m_Popup == Popup::Text && m_TextPopupFromToolbar);
+	if (l_FromToolbar)
+		l_Mirrored([&] { buildPopover(); });
+	else
+		buildPopover();
+	l_Mirrored([&] { buildMenu(); buildToast(); buildShortcuts(); buildSettings(); buildDialogs(); });
 }
 
 void App::buildDebugPanel()

@@ -283,6 +283,7 @@ private:
 	bool dropSubtitleFile(const std::filesystem::path& p_Path, Vec2 p_Position);
 
 	// Scripted input for --smoke-test (smoke_test.cpp)
+	void smokeKeepUiOpen();
 	void driveSmokeTest();
 	void drivePerfTest();
 	void queueStroke(platform::PointerDevice p_Device, const tools::BrushState& p_Brush, const std::vector<Vec2>& p_Points, const std::vector<float>& p_Pressures);

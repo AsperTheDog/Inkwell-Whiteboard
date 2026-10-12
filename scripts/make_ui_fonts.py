@@ -36,6 +36,17 @@ SOURCES = {
 }
 
 
+# Full Noto Sans Arabic and Hebrew for text on the board, so those scripts have the same fonts on every system
+# (the family names are then also in the font picker). Output name -> (source, weight)
+TEXT_FONTS = {
+    "NotoSansArabic-Regular.ttf": ("notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf", 400),
+    "NotoSansArabic-Bold.ttf": ("notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf", 700),
+    "NotoSansHebrew-Regular.ttf": ("notosanshebrew/NotoSansHebrew%5Bwdth%2Cwght%5D.ttf", 400),
+    "NotoSansHebrew-Bold.ttf": ("notosanshebrew/NotoSansHebrew%5Bwdth%2Cwght%5D.ttf", 700),
+}
+TEXT_DIR = ROOT / "app" / "assets" / "fonts" / "text"
+
+
 def language_files() -> dict:
     """font file -> the text of every language file that uses it"""
     wanted = {}
@@ -89,6 +100,24 @@ def main() -> int:
         target = OUT_DIR / name
         font.save(target)
         print(f"{name}: {len(characters)} characters, {target.stat().st_size // 1024} kB")
+
+    for name, (source, weight) in TEXT_FONTS.items():
+        font = TTFont(download(BASE + source, args.refresh))
+        pins = {axis.axisTag: (weight if axis.axisTag == "wght" else axis.defaultValue) for axis in font["fvar"].axes}
+        font = instancer.instantiateVariableFont(font, pins, updateFontNames=True)
+        options = subset.Options()
+        options.hinting = False
+        options.layout_features = ["*"]
+        options.name_IDs = ["*"]
+        options.notdef_outline = True
+        options.glyph_names = False
+        options.glyphs = ["*"]
+        options.unicodes = []
+        subsetter = subset.Subsetter(options)
+        subsetter.populate(glyphs=font.getGlyphOrder())  # every glyph: only hinting and unused tables go
+        subsetter.subset(font)
+        font.save(TEXT_DIR / name)
+        print(f"{name}: {(TEXT_DIR / name).stat().st_size // 1024} kB")
 
     licence = OUT_DIR / "LICENSE-noto.txt"
     if not licence.exists():

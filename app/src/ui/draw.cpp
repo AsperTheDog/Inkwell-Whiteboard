@@ -30,15 +30,19 @@ void DrawList::begin(FontAtlas& p_Font, const Vec2 p_Viewport)
 	m_Font = &p_Font;
 	m_Viewport = p_Viewport;
 	m_Opacity = 1.f;
+	m_Mirror = false;
 	m_ClipStack.clear();
 	m_ClipStack.push_back(Rect2{ Vec2{ 0.f }, p_Viewport });
 	m_Prims.clear();
+	m_Flipped.clear();
 }
 
 void DrawList::pushClip(const Rect2 p_Rect)
 {
+	// Clips are kept in window coordinates, so a mirrored rectangle is flipped here
+	const Rect2 l_Rect = m_Mirror ? Rect2{ Vec2{ m_Viewport.x - p_Rect.max.x, p_Rect.min.y }, Vec2{ m_Viewport.x - p_Rect.min.x, p_Rect.max.y } } : p_Rect;
 	const Rect2& l_Top = m_ClipStack.back();
-	m_ClipStack.push_back(Rect2{ glm::max(l_Top.min, p_Rect.min), glm::min(l_Top.max, p_Rect.max) });
+	m_ClipStack.push_back(Rect2{ glm::max(l_Top.min, l_Rect.min), glm::min(l_Top.max, l_Rect.max) });
 }
 
 void DrawList::popClip()
@@ -60,7 +64,32 @@ Prim& DrawList::add(const Rect2 p_Bounds, const float p_Mode)
 	const Rect2& l_Clip = m_ClipStack.back();
 	l_Prim.clip = { l_Clip.min.x, l_Clip.min.y, l_Clip.max.x, l_Clip.max.y };
 	l_Prim.misc[3] = p_Mode;
+	m_Flipped.push_back(m_Mirror ? 1 : 0);
 	return l_Prim;
+}
+
+void DrawList::finish()
+{
+	const float l_Width = m_Viewport.x;
+	for (size_t i = 0; i < m_Prims.size() && i < m_Flipped.size(); ++i)
+	{
+		if (m_Flipped[i] == 0)
+			continue;
+		Prim& l_Prim = m_Prims[i];
+		const float l_Left = l_Prim.bounds[0];
+		l_Prim.bounds[0] = l_Width - l_Prim.bounds[2];
+		l_Prim.bounds[2] = l_Width - l_Left;
+		if (l_Prim.misc[3] == MODE_CAPSULE)
+		{
+			l_Prim.shape[0] = l_Width - l_Prim.shape[0];
+			l_Prim.shape[2] = l_Width - l_Prim.shape[2];
+		}
+		else if (l_Prim.misc[3] != MODE_GLYPH)
+		{
+			l_Prim.shape[0] = l_Width - l_Prim.shape[0]; // the centre of boxes, shadows and colour pieces
+		}
+		m_Flipped[i] = 0;
+	}
 }
 
 void DrawList::rect(const Rect2 p_Rect, const float p_Radius, const Color p_Fill)
@@ -136,6 +165,19 @@ float DrawList::text(const Vec2 p_Position, const std::string_view p_Text, const
 		l_Pen -= l_Width * 0.5f;
 	else if (p_Align == TextAlign::Right)
 		l_Pen -= l_Width;
+	// Mirrored: the text as a whole moves to the other side; its glyphs are laid out in window coordinates
+	const bool l_WasMirrored = m_Mirror;
+	if (m_Mirror)
+	{
+		l_Pen = m_Viewport.x - (l_Pen + l_Width);
+		m_Mirror = false;
+	}
+	struct Restore
+	{
+		bool& flag;
+		bool value;
+		~Restore() { flag = value; }
+	} l_Restore{ m_Mirror, l_WasMirrored };
 	const float l_Baseline = std::round(p_Position.y + m_Font->capHeight(p_PixelSize) * 0.5f);
 	const std::array<float, 4> l_Color = premultiplied(p_Color);
 
@@ -180,10 +222,21 @@ void DrawList::icon(const Icon p_Icon, const Vec2 p_Center, const int p_PixelSiz
 	if (l_Glyph == nullptr || l_Glyph->size.x <= 0.f)
 		return;
 	// Centre the inked area (not the em box) on p_Center
-	const Vec2 l_Min = glm::round(p_Center - l_Glyph->size * 0.5f);
+	Vec2 l_Center = p_Center;
+	bool l_Flip = false;
+	const bool l_WasMirrored = m_Mirror;
+	if (m_Mirror)
+	{
+		l_Center.x = m_Viewport.x - l_Center.x;
+		// Arrows that point along the reading direction turn around with it
+		l_Flip = p_Icon == Icon::Undo || p_Icon == Icon::Redo || p_Icon == Icon::ChevronLeft || p_Icon == Icon::ChevronRight;
+		m_Mirror = false;
+	}
+	const Vec2 l_Min = glm::round(l_Center - l_Glyph->size * 0.5f);
 	Prim& l_Prim = add(Rect2{ l_Min, l_Min + l_Glyph->size }, MODE_GLYPH);
-	l_Prim.uv = { l_Glyph->uv0.x, l_Glyph->uv0.y, l_Glyph->uv1.x, l_Glyph->uv1.y };
+	l_Prim.uv = l_Flip ? std::array<float, 4>{ l_Glyph->uv1.x, l_Glyph->uv0.y, l_Glyph->uv0.x, l_Glyph->uv1.y } : std::array<float, 4>{ l_Glyph->uv0.x, l_Glyph->uv0.y, l_Glyph->uv1.x, l_Glyph->uv1.y };
 	l_Prim.color = premultiplied(p_Color);
+	m_Mirror = l_WasMirrored;
 }
 
 void DrawList::saturationValueSquare(const Rect2 p_Rect, const float p_Radius, const float p_Hue)

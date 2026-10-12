@@ -322,7 +322,8 @@ std::vector<fs::path> systemFontDirectories()
 }
 
 // Families tried, in order, for characters the chosen font lacks (scripts, symbols, math...)
-constexpr std::array<std::string_view, 24> FALLBACK_FAMILIES{
+constexpr std::array<std::string_view, 26> FALLBACK_FAMILIES{
+	"Noto Sans Arabic", "Noto Sans Hebrew", // shipped with the app, so Arabic and Hebrew look the same everywhere
 	"Segoe UI", "Segoe UI Symbol", "Nirmala UI", "Leelawadee UI", "Microsoft YaHei", "Microsoft JhengHei", "Yu Gothic", "Meiryo", "Malgun Gothic", "Cambria Math", "MS Gothic", "SimSun",
 	"Noto Sans", "Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK KR", "Noto Sans CJK TC", "Noto Sans Symbols", "Noto Sans Symbols 2", "Noto Sans Math", "DejaVu Sans", "Arial Unicode MS",
 	"Apple Symbols", "Hiragino Sans",

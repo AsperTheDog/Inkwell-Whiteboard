@@ -789,7 +789,7 @@ licensed under the Apache License, Version 2.0 (fetched at build time).
 Noto Sans SC / JP / KR / Arabic / Hebrew, reduced (SIL OFL 1.1)  https://fonts.google.com/noto
 ------------------------------------------------------------------------------
 
-assets/fonts/ui holds subsets of these fonts, cut down to the characters the
+assets/fonts/text also holds Noto Sans Arabic and Hebrew (regular and bold) for text on the board. assets/fonts/ui holds subsets of these fonts, cut down to the characters the
 interface texts of Chinese, Japanese, Korean, Arabic and Hebrew use (see
 scripts/make_ui_fonts.py). Copyright 2022 The Noto Project Authors
 (https://github.com/notofonts); the licence is in assets/fonts/ui/LICENSE-noto.txt.

@@ -69,6 +69,14 @@ public:
 	void pushClip(Rect2 p_Rect);
 	void popClip();
 
+	// Mirrors everything drawn until it is switched off horizontally across the viewport, for right-to-left layouts:
+	// positions are given as for a left-to-right layout. Text keeps its own direction (a left-aligned label ends up
+	// right-aligned) and directional icons are flipped. Clip rectangles are kept in window coordinates.
+	void setMirror(bool p_Mirror) { m_Mirror = p_Mirror; }
+	[[nodiscard]] bool mirrored() const { return m_Mirror; }
+	// Applies the mirroring to what was recorded; call once the frame is complete
+	void finish();
+
 	void rect(Rect2 p_Rect, float p_Radius, Color p_Fill);
 	void rectBorder(Rect2 p_Rect, float p_Radius, Color p_Fill, Color p_Border, float p_BorderWidth);
 	void outline(Rect2 p_Rect, float p_Radius, Color p_Border, float p_BorderWidth);
@@ -96,7 +104,9 @@ private:
 	FontAtlas* m_Font = nullptr;
 	Vec2 m_Viewport{ 0.f };
 	float m_Opacity = 1.f;
+	bool m_Mirror = false;
 	std::vector<Rect2> m_ClipStack;
 	std::vector<Prim> m_Prims;
+	std::vector<uint8_t> m_Flipped; // per primitive: recorded while mirroring, finish() flips it
 };
 } // namespace wb::ui

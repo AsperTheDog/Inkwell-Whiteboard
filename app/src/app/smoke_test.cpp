@@ -207,6 +207,32 @@ std::vector<Vec2> sampleCurve(const int p_Count, const auto& p_Function)
 }
 } // namespace
 
+// Panels opened for a screenshot (--smoke-ui) stay open until the last frame, whatever closed them on the way
+void App::smokeKeepUiOpen()
+{
+	if (m_Options.smokeTestFrames == 0 || m_SmokeStep <= 32)
+		return;
+	const std::string& l_KeepOpen = m_Options.smokeUi;
+	if (l_KeepOpen == "menu" && m_Popup != Popup::Menu)
+	{
+		openPopup(Popup::Menu);
+		m_MenuSection = 1;
+	}
+	else if (l_KeepOpen == "shortcuts")
+	{
+		m_ShowShortcuts = true;
+	}
+	else if (l_KeepOpen == "settings")
+	{
+		m_ShowSettings = true;
+	}
+	else if (l_KeepOpen == "dialog" && !m_PromptOpen)
+	{
+		m_PromptOpen = true;
+		m_PromptAction = Action::Quit;
+	}
+}
+
 void App::queueStroke(const platform::PointerDevice p_Device, const tools::BrushState& p_Brush, const std::vector<Vec2>& p_Points, const std::vector<float>& p_Pressures)
 {
 	m_SmokeQueue.emplace_back(p_Brush);
@@ -1305,6 +1331,11 @@ void App::driveSmokeTest()
 		else if (l_Ui == "shortcuts")
 		{
 			m_ShowShortcuts = true;
+		}
+		else if (l_Ui == "settings")
+		{
+			m_ShowSettings = true;
+			m_LanguageListOpen = true;
 		}
 		else if (l_Ui == "dialog")
 		{

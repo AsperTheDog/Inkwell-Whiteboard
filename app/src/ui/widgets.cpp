@@ -264,8 +264,11 @@ bool Context::segmented(const std::string_view p_Key, const Rect2 p_Rect, const 
 	return l_Changed;
 }
 
-bool Context::colorPicker(const std::string_view p_Key, const Rect2 p_Rect, Hsv& p_Hsv)
+bool Context::colorPicker(const std::string_view p_Key, const Rect2 p_Placed, Hsv& p_Hsv)
 {
+	// Its gradients cannot be mirrored: it is placed mirrored and works in window coordinates
+	const bool l_Island = m_Mirror;
+	const Rect2 p_Rect = enterIsland(p_Placed);
 	const float l_BarHeight = px(16.f);
 	const float l_Gap = px(12.f);
 	const Rect2 l_Square{ p_Rect.min, Vec2{ p_Rect.max.x, p_Rect.max.y - l_BarHeight - l_Gap } };
@@ -300,6 +303,7 @@ bool Context::colorPicker(const std::string_view p_Key, const Rect2 p_Rect, Hsv&
 	m_Draw.circle(l_BarThumb, px(10.f), Color{ 1.f, 1.f, 1.f, 1.f });
 	m_Draw.circle(l_BarThumb, px(7.5f), hsvToRgb(Hsv{ p_Hsv.h, 1.f, 1.f }));
 	m_Draw.ring(l_BarThumb, px(10.5f), Color{ 0.f, 0.f, 0.f, 0.3f }, 1.f);
+	leaveIsland(l_Island);
 	return l_Changed;
 }
 
@@ -327,8 +331,11 @@ size_t indexAtX(const FontAtlas& p_Font, const std::string& p_Text, const int p_
 }
 } // namespace
 
-bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::string& p_Text, const std::string_view p_Placeholder, const std::string_view p_Allowed, const size_t p_MaxBytes, const Icon p_Icon)
+bool Context::textField(const std::string_view p_Key, const Rect2 p_Placed, std::string& p_Text, const std::string_view p_Placeholder, const std::string_view p_Allowed, const size_t p_MaxBytes, const Icon p_Icon)
 {
+	// Text, caret and selection are all in window coordinates: the field is placed mirrored and works unmirrored
+	const bool l_Island = m_Mirror;
+	const Rect2 p_Rect = enterIsland(p_Placed);
 	const uint32_t l_Id = id(p_Key);
 	const Interaction l_State = interact(l_Id, p_Rect);
 
@@ -341,6 +348,13 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 	const float l_IconSpace = p_Icon != Icon::None ? px(24.f) : 0.f;
 	const float l_TextLeft = p_Rect.min.x + l_Pad + l_IconSpace;
 	const float l_TextWidth = std::max(p_Rect.max.x - l_Pad - l_TextLeft, 1.f);
+	// Text that fits starts at the right edge in a right-to-left layout
+	const auto l_Shift = [&](const std::string& p_Shown)
+	{
+		if (!m_RtlLayout)
+			return 0.f;
+		return std::max(l_TextWidth - m_Font->measure(p_Shown, l_PixelSize), 0.f);
+	};
 
 	const bool l_PressedHere = m_Pressed && hit(p_Rect, m_PressPos);
 	if (l_PressedHere)
@@ -356,7 +370,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		}
 		else
 		{
-			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_PressPos.x - l_TextLeft + m_FieldScroll), false);
+			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_PressPos.x - l_TextLeft - l_Shift(m_Field.text()) + m_FieldScroll), false);
 		}
 		m_FieldBlink = 0.0;
 	}
@@ -367,7 +381,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		m_FieldBlink += m_Dt;
 		m_AnimatingNext = true;
 		if (l_State.held && !l_PressedHere)
-			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_Pos.x - l_TextLeft + m_FieldScroll), true);
+			m_Field.moveTo(indexAtX(*m_Font, m_Field.text(), l_PixelSize, m_Pos.x - l_TextLeft - l_Shift(m_Field.text()) + m_FieldScroll), true);
 	}
 
 	bool l_Changed = false;
@@ -397,7 +411,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		m_FieldScroll = std::max(m_FieldScroll, 0.f);
 	}
 	m_Draw.pushClip(Rect2{ Vec2{ l_TextLeft, p_Rect.min.y }, Vec2{ l_TextLeft + l_TextWidth + px(2.f), p_Rect.max.y } });
-	const float l_Origin = l_TextLeft - (l_Focused ? m_FieldScroll : 0.f);
+	const float l_Origin = l_TextLeft + l_Shift(l_Shown) - (l_Focused ? m_FieldScroll : 0.f);
 	if (l_Focused && m_Field.hasSelection())
 	{
 		const float l_From = m_Font->caretX(l_Shown, m_Field.selectionBegin(), l_PixelSize);
@@ -406,7 +420,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		m_Draw.rect(Rect2{ Vec2{ l_Origin + std::min(l_From, l_To), p_Rect.center().y - l_HalfHeight }, Vec2{ l_Origin + std::max(l_From, l_To), p_Rect.center().y + l_HalfHeight } }, px(3.f), withAlpha(m_Theme.accent, 0.3f));
 	}
 	if (l_Shown.empty() && !l_Focused)
-		m_Draw.text(Vec2{ l_Origin, p_Rect.center().y }, p_Placeholder, l_PixelSize, m_Theme.textFaint);
+		m_Draw.text(Vec2{ l_TextLeft + l_Shift(std::string(p_Placeholder)), p_Rect.center().y }, p_Placeholder, l_PixelSize, m_Theme.textFaint);
 	else
 		m_Draw.text(Vec2{ l_Origin, p_Rect.center().y }, l_Shown, l_PixelSize, m_Theme.text);
 	if (l_Focused && std::fmod(m_FieldBlink, 1.06) < 0.53)
@@ -415,6 +429,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Rect, std::s
 		m_Draw.line(Vec2{ l_CaretX, p_Rect.center().y - px(9.f) }, Vec2{ l_CaretX, p_Rect.center().y + px(9.f) }, std::max(1.f, 1.2f * m_Scale), m_Theme.text);
 	}
 	m_Draw.popClip();
+	leaveIsland(l_Island);
 	return l_Changed;
 }
 

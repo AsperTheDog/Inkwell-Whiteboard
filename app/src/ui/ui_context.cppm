@@ -88,6 +88,14 @@ public:
 	[[nodiscard]] int fontPx(float p_Points) const;
 	[[nodiscard]] double deltaTime() const { return m_Dt; }
 
+	// ---- right-to-left layouts: everything built between beginMirror() and endMirror() is laid out as usual and
+	// drawn mirrored; the pointer is mirrored with it, so widgets need no change. Does nothing in a left-to-right
+	// layout. The colour picker and text fields keep their insides unmirrored (see enterIsland).
+	void setRightToLeftLayout(const bool p_Rtl) { m_RtlLayout = p_Rtl; }
+	[[nodiscard]] bool rightToLeftLayout() const { return m_RtlLayout; }
+	void beginMirror();
+	void endMirror();
+
 	// ---- identity and animation
 	[[nodiscard]] static uint32_t id(std::string_view p_Key);
 	[[nodiscard]] static uint32_t id(std::string_view p_Key, int p_Index);
@@ -126,6 +134,16 @@ public:
 
 private:
 	[[nodiscard]] bool coveredAbove(size_t p_Layer, Vec2 p_Position) const;
+	// Mirroring helpers: window <-> layout coordinates across the viewport
+	[[nodiscard]] Vec2 flipPoint(Vec2 p_Point) const { return Vec2{ m_Viewport.x - p_Point.x, p_Point.y }; }
+	[[nodiscard]] Rect2 flipRect(const Rect2 p_Rect) const { return Rect2{ Vec2{ m_Viewport.x - p_Rect.max.x, p_Rect.min.y }, Vec2{ m_Viewport.x - p_Rect.min.x, p_Rect.max.y } }; }
+	void flipPointer();
+	// A widget whose insides cannot be mirrored: its rectangle is placed mirrored, then it runs unmirrored in
+	// window coordinates. Returns the rectangle to use; leaveIsland() undoes it.
+	[[nodiscard]] Rect2 enterIsland(Rect2 p_Rect);
+	void leaveIsland(bool p_Entered);
+	bool m_RtlLayout = false;
+	bool m_Mirror = false;
 
 	FontAtlas* m_Font = nullptr;
 	DrawList m_Draw;

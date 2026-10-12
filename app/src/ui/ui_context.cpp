@@ -65,8 +65,48 @@ void Context::beginFrame(const FrameParams& p_Params)
 	m_TooltipShown = false;
 }
 
+void Context::beginMirror()
+{
+	if (!m_RtlLayout || m_Mirror)
+		return;
+	m_Mirror = true;
+	flipPointer();
+	m_Draw.setMirror(true);
+}
+
+void Context::endMirror()
+{
+	if (!m_Mirror)
+		return;
+	m_Mirror = false;
+	flipPointer();
+	m_Draw.setMirror(false);
+}
+
+void Context::flipPointer()
+{
+	for (Vec2* l_Point : { &m_Pos, &m_PressPos, &m_ReleasePos, &m_AnyPressPos })
+		l_Point->x = m_Viewport.x - l_Point->x;
+}
+
+Rect2 Context::enterIsland(const Rect2 p_Rect)
+{
+	if (!m_Mirror)
+		return p_Rect;
+	endMirror();
+	return flipRect(p_Rect);
+}
+
+void Context::leaveIsland(const bool p_Entered)
+{
+	if (p_Entered)
+		beginMirror();
+}
+
 void Context::endFrame()
 {
+	endMirror(); // a scope left open must not leak into the next frame
+	m_Draw.finish();
 	// Tooltip floats above everything
 	if (m_TooltipShown && !m_TooltipText.empty())
 	{
@@ -188,7 +228,7 @@ float Context::anim(const uint32_t p_Key, const float p_Target, const float p_Ra
 
 void Context::beginPanel(const Rect2 p_Rect)
 {
-	m_Panels.push_back(p_Rect);
+	m_Panels.push_back(m_Mirror ? flipRect(p_Rect) : p_Rect); // panels are kept in window coordinates
 	m_Layer = m_Panels.size();
 }
 
@@ -203,9 +243,10 @@ void Context::panel(const Rect2 p_Rect, const float p_Radius)
 bool Context::coveredAbove(const size_t p_Layer, const Vec2 p_Position) const
 {
 	// Panels of the previous frame with a higher layer than p_Layer (layer n is index n - 1)
+	const Vec2 l_Window = m_Mirror ? flipPoint(p_Position) : p_Position;
 	for (size_t i = p_Layer; i < m_PrevPanels.size(); ++i)
 	{
-		if (m_PrevPanels[i].contains(p_Position))
+		if (m_PrevPanels[i].contains(l_Window))
 			return true;
 	}
 	return false;
@@ -264,7 +305,7 @@ void Context::noteTooltip(const uint32_t p_Id, const Rect2 p_Rect, const std::st
 	if (m_HoverTime >= TOOLTIP_DELAY_SECONDS)
 	{
 		m_TooltipShown = true;
-		m_TooltipRect = p_Rect;
+		m_TooltipRect = m_Mirror ? flipRect(p_Rect) : p_Rect;
 		m_TooltipText = std::string(p_Text);
 	}
 	else
