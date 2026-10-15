@@ -127,6 +127,16 @@ public:
 	void alignSelection(AlignMode p_Mode);
 	// Evens out the selected strokes a little more each time (one undo step)
 	void smoothSelection();
+	// Notes: a description kept with an object (or a group) and shown in the notes panel. The note of the selection is the
+	// one its objects share; empty ones do not count, and `mixed` says that the others disagree.
+	struct SelectionNote
+	{
+		std::string text;
+		bool mixed = false;
+	};
+	[[nodiscard]] SelectionNote selectionNote() const;
+	// Gives the objects the note (one undo step); ids that are gone are skipped. False when nothing changed.
+	bool setNote(std::span<const ObjectId> p_Ids, std::string_view p_Note);
 	[[nodiscard]] LockState selectionLockState() const;
 	void setSelectionLocked(bool p_Locked);
 	void toggleSelectionLock();

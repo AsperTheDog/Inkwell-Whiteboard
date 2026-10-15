@@ -225,6 +225,10 @@ TEST(Net, ReplicatorKeepsTwoDocumentsEqual)
 	expectSameBoard(l_Pair.a, l_Pair.b);
 	EXPECT_TRUE(l_Pair.b.find(l_Id2)->locked);
 	EXPECT_EQ(l_Pair.b.find(l_Id1)->group, 77u);
+
+	l_Pair.b.modify(l_Id1, [](wb::Object& p_Object) { p_Object.note = "explained"; }, wb::ObjectChange::Note);
+	l_Pair.flush();
+	EXPECT_EQ(l_Pair.a.find(l_Id1)->note, "explained");
 	EXPECT_EQ(std::get<wb::TextData>(l_Pair.b.find(l_TextId)->payload).text, "changed");
 
 	l_Pair.b.moveTo(l_Id1, 2);

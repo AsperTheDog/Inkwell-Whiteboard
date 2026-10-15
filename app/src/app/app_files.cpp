@@ -540,11 +540,22 @@ void App::updateTitle()
 	SDL_SetWindowTitle(m_Window.handle(), l_Title.c_str());
 }
 
-void App::showToast(std::string p_Text)
+void App::showToast(std::string p_Text, const bool p_Long)
 {
 	m_Toast = std::move(p_Text);
-	m_ToastUntilNs = SDL_GetTicksNS() + TOAST_NS;
+	m_ToastUntilNs = SDL_GetTicksNS() + (p_Long ? TOAST_NS * 3 : TOAST_NS);
 	requestRedraw();
+}
+
+std::string App::busyText() const
+{
+	if (!m_PictureJobs.empty())
+		return tr("images.loading", { m_PictureJobs.front().label });
+	if (m_PdfJob.valid())
+		return tr("pdf.drawing", { m_PdfName });
+	if (m_ReduceJob.valid())
+		return tr("images.reducing");
+	return {};
 }
 
 void App::showMessage(std::string p_Text)

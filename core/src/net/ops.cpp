@@ -31,6 +31,7 @@ enum class OpKind : uint8_t
 	Order = 6,
 	Clear = 7,
 	Group = 8,
+	Note = 9,
 };
 
 // A decoded object record that must be a single, complete, known-kind object
@@ -94,6 +95,12 @@ void encodeOp(ByteWriter& p_Writer, const Op& p_Op)
 		p_Writer.u8(static_cast<uint8_t>(OpKind::Group));
 		p_Writer.u64(l_Group->id);
 		p_Writer.u64(l_Group->group);
+	}
+	else if (const auto* l_Note = std::get_if<NoteOp>(&p_Op))
+	{
+		p_Writer.u8(static_cast<uint8_t>(OpKind::Note));
+		p_Writer.u64(l_Note->id);
+		p_Writer.string(l_Note->note);
 	}
 	else
 	{
@@ -170,6 +177,16 @@ bool decodeOp(ByteReader& p_Reader, Op& p_Op)
 		p_Op = l_Group;
 		return p_Reader.ok();
 	}
+	case OpKind::Note:
+	{
+		NoteOp l_Note;
+		l_Note.id = p_Reader.u64();
+		l_Note.note = p_Reader.string(MAX_NOTE_BYTES);
+		if (!p_Reader.ok())
+			return false;
+		p_Op = std::move(l_Note);
+		return true;
+	}
 	}
 	p_Reader.fail();
 	return false;
@@ -189,6 +206,8 @@ ObjectId opTarget(const Op& p_Op)
 		return l_Lock->id;
 	if (const auto* l_Group = std::get_if<GroupOp>(&p_Op))
 		return l_Group->id;
+	if (const auto* l_Note = std::get_if<NoteOp>(&p_Op))
+		return l_Note->id;
 	return INVALID_OBJECT_ID;
 }
 
@@ -264,6 +283,14 @@ ApplyResult applyOp(Document& p_Document, const Op& p_Op)
 			return l_Result;
 		p_Document.modify(l_Group->id, [&](Object& p_Object) { p_Object.group = l_Group->group; }, ObjectChange::Group);
 		l_Result.changed.push_back(l_Group->id);
+		l_Result.ok = true;
+	}
+	else if (const auto* l_Note = std::get_if<NoteOp>(&p_Op))
+	{
+		if (p_Document.find(l_Note->id) == nullptr)
+			return l_Result;
+		p_Document.modify(l_Note->id, [&](Object& p_Object) { p_Object.note = l_Note->note; }, ObjectChange::Note);
+		l_Result.changed.push_back(l_Note->id);
 		l_Result.ok = true;
 	}
 	else if (const auto* l_Order = std::get_if<OrderOp>(&p_Op))

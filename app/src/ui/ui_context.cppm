@@ -126,6 +126,11 @@ public:
 	// Single-line text field. Returns true when the text changed (while typing). p_Allowed limits the characters
 	// (empty: anything); p_MaxBytes caps the length. Pressing outside, Enter or Escape leaves the field.
 	bool textField(std::string_view p_Key, Rect2 p_Rect, std::string& p_Text, std::string_view p_Placeholder, std::string_view p_Allowed = {}, size_t p_MaxBytes = 256, Icon p_Icon = Icon::None);
+	// Several lines of text that wrap at the width of p_Rect, scroll to keep the caret in view and take Enter as a new
+	// line (Escape or a press elsewhere leaves it). Returns true when the text changed (while typing).
+	bool textArea(std::string_view p_Key, Rect2 p_Rect, std::string& p_Text, std::string_view p_Placeholder, size_t p_MaxBytes);
+	// Whether the text field or area with this key has the keyboard
+	[[nodiscard]] bool fieldFocused(const std::string_view p_Key) const { return m_FieldId != 0 && m_FieldId == id(p_Key); }
 	// Text with the UI's regular colours
 	float label(Vec2 p_Position, std::string_view p_Text, float p_Points, Color p_Color, TextAlign p_Align = TextAlign::Left);
 
@@ -194,6 +199,19 @@ private:
 	double m_FieldBlink = 0.0;
 	float m_FieldScroll = 0.f;
 	bool m_FieldSeen = false; // the focused field was built this frame (a field that vanishes loses the focus)
+	// Text area: where the lines of the text break (byte ranges, without the line feeds), worked out for one text and width
+	struct LineSpan
+	{
+		size_t begin = 0;
+		size_t end = 0;
+	};
+	bool m_FieldMulti = false;
+	std::vector<LineSpan> m_AreaLines;
+	std::string m_AreaText;
+	float m_AreaWidth = -1.f;
+	int m_AreaPixelSize = 0;
+	float m_AreaScroll = 0.f;
+	const std::vector<LineSpan>& areaLines();
 	bool m_AnyPress = false;
 	Vec2 m_AnyPressPos{ 0.f };
 };

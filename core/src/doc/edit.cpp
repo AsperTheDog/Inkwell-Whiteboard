@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -305,6 +306,27 @@ void lockObjects(Document& p_Document, History& p_History, const std::span<const
 	}
 	if (!l_Ids.empty())
 		p_History.execute(p_Document, std::make_unique<SetLockedCommand>(std::move(l_Ids), p_Locked, p_Locked ? "Lock" : "Unlock"));
+}
+
+bool setNotes(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids, std::string_view p_Note)
+{
+	if (p_Note.size() > MAX_NOTE_BYTES)
+	{
+		size_t l_Cut = MAX_NOTE_BYTES;
+		while (l_Cut > 0 && (static_cast<uint8_t>(p_Note[l_Cut]) & 0xC0) == 0x80) // never inside a UTF-8 sequence
+			--l_Cut;
+		p_Note = p_Note.substr(0, l_Cut);
+	}
+	std::vector<SetNoteCommand::Entry> l_Entries;
+	for (const Object* l_Object : liveObjects(p_Document, p_Ids))
+	{
+		if (l_Object->note != p_Note)
+			l_Entries.push_back(SetNoteCommand::Entry{ .id = l_Object->id, .before = l_Object->note, .after = std::string(p_Note) });
+	}
+	if (l_Entries.empty())
+		return false;
+	p_History.execute(p_Document, std::make_unique<SetNoteCommand>(std::move(l_Entries), "Edit note"));
+	return true;
 }
 
 ObjectId groupObjects(Document& p_Document, History& p_History, const std::span<const ObjectId> p_Ids)

@@ -188,6 +188,7 @@ void App::run()
 			pollCollab();
 			pollExport();
 			pollPdfImport();
+			pollPictureImport();
 			pollReducedPictures();
 			pollSave();
 			updateTitle();
@@ -747,9 +748,10 @@ void App::buildUi()
 	}
 	buildCanvasOverlays();
 	buildVideoViewer();
+	buildNoteMarkers();
 	buildSelectionBar();
 	buildTextBar();
-	l_Mirrored([&] { buildTopBar(); buildZoomPill(); buildToolbar(); });
+	l_Mirrored([&] { buildTopBar(); buildZoomPill(); buildToolbar(); buildNotesPanel(); });
 	// Popups that hang from a toolbar button mirror with it; those that hang from the board's selection do not
 	const bool l_FromToolbar = m_Popup == Popup::Pen || m_Popup == Popup::Highlighter || m_Popup == Popup::Shape || m_Popup == Popup::Laser || m_Popup == Popup::Eraser || m_Popup == Popup::Select || (m_Popup == Popup::Text && m_TextPopupFromToolbar);
 	if (l_FromToolbar)

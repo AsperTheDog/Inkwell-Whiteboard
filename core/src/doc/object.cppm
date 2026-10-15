@@ -119,6 +119,7 @@ struct SubtitleFile
 };
 inline constexpr size_t MAX_SUBTITLE_FILES = 16;
 inline constexpr size_t MAX_SUBTITLE_FILE_BYTES = size_t{ 2 } << 20;
+inline constexpr size_t MAX_NOTE_BYTES = size_t{ 64 } << 10;
 
 struct VideoData
 {
@@ -305,6 +306,9 @@ struct Object
 	// Objects that share a group id (other than INVALID_OBJECT_ID) are selected and edited together, as one. The id is
 	// allocated like an object id, so it is unique across peers; nothing else about it matters.
 	ObjectId group = INVALID_OBJECT_ID;
+	// A description of the object that is shown in the notes panel, not on the board (UTF-8, empty: none). A group's note is
+	// kept on every member, so any of them shows it.
+	std::string note;
 	uint32_t version = 0; // bumped on every change; lets caches (GPU buffers...) detect stale data
 	// The renderer's private index for this object's GPU data. Copies carry it along, so the renderer checks that the
 	// slot it points to really belongs to this id before trusting it.

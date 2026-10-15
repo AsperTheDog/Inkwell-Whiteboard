@@ -52,7 +52,7 @@ void App::startPdfImport(const std::filesystem::path& p_Path)
 	}
 	m_PdfName = pathToUtf8(p_Path.filename());
 	m_PdfJob = std::async(std::launch::async, [l_Bytes = std::move(l_Bytes)] { return platform::importPdf(l_Bytes); });
-	showToast(tr("pdf.drawing", { m_PdfName }));
+	requestRedraw(); // the spinner
 }
 
 // Once per loop: puts a finished PDF on the board

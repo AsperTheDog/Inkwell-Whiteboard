@@ -1122,6 +1122,11 @@ void App::driveSmokeTest()
 	}
 	case 28:
 	{
+		if (!m_PictureJobs.empty())
+		{
+			--m_SmokeStep; // the big file is still being read on its worker
+			return;
+		}
 		const Document& l_Document = m_Editor.document();
 		s_SmokeBigVideo = l_Document.size() == s_SmokeObjectsBefore + 1 ? l_Document.objects().back()->id : INVALID_OBJECT_ID;
 		const Object* l_Object = s_SmokeBigVideo != INVALID_OBJECT_ID ? l_Document.find(s_SmokeBigVideo) : nullptr;
@@ -1612,6 +1617,42 @@ void App::driveSmokeTest()
 		if (steamAvailable() && m_Options.smokeUi == "collab-join")
 			m_CollabForm.transport = 1;
 		openCollabDialog(m_Options.smokeUi == "collab-host" ? CollabDialog::Host : CollabDialog::Join);
+		return;
+	}
+	// ---- --smoke-ui=notes: a described object with its panel open, another one with a marker
+	case 50:
+	{
+		if (m_Options.smokeUi != "notes")
+			return;
+		m_Editor.newBoard();
+		m_Editor.lookAt(DVec2{ 0.0 }, 1.0);
+		const ObjectId l_First = m_Editor.insertText("Login screen", DVec2{ -200.0, -40.0 });
+		const ObjectId l_Second = m_Editor.insertText("Payments API", DVec2{ 180.0, 60.0 });
+		const std::array<ObjectId, 1> l_FirstIds{ l_First };
+		const std::array<ObjectId, 1> l_SecondIds{ l_Second };
+		const bool l_Set = m_Editor.setNote(l_FirstIds, "Problems to solve:\n- the token expires after five minutes\n- ask design what the error state looks like");
+		(void)m_Editor.setNote(l_SecondIds, "Waiting for the provider's sandbox keys.");
+		m_Editor.setTool(tools::ToolKind::Select);
+		m_Editor.selection().set(l_FirstIds);
+		const Object* l_Object = m_Editor.document().find(l_First);
+		if (!l_Set || l_Object == nullptr || l_Object->note.find("token") == std::string::npos)
+		{
+			spdlog::error("Smoke test (notes): the note was not stored");
+			m_Failed = true;
+			return;
+		}
+		m_Editor.history().undo(m_Editor.document());
+		m_Editor.history().undo(m_Editor.document());
+		const bool l_Undone = m_Editor.document().find(l_First)->note.empty();
+		m_Editor.history().redo(m_Editor.document());
+		m_Editor.history().redo(m_Editor.document());
+		if (!l_Undone || m_Editor.document().find(l_First)->note.empty())
+		{
+			spdlog::error("Smoke test (notes): undo/redo of a note failed");
+			m_Failed = true;
+			return;
+		}
+		spdlog::info("Smoke test: notes are stored and undone");
 		return;
 	}
 	default:

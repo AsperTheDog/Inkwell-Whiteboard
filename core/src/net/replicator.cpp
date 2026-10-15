@@ -75,6 +75,8 @@ void Replicator::onObjectAdded(const Object& p_Object)
 	emit(std::move(l_Add));
 	if (p_Object.group != INVALID_OBJECT_ID)
 		emit(GroupOp{ .id = p_Object.id, .group = p_Object.group });
+	if (!p_Object.note.empty())
+		emit(NoteOp{ .id = p_Object.id, .note = p_Object.note });
 }
 
 void Replicator::onObjectRemoved(const Object& p_Object)
@@ -107,6 +109,8 @@ void Replicator::onObjectChanged(const Object& p_Object, const uint32_t p_Change
 		emit(LockOp{ .id = p_Object.id, .locked = p_Object.locked });
 	if ((p_Changes & ObjectChange::Group) != 0)
 		emit(GroupOp{ .id = p_Object.id, .group = p_Object.group });
+	if ((p_Changes & ObjectChange::Note) != 0)
+		emit(NoteOp{ .id = p_Object.id, .note = p_Object.note });
 }
 
 void Replicator::onObjectsReordered()

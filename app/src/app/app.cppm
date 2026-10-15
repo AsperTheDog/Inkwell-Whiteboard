@@ -19,6 +19,7 @@ module;
 export module wb.app;
 
 import wb.debug.imgui_layer;
+import wb.doc.document;
 import wb.doc.object;
 import wb.editor;
 import wb.gfx.buffer;
@@ -163,6 +164,10 @@ private:
 	void buildLaserPopover(ui::Rect2 p_Anchor);
 	void buildSelectPopover(ui::Rect2 p_Anchor);
 	void buildSelectionBar();
+	// Notes (app_notes.cpp)
+	void buildNotesPanel();
+	void buildNoteMarkers();
+	void toggleNotesPanel();
 	// Videos (app_video.cpp)
 	void buildVideoViewer();
 	void shareVideoState(ObjectId p_Id, double p_Seek = -1.0);
@@ -181,6 +186,7 @@ private:
 	void toggleInterface();
 	// Pictures (app_images.cpp)
 	void importPictures(std::vector<platform::ClipboardPicture> p_Pictures, std::optional<Vec2> p_ScreenPosition);
+	void pollPictureImport();
 	bool pasteFromSystemClipboard();
 	void showInsertPictureDialog();
 	void handleDroppedFile(const SDL_DropEvent& p_Event);
@@ -218,7 +224,10 @@ private:
 	void saveToPath(const std::filesystem::path& p_Path, Action p_After);
 	void openPath(const std::filesystem::path& p_Path);
 	void updateTitle();
-	void showToast(std::string p_Text);
+	// p_Long keeps it on screen for longer (errors, which must not be missed)
+	void showToast(std::string p_Text, bool p_Long = false);
+	// What is being worked on in the background, or empty: shown as a spinner pill until it is done
+	[[nodiscard]] std::string busyText() const;
 	void showMessage(std::string p_Text);
 	bool handleFileShortcut(const SDL_KeyboardEvent& p_Event);
 	static void SDLCALL dialogCallback(void* p_User, const char* const* p_Files, int p_Filter);
@@ -347,6 +356,32 @@ private:
 
 	gfx::Buffer m_ScreenshotBuffer;
 	std::future<platform::PdfImport> m_PdfJob;
+	// Big pictures and videos are opened and read on a worker, then land on the board (app_images.cpp)
+	struct PreparedPicture
+	{
+		enum class Kind : uint8_t
+		{
+			Unreadable, // the file could not be opened or read
+			Rejected,   // something Inkwell cannot insert (or too big)
+			Picture,
+			Video,
+			Text,       // a file made of text: becomes a text block
+		};
+		Kind kind = Kind::Rejected;
+		ImageAsset asset;
+		std::string text;
+	};
+	struct PictureBatch
+	{
+		std::future<std::vector<PreparedPicture>> work;
+		DVec2 center{ 0.0 };
+		double zoom = 1.0;
+		std::string label; // what the spinner says: the file's name, or how many files
+	};
+	std::deque<PictureBatch> m_PictureJobs;
+	static PreparedPicture preparePicture(platform::ClipboardPicture p_Picture);
+	void finishPictureImport(std::vector<PreparedPicture> p_Pictures, DVec2 p_Center, double p_Zoom);
+	std::string m_BusyShown; // the spinner pill's text, kept while it fades out
 	// "Reduce the file size" of pictures runs on a worker; the result lands once it is done (app_images.cpp)
 	struct ReducedPicture
 	{
@@ -395,6 +430,15 @@ private:
 	std::array<ui::Rect2, tools::TOOL_KIND_COUNT> m_ToolRects{};
 	ui::Rect2 m_ToolbarRect{};
 	ui::Rect2 m_MenuAnchor{};
+	// The notes panel: the selection it shows (by selection revision), the objects it is typed for, and what is typed
+	uint64_t m_NoteKey = UINT64_MAX;
+	std::vector<ObjectId> m_NoteTargets;
+	std::string m_NoteDraft;
+	bool m_NotesOpen = false;
+	bool m_NotesPinned = false; // opened with the button: stays open for every selection, not only those with a note
+	std::vector<std::vector<ObjectId>> m_NoteMarkers; // per marker, the objects (a group is one marker) with a note
+	uint64_t m_NoteMarkersRevision = UINT64_MAX;
+	size_t m_NoteMarkersSize = 0;
 	ui::Rect2 m_SelectionBarRect{};
 	// What the selection bar offers, shared with the Transform and File popovers it opens
 	struct SelectionActions

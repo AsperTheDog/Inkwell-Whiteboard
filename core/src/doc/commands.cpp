@@ -400,6 +400,37 @@ void SetGroupCommand::revert(Document& p_Document)
 		p_Document.modify(l_Entry.id, [&](Object& p_Object) { p_Object.group = l_Entry.before; }, ObjectChange::Group);
 }
 
+SetNoteCommand::SetNoteCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
+{
+}
+
+void SetNoteCommand::apply(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { p_Object.note = l_Entry.after; }, ObjectChange::Note);
+}
+
+void SetNoteCommand::revert(Document& p_Document)
+{
+	for (const Entry& l_Entry : m_Entries)
+		p_Document.modify(l_Entry.id, [&](Object& p_Object) { p_Object.note = l_Entry.before; }, ObjectChange::Note);
+}
+
+bool SetNoteCommand::mergeWith(Command& p_Next)
+{
+	auto* l_Next = dynamic_cast<SetNoteCommand*>(&p_Next);
+	if (l_Next == nullptr || l_Next->m_Entries.size() != m_Entries.size())
+		return false;
+	for (size_t i = 0; i < m_Entries.size(); ++i)
+	{
+		if (m_Entries[i].id != l_Next->m_Entries[i].id)
+			return false;
+	}
+	for (size_t i = 0; i < m_Entries.size(); ++i)
+		m_Entries[i].after = std::move(l_Next->m_Entries[i].after);
+	return true;
+}
+
 SetTextCommand::SetTextCommand(std::vector<Entry> p_Entries, std::string p_Name) : m_Entries(std::move(p_Entries)), m_Name(std::move(p_Name))
 {
 }

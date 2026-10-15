@@ -51,6 +51,7 @@ constexpr uint32_t TAG_ASET = tag("ASET");
 constexpr uint32_t TAG_FONT = tag("FONT");
 constexpr uint32_t TAG_LOCK = tag("LOCK"); // ids of the locked objects
 constexpr uint32_t TAG_GRUP = tag("GRUP"); // (object id, group id) of every grouped object
+constexpr uint32_t TAG_NOTE = tag("NOTE"); // (object id, note text) of every object that has a note
 constexpr uint32_t TAG_ABIG = tag("ABIG"); // one big asset, written by a background save
 constexpr uint32_t TAG_AREF = tag("AREF"); // big assets that stay in a file of their own (recovery files)
 constexpr uint32_t TAG_END = tag("END ");
@@ -1007,6 +1008,24 @@ std::vector<uint8_t> serializeBody(const Document& p_Document, const BoardMeta& 
 		}
 		l_Writer.endChunk();
 	}
+
+	uint32_t l_NoteCount = 0;
+	for (const Object* l_Object : l_Objects)
+		l_NoteCount += l_Object->note.empty() ? 0u : 1u;
+	if (l_NoteCount > 0)
+	{
+		l_Writer.beginChunk(TAG_NOTE);
+		l_Writer.u32(l_NoteCount);
+		for (const Object* l_Object : l_Objects)
+		{
+			if (!l_Object->note.empty())
+			{
+				l_Writer.u64(l_Object->id);
+				l_Writer.string(l_Object->note);
+			}
+		}
+		l_Writer.endChunk();
+	}
 	return l_Writer.take();
 }
 
@@ -1169,6 +1188,7 @@ struct LoadState
 	std::vector<FontAsset> fonts;
 	std::unordered_set<ObjectId> locked;
 	std::unordered_map<ObjectId, ObjectId> groups; // object -> group
+	std::unordered_map<ObjectId, std::string> notes; // object -> note
 	std::unordered_set<AssetId> seenAssets;
 	OpenFiles open;
 	bool haveAssets = false;
@@ -1259,6 +1279,21 @@ std::string consumeChunk(LoadState& p_State, const uint32_t p_Tag, const std::sp
 		}
 		break;
 	}
+	case TAG_NOTE:
+	{
+		const uint32_t l_Count = l_Reader.u32();
+		if (!l_Reader.ok() || static_cast<uint64_t>(l_Count) * (sizeof(uint64_t) + sizeof(uint32_t)) > l_Reader.remaining())
+			return "The file is damaged (bad note data).";
+		for (uint32_t i = 0; i < l_Count; ++i)
+		{
+			const ObjectId l_Id = l_Reader.u64();
+			std::string l_Note = l_Reader.string(MAX_NOTE_BYTES);
+			if (!l_Reader.ok())
+				return "The file is damaged (bad note data).";
+			p_State.notes[l_Id] = std::move(l_Note);
+		}
+		break;
+	}
 	case TAG_END:
 		p_State.haveEnd = true;
 		break;
@@ -1303,6 +1338,8 @@ LoadResult commitLoad(LoadState& p_State, Document& p_Document, BoardMeta& p_Met
 		l_Object->locked = p_State.locked.contains(l_Object->id);
 		if (const auto l_Group = p_State.groups.find(l_Object->id); l_Group != p_State.groups.end())
 			l_Object->group = l_Group->second;
+		if (const auto l_Note = p_State.notes.find(l_Object->id); l_Note != p_State.notes.end())
+			l_Object->note = std::move(l_Note->second);
 		p_Document.insert(std::move(l_Object));
 	}
 

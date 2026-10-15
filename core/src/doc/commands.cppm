@@ -366,6 +366,35 @@ private:
 	std::string m_Name;
 };
 
+// Sets the note of objects (the text of the notes panel)
+class SetNoteCommand final : public Command
+{
+public:
+	struct Entry
+	{
+		ObjectId id = INVALID_OBJECT_ID;
+		std::string before;
+		std::string after;
+	};
+
+	SetNoteCommand(std::vector<Entry> p_Entries, std::string p_Name);
+
+	void apply(Document& p_Document) override;
+	void revert(Document& p_Document) override;
+	// Typing: a note edited again right away (same objects) stays one undo step
+	bool mergeWith(Command& p_Next) override;
+	[[nodiscard]] std::string_view name() const override { return m_Name; }
+	[[nodiscard]] bool dependsOn(ObjectId p_Id, bool p_Removed) const override
+	{
+		(void)p_Removed;
+		return std::ranges::any_of(m_Entries, [p_Id](const Entry& p_Entry) { return p_Entry.id == p_Id; });
+	}
+
+private:
+	std::vector<Entry> m_Entries;
+	std::string m_Name;
+};
+
 // Recolours strokes and text (the alpha channel of each is kept)
 class SetStrokeColorCommand final : public Command
 {

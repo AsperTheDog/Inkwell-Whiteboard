@@ -4,6 +4,7 @@ module;
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 export module wb.doc.edit;
@@ -72,6 +73,10 @@ ObjectId groupObjects(Document& p_Document, History& p_History, std::span<const 
 
 // Takes the unlocked objects out of their groups (one undo step). Returns how many objects were in one.
 size_t ungroupObjects(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids);
+
+// Gives every object among p_Ids (locked ones too) the note p_Note (one undo step). Cut to MAX_NOTE_BYTES. Returns whether
+// anything changed.
+bool setNotes(Document& p_Document, History& p_History, std::span<const ObjectId> p_Ids, std::string_view p_Note);
 
 enum class AlignMode : uint8_t
 {

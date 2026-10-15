@@ -362,6 +362,7 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Placed, std:
 		if (m_FieldId != l_Id)
 		{
 			m_FieldId = l_Id;
+			m_FieldMulti = false;
 			m_Field = text::TextEditor(p_Text);
 			m_Field.selectAll();
 			m_FieldAllowed = std::string(p_Allowed);
@@ -433,6 +434,205 @@ bool Context::textField(const std::string_view p_Key, const Rect2 p_Placed, std:
 	return l_Changed;
 }
 
+// ------------------------------------------------------------------------------------------------ text area
+
+namespace
+{
+// Cuts p_Text into the lines it is drawn in: at every line feed, and before the word that would pass p_Width
+// (inside a word that is longer than a line)
+std::vector<std::pair<size_t, size_t>> wrapText(const FontAtlas& p_Font, const std::string& p_Text, const int p_PixelSize, const float p_Width)
+{
+	std::vector<std::pair<size_t, size_t>> l_Lines;
+	size_t l_Position = 0;
+	for (;;)
+	{
+		const size_t l_Feed = p_Text.find('\n', l_Position);
+		const size_t l_HardEnd = l_Feed == std::string::npos ? p_Text.size() : l_Feed;
+		size_t l_Start = l_Position;
+		for (;;)
+		{
+			size_t l_Index = l_Start;
+			size_t l_Break = std::string::npos;
+			while (l_Index < l_HardEnd)
+			{
+				const size_t l_Next = text::nextCluster(p_Text, l_Index);
+				if (l_Index > l_Start && p_Font.measure(p_Text.substr(l_Start, l_Next - l_Start), p_PixelSize) > p_Width)
+					break;
+				if (p_Text[l_Index] == ' ')
+					l_Break = l_Next;
+				l_Index = l_Next;
+			}
+			if (l_Index >= l_HardEnd)
+			{
+				l_Lines.emplace_back(l_Start, l_HardEnd);
+				break;
+			}
+			const size_t l_Cut = l_Break != std::string::npos && l_Break > l_Start ? l_Break : l_Index;
+			l_Lines.emplace_back(l_Start, l_Cut);
+			l_Start = l_Cut;
+		}
+		if (l_Feed == std::string::npos)
+			break;
+		l_Position = l_Feed + 1;
+	}
+	return l_Lines;
+}
+} // namespace
+
+const std::vector<Context::LineSpan>& Context::areaLines()
+{
+	const std::string& l_Text = m_Field.text();
+	if (m_AreaWidth < 0.f)
+		return m_AreaLines;
+	if (m_AreaLines.empty() || m_AreaText != l_Text)
+	{
+		m_AreaText = l_Text;
+		m_AreaLines.clear();
+		for (const auto& [l_Begin, l_End] : wrapText(*m_Font, l_Text, m_AreaPixelSize, m_AreaWidth))
+			m_AreaLines.push_back(LineSpan{ l_Begin, l_End });
+	}
+	return m_AreaLines;
+}
+
+bool Context::textArea(const std::string_view p_Key, const Rect2 p_Placed, std::string& p_Text, const std::string_view p_Placeholder, const size_t p_MaxBytes)
+{
+	const bool l_Island = m_Mirror;
+	const Rect2 p_Rect = enterIsland(p_Placed);
+	const uint32_t l_Id = id(p_Key);
+	const Interaction l_State = interact(l_Id, p_Rect);
+	if (m_FieldId == l_Id && m_AnyPress && !hit(p_Rect, m_AnyPressPos))
+		m_FieldId = 0;
+
+	const int l_PixelSize = fontPx(14.f);
+	const float l_Pad = px(11.f);
+	const float l_LineHeight = std::round(static_cast<float>(l_PixelSize) * 1.45f);
+	const Rect2 l_Inner = Rect2{ p_Rect.min + Vec2{ l_Pad, px(9.f) }, p_Rect.max - Vec2{ l_Pad, px(9.f) } };
+	const float l_Width = std::max(l_Inner.width(), 1.f);
+	const float l_ViewHeight = std::max(l_Inner.height(), 1.f);
+
+	const bool l_PressedHere = m_Pressed && hit(p_Rect, m_PressPos);
+	if (l_PressedHere && m_FieldId != l_Id)
+	{
+		m_FieldId = l_Id;
+		m_Field = text::TextEditor(p_Text);
+		m_FieldMulti = true;
+		m_FieldAllowed.clear();
+		m_FieldMaxBytes = p_MaxBytes;
+		m_AreaScroll = 0.f;
+		m_AreaLines.clear();
+	}
+	const bool l_Focused = m_FieldId == l_Id;
+	const std::string& l_Shown = l_Focused ? m_Field.text() : p_Text;
+
+	// The lines of what is shown (the focused text lives in the editor, the rest in p_Text)
+	std::vector<LineSpan> l_Lines;
+	if (l_Focused)
+	{
+		if (m_AreaWidth != l_Width || m_AreaPixelSize != l_PixelSize)
+			m_AreaLines.clear();
+		m_AreaWidth = l_Width;
+		m_AreaPixelSize = l_PixelSize;
+		l_Lines = areaLines();
+	}
+	else
+	{
+		for (const auto& [l_Begin, l_End] : wrapText(*m_Font, l_Shown, l_PixelSize, l_Width))
+			l_Lines.push_back(LineSpan{ l_Begin, l_End });
+	}
+	const float l_ContentHeight = static_cast<float>(l_Lines.size()) * l_LineHeight;
+	const auto l_LineOf = [&](const size_t p_Byte)
+	{
+		size_t l_Line = 0;
+		while (l_Line + 1 < l_Lines.size() && l_Lines[l_Line + 1].begin <= p_Byte)
+			++l_Line;
+		return l_Line;
+	};
+	const auto l_IndexAt = [&](const Vec2 p_Point)
+	{
+		const float l_Row = std::floor((p_Point.y - l_Inner.min.y + m_AreaScroll) / l_LineHeight);
+		const size_t l_Line = static_cast<size_t>(std::clamp(l_Row, 0.f, static_cast<float>(l_Lines.size() - 1)));
+		const LineSpan l_Span = l_Lines[l_Line];
+		return l_Span.begin + indexAtX(*m_Font, l_Shown.substr(l_Span.begin, l_Span.end - l_Span.begin), l_PixelSize, p_Point.x - l_Inner.min.x);
+	};
+
+	if (l_Focused)
+	{
+		m_FieldSeen = true;
+		m_FieldBlink += m_Dt;
+		m_AnimatingNext = true;
+		if (l_PressedHere)
+		{
+			m_Field.moveTo(l_IndexAt(m_PressPos), false);
+			m_FieldBlink = 0.0;
+		}
+		else if (l_State.held)
+		{
+			m_Field.moveTo(l_IndexAt(m_Pos), true);
+		}
+	}
+
+	bool l_Changed = false;
+	if (l_Focused && m_FieldDirty)
+	{
+		p_Text = m_Field.text();
+		l_Changed = true;
+		m_FieldDirty = false;
+	}
+
+	// Keep the caret in view
+	if (l_Focused)
+	{
+		const float l_CaretTop = static_cast<float>(l_LineOf(m_Field.caret())) * l_LineHeight;
+		if (l_CaretTop + l_LineHeight - m_AreaScroll > l_ViewHeight)
+			m_AreaScroll = l_CaretTop + l_LineHeight - l_ViewHeight;
+		if (l_CaretTop < m_AreaScroll)
+			m_AreaScroll = l_CaretTop;
+	}
+	m_AreaScroll = std::clamp(m_AreaScroll, 0.f, std::max(l_ContentHeight - l_ViewHeight, 0.f));
+
+	const float l_Hover = anim(l_Id + 1, l_State.hovered || l_Focused ? 1.f : 0.f, 24.f);
+	const float l_Radius = px(10.f);
+	m_Draw.rect(p_Rect, l_Radius, scaledAlpha(m_Theme.hover, 0.6f + 0.4f * l_Hover));
+	if (l_Focused)
+		m_Draw.outline(p_Rect, l_Radius, m_Theme.accent, 1.5f * m_Scale);
+
+	m_Draw.pushClip(Rect2{ Vec2{ l_Inner.min.x, p_Rect.min.y + px(2.f) }, Vec2{ l_Inner.max.x + px(2.f), p_Rect.max.y - px(2.f) } });
+	if (l_Shown.empty() && !l_Focused)
+		m_Draw.text(Vec2{ l_Inner.min.x, l_Inner.min.y + l_LineHeight * 0.5f }, p_Placeholder, l_PixelSize, m_Theme.textFaint);
+	for (size_t i = 0; i < l_Lines.size(); ++i)
+	{
+		const float l_Top = l_Inner.min.y + static_cast<float>(i) * l_LineHeight - m_AreaScroll;
+		if (l_Top + l_LineHeight < p_Rect.min.y || l_Top > p_Rect.max.y)
+			continue;
+		const LineSpan l_Span = l_Lines[i];
+		const std::string l_Line = l_Shown.substr(l_Span.begin, l_Span.end - l_Span.begin);
+		if (l_Focused && m_Field.hasSelection())
+		{
+			const size_t l_From = std::max(m_Field.selectionBegin(), l_Span.begin);
+			const size_t l_To = std::min(m_Field.selectionEnd(), l_Span.end);
+			const bool l_PastFeed = m_Field.selectionBegin() <= l_Span.end && m_Field.selectionEnd() > l_Span.end && l_Span.end < l_Shown.size() && l_Shown[l_Span.end] == '\n';
+			if (l_From <= l_To && (l_From < l_To || l_PastFeed))
+			{
+				const float l_X0 = m_Font->caretX(l_Line, l_From - l_Span.begin, l_PixelSize);
+				const float l_X1 = m_Font->caretX(l_Line, l_To - l_Span.begin, l_PixelSize) + (l_PastFeed ? px(5.f) : 0.f);
+				m_Draw.rect(Rect2{ Vec2{ l_Inner.min.x + l_X0, l_Top }, Vec2{ l_Inner.min.x + l_X1, l_Top + l_LineHeight } }, px(2.f), withAlpha(m_Theme.accent, 0.3f));
+			}
+		}
+		m_Draw.text(Vec2{ l_Inner.min.x, l_Top + l_LineHeight * 0.5f }, l_Line, l_PixelSize, m_Theme.text);
+	}
+	if (l_Focused && std::fmod(m_FieldBlink, 1.06) < 0.53)
+	{
+		const size_t l_CaretLine = l_LineOf(m_Field.caret());
+		const LineSpan l_Span = l_Lines[l_CaretLine];
+		const float l_CaretX = std::round(l_Inner.min.x + m_Font->caretX(l_Shown.substr(l_Span.begin, l_Span.end - l_Span.begin), m_Field.caret() - l_Span.begin, l_PixelSize));
+		const float l_Top = l_Inner.min.y + static_cast<float>(l_CaretLine) * l_LineHeight - m_AreaScroll;
+		m_Draw.line(Vec2{ l_CaretX, l_Top + px(2.f) }, Vec2{ l_CaretX, l_Top + l_LineHeight - px(2.f) }, std::max(1.f, 1.2f * m_Scale), m_Theme.text);
+	}
+	m_Draw.popClip();
+	leaveIsland(l_Island);
+	return l_Changed;
+}
+
 bool Context::keyEvent(const SDL_KeyboardEvent& p_Event)
 {
 	if (m_FieldId == 0)
@@ -441,6 +641,36 @@ bool Context::keyEvent(const SDL_KeyboardEvent& p_Event)
 	const bool l_Shift = (p_Event.mod & SDL_KMOD_SHIFT) != 0;
 	const SDL_Keycode l_Key = p_Event.key;
 	m_FieldBlink = 0.0;
+	if (m_FieldMulti && (l_Key == SDLK_RETURN || l_Key == SDLK_KP_ENTER) && !l_Ctrl)
+	{
+		textInput("\n");
+		return true;
+	}
+	if (m_FieldMulti && (l_Key == SDLK_UP || l_Key == SDLK_DOWN || l_Key == SDLK_HOME || l_Key == SDLK_END) && !l_Ctrl)
+	{
+		const std::vector<LineSpan>& l_Lines = areaLines();
+		if (!l_Lines.empty())
+		{
+			const std::string& l_Text = m_Field.text();
+			size_t l_Line = 0;
+			while (l_Line + 1 < l_Lines.size() && l_Lines[l_Line + 1].begin <= m_Field.caret())
+				++l_Line;
+			const LineSpan l_Span = l_Lines[l_Line];
+			if (l_Key == SDLK_HOME)
+				m_Field.moveTo(l_Span.begin, l_Shift);
+			else if (l_Key == SDLK_END)
+				m_Field.moveTo(l_Span.end, l_Shift);
+			else if ((l_Key == SDLK_UP && l_Line == 0) || (l_Key == SDLK_DOWN && l_Line + 1 == l_Lines.size()))
+				m_Field.moveTo(l_Key == SDLK_UP ? 0 : l_Text.size(), l_Shift);
+			else
+			{
+				const float l_X = m_Font->caretX(l_Text.substr(l_Span.begin, l_Span.end - l_Span.begin), m_Field.caret() - l_Span.begin, m_AreaPixelSize);
+				const LineSpan l_Other = l_Lines[l_Key == SDLK_UP ? l_Line - 1 : l_Line + 1];
+				m_Field.moveTo(l_Other.begin + indexAtX(*m_Font, l_Text.substr(l_Other.begin, l_Other.end - l_Other.begin), m_AreaPixelSize, l_X), l_Shift);
+			}
+		}
+		return true;
+	}
 	switch (l_Key)
 	{
 	case SDLK_ESCAPE:
@@ -513,7 +743,7 @@ void Context::textInput(const std::string_view p_Text)
 	std::string l_Clean;
 	for (const char l_Char : text::sanitize(p_Text))
 	{
-		if (l_Char == '\n' || l_Char == '\t')
+		if ((l_Char == '\n' && !m_FieldMulti) || l_Char == '\t')
 			continue;
 		if (!m_FieldAllowed.empty() && m_FieldAllowed.find(l_Char) == std::string::npos)
 			continue;

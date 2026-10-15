@@ -760,18 +760,51 @@ void App::buildDialogs()
 
 void App::buildToast()
 {
+	ui::DrawList& l_Draw = m_Ui.draw();
+	const ui::Theme& l_Theme = m_Ui.theme();
+	const int l_Px = m_Ui.fontPx(14.f);
+	const float l_Height = m_Ui.px(42.f);
+	const Vec2 l_Viewport = m_Ui.viewport();
+
+	// Work in the background (a big file being read, a PDF being drawn): a pill with a spinner that stays until it is done
+	const std::string l_Busy = busyText();
+	if (!l_Busy.empty())
+		m_BusyShown = l_Busy;
+	const float l_BusyShow = m_Ui.anim(ui::Context::id("busy"), l_Busy.empty() ? 0.f : 1.f, 14.f);
+	if (l_BusyShow >= 0.01f && !m_BusyShown.empty())
+	{
+		const float l_SpinnerSpace = m_Ui.px(30.f);
+		const float l_Width = m_Ui.font().measure(m_BusyShown, l_Px) + m_Ui.px(44.f) + l_SpinnerSpace;
+		const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, m_Ui.px(70.f) - (1.f - l_BusyShow) * m_Ui.px(12.f) }, Vec2{ l_Width, l_Height });
+		l_Draw.setOpacity(l_BusyShow);
+		l_Draw.shadow(l_Rect, l_Height * 0.5f, m_Ui.px(18.f), Vec2{ 0.f, m_Ui.px(6.f) }, l_Theme.shadow);
+		l_Draw.rect(l_Rect, l_Height * 0.5f, l_Theme.tooltip);
+		const Vec2 l_Spinner{ l_Rect.min.x + m_Ui.px(22.f) + m_Ui.px(8.f), l_Rect.center().y };
+		const float l_Radius = m_Ui.px(8.f);
+		const double l_Time = static_cast<double>(SDL_GetTicksNS()) * 1e-9;
+		l_Draw.ring(l_Spinner, l_Radius, ui::withAlpha(l_Theme.tooltipText, 0.25f), 2.f * m_Ui.scale());
+		constexpr int SEGMENTS = 14;
+		std::array<Vec2, SEGMENTS + 1> l_Arc{};
+		for (int s = 0; s <= SEGMENTS; ++s)
+		{
+			const double l_Angle = l_Time * 5.0 + (static_cast<double>(s) / SEGMENTS) * 1.9;
+			l_Arc[static_cast<size_t>(s)] = l_Spinner + Vec2{ static_cast<float>(std::cos(l_Angle)), static_cast<float>(std::sin(l_Angle)) } * l_Radius;
+		}
+		l_Draw.polyline(l_Arc, 2.f * m_Ui.scale(), l_Theme.tooltipText, false);
+		l_Draw.text(Vec2{ l_Spinner.x + l_Radius + m_Ui.px(14.f), l_Rect.center().y }, m_BusyShown, l_Px, l_Theme.tooltipText);
+		l_Draw.setOpacity(1.f);
+		requestRedraw(2); // keeps the spinner turning
+	}
+
 	const bool l_Active = m_ToastUntilNs != 0 && !m_Toast.empty();
 	const float l_Show = m_Ui.anim(ui::Context::id("toast"), l_Active ? 1.f : 0.f, 14.f);
 	if (l_Show < 0.01f || m_Toast.empty())
 		return;
 
-	ui::DrawList& l_Draw = m_Ui.draw();
-	const ui::Theme& l_Theme = m_Ui.theme();
-	const int l_Px = m_Ui.fontPx(14.f);
 	const float l_Width = m_Ui.font().measure(m_Toast, l_Px) + m_Ui.px(44.f);
-	const float l_Height = m_Ui.px(42.f);
-	const Vec2 l_Viewport = m_Ui.viewport();
-	const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, m_Ui.px(70.f) - (1.f - l_Show) * m_Ui.px(12.f) }, Vec2{ l_Width, l_Height });
+	// Under the busy pill when both are showing
+	const float l_Top = m_Ui.px(70.f) + l_BusyShow * (l_Height + m_Ui.px(10.f));
+	const Rect2 l_Rect = Rect2::fromPosSize(Vec2{ (l_Viewport.x - l_Width) * 0.5f, l_Top - (1.f - l_Show) * m_Ui.px(12.f) }, Vec2{ l_Width, l_Height });
 	l_Draw.setOpacity(l_Show);
 	l_Draw.shadow(l_Rect, l_Height * 0.5f, m_Ui.px(18.f), Vec2{ 0.f, m_Ui.px(6.f) }, l_Theme.shadow);
 	l_Draw.rect(l_Rect, l_Height * 0.5f, l_Theme.tooltip);

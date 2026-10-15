@@ -628,3 +628,49 @@ TEST(Align, LockedObjectsStayPut)
 	EXPECT_NEAR(l_Doc.find(l_A)->transform.translation.y, 0.0, 1e-9);
 	EXPECT_NEAR(l_Doc.find(l_B)->transform.translation.y, 20.0, 1e-9);
 }
+
+TEST(Notes, SetUndoAndCopy)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const wb::ObjectId l_B = addStroke(l_Doc, { 100.0, 0.0 });
+	const std::array<wb::ObjectId, 2> l_Both{ l_A, l_B };
+	wb::lockObjects(l_Doc, l_History, std::array<wb::ObjectId, 1>{ l_A }, true);
+
+	EXPECT_TRUE(wb::setNotes(l_Doc, l_History, l_Both, "why"));
+	EXPECT_EQ(l_Doc.find(l_A)->note, "why") << "a locked object can still be described";
+	EXPECT_EQ(l_Doc.find(l_B)->note, "why");
+	EXPECT_FALSE(wb::setNotes(l_Doc, l_History, l_Both, "why")) << "no change, no undo step";
+
+	const std::vector<wb::ObjectId> l_Copies = wb::duplicateObjects(l_Doc, l_History, l_Both, { 10.0, 10.0 });
+	ASSERT_EQ(l_Copies.size(), 2u);
+	EXPECT_EQ(l_Doc.find(l_Copies[0])->note, "why");
+
+	l_History.undo(l_Doc); // the duplicate
+	l_History.undo(l_Doc); // the note
+	EXPECT_TRUE(l_Doc.find(l_A)->note.empty());
+	l_History.redo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_B)->note, "why");
+
+	EXPECT_TRUE(wb::setNotes(l_Doc, l_History, l_Both, ""));
+	EXPECT_TRUE(l_Doc.find(l_A)->note.empty());
+}
+
+TEST(Notes, TypingIsOneUndoStep)
+{
+	wb::Document l_Doc;
+	wb::History l_History;
+	const wb::ObjectId l_A = addStroke(l_Doc, { 0.0, 0.0 });
+	const std::array<wb::ObjectId, 1> l_Ids{ l_A };
+	for (const char* l_Text : { "h", "he", "hel", "hell", "hello" })
+	{
+		EXPECT_TRUE(wb::setNotes(l_Doc, l_History, l_Ids, l_Text));
+		EXPECT_EQ(l_Doc.find(l_A)->note, l_Text) << "every character is on the board at once";
+	}
+	EXPECT_EQ(l_History.undoCount(), 1u);
+	l_History.undo(l_Doc);
+	EXPECT_TRUE(l_Doc.find(l_A)->note.empty());
+	l_History.redo(l_Doc);
+	EXPECT_EQ(l_Doc.find(l_A)->note, "hello");
+}

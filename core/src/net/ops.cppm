@@ -6,6 +6,7 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -53,6 +54,12 @@ struct GroupOp
 	ObjectId id = INVALID_OBJECT_ID;
 	ObjectId group = INVALID_OBJECT_ID;
 };
+// The object's note (the text of the notes panel) is replaced
+struct NoteOp
+{
+	ObjectId id = INVALID_OBJECT_ID;
+	std::string note;
+};
 // The whole stacking order, back to front
 struct OrderOp
 {
@@ -63,7 +70,7 @@ struct ClearOp
 {
 };
 
-using Op = std::variant<AddOp, RemoveOp, TransformOp, UpdateOp, LockOp, OrderOp, ClearOp, GroupOp>;
+using Op = std::variant<AddOp, RemoveOp, TransformOp, UpdateOp, LockOp, OrderOp, ClearOp, GroupOp, NoteOp>;
 
 void encodeOp(ByteWriter& p_Writer, const Op& p_Op);
 // False when the data is malformed

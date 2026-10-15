@@ -28,7 +28,7 @@ import wb.net.crypto;
 
 export namespace wb::net
 {
-inline constexpr uint16_t PROTOCOL_VERSION = 4;
+inline constexpr uint16_t PROTOCOL_VERSION = 5;
 // Before the password has been checked a peer may only send tiny frames
 inline constexpr uint32_t MAX_HANDSHAKE_FRAME = 1024;
 // One frame: room for the largest single object plus its framing

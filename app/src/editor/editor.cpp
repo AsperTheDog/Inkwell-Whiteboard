@@ -698,6 +698,38 @@ Editor::LockState Editor::selectionLockState() const
 	return l_Locked == 0 ? LockState::None : (l_Locked == l_Total ? LockState::All : LockState::Some);
 }
 
+Editor::SelectionNote Editor::selectionNote() const
+{
+	SelectionNote l_Note;
+	bool l_Have = false;
+	for (const ObjectId l_Id : m_Selection.ids())
+	{
+		const Object* l_Object = m_Document.find(l_Id);
+		if (l_Object == nullptr || l_Object->note.empty())
+			continue;
+		if (!l_Have)
+		{
+			l_Note.text = l_Object->note;
+			l_Have = true;
+		}
+		else if (l_Object->note != l_Note.text)
+		{
+			l_Note.mixed = true;
+			break;
+		}
+	}
+	if (l_Note.mixed)
+		l_Note.text.clear();
+	return l_Note;
+}
+
+bool Editor::setNote(const std::span<const ObjectId> p_Ids, const std::string_view p_Note)
+{
+	if (isBusy() || p_Ids.empty())
+		return false;
+	return setNotes(m_Document, m_History, p_Ids, p_Note);
+}
+
 void Editor::setSelectionLocked(const bool p_Locked)
 {
 	if (isBusy() || m_Selection.empty())

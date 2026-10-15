@@ -2,6 +2,7 @@
 module;
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -115,6 +116,84 @@ std::optional<std::string> decodeTextFile(const std::vector<uint8_t>& p_Bytes)
 }
 } // namespace
 
+namespace
+{
+constexpr uint64_t BACKGROUND_IMPORT_BYTES = 8ull << 20; // files from this size up are read on a worker so the window stays alive
+} // namespace
+
+// Opens and reads one picture, video or text file. Touches no shared state, so it runs on a worker too.
+App::PreparedPicture App::preparePicture(platform::ClipboardPicture p_Picture)
+{
+	PreparedPicture l_Result;
+	// A file on disk is opened, not read: a big one stays where it is and a video is played straight from it
+	if (p_Picture.bytes.empty() && !p_Picture.path.empty())
+	{
+		std::string l_Error;
+		const std::shared_ptr<FileSource> l_File = FileSource::open(p_Picture.path, l_Error);
+		if (!l_File || l_File->size() == 0)
+		{
+			l_Result.kind = PreparedPicture::Kind::Unreadable;
+			return l_Result;
+		}
+		if (p_Picture.name.empty())
+			p_Picture.name = pathToUtf8(p_Picture.path.filename());
+		if (l_File->size() > LARGE_ASSET_BYTES)
+		{
+			if (const std::optional<video::VideoInfo> l_Video = video::probe(*l_File))
+			{
+				l_Result.kind = PreparedPicture::Kind::Video;
+				l_Result.asset.width = l_Video->width;
+				l_Result.asset.height = l_Video->height;
+				l_Result.asset.name = std::move(p_Picture.name);
+				l_Result.asset.stream = l_File;
+				return l_Result;
+			}
+			if (l_File->size() > MAX_PICTURE_BYTES)
+			{
+				l_Result.kind = PreparedPicture::Kind::Rejected;
+				return l_Result;
+			}
+		}
+		p_Picture.bytes = readAllBytes(*l_File, MAX_PICTURE_BYTES);
+		if (p_Picture.bytes.empty())
+		{
+			l_Result.kind = PreparedPicture::Kind::Unreadable;
+			return l_Result;
+		}
+	}
+	if (const std::optional<image::ImageInfo> l_Info = image::probe(p_Picture.bytes))
+	{
+		l_Result.kind = PreparedPicture::Kind::Picture;
+		l_Result.asset.width = l_Info->width;
+		l_Result.asset.height = l_Info->height;
+		l_Result.asset.name = std::move(p_Picture.name);
+		l_Result.asset.bytes = std::move(p_Picture.bytes);
+		return l_Result;
+	}
+	// Not a picture: perhaps a video
+	if (const std::optional<video::VideoInfo> l_Video = video::probe(p_Picture.bytes))
+	{
+		l_Result.kind = PreparedPicture::Kind::Video;
+		l_Result.asset.width = l_Video->width;
+		l_Result.asset.height = l_Video->height;
+		l_Result.asset.name = std::move(p_Picture.name);
+		l_Result.asset.bytes = std::move(p_Picture.bytes);
+		return l_Result;
+	}
+	// Or a file made of text (.txt, .md, .cpp...), which becomes a block of text
+	if (p_Picture.bytes.size() <= MAX_TEXT_BYTES)
+	{
+		if (std::optional<std::string> l_Content = decodeTextFile(p_Picture.bytes))
+		{
+			l_Result.kind = PreparedPicture::Kind::Text;
+			l_Result.text = std::move(*l_Content);
+			return l_Result;
+		}
+	}
+	l_Result.kind = PreparedPicture::Kind::Rejected;
+	return l_Result;
+}
+
 void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, const std::optional<Vec2> p_ScreenPosition)
 {
 	if (m_Editor.isBusy() || p_Pictures.empty())
@@ -123,95 +202,93 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 	const Vec2 l_Screen = p_ScreenPosition.value_or(Vec2{ m_Ui.viewport() * 0.5f });
 	const DVec2 l_Center = l_Camera.screenToWorld(DVec2{ l_Screen });
 
+	// Big files are read on a worker; whatever comes after them waits its turn so the order is kept
+	bool l_Background = !m_PictureJobs.empty();
+	for (const platform::ClipboardPicture& l_Picture : p_Pictures)
+	{
+		std::error_code l_Error;
+		if (l_Picture.bytes.empty() && !l_Picture.path.empty() && std::filesystem::file_size(l_Picture.path, l_Error) >= BACKGROUND_IMPORT_BYTES)
+			l_Background = true;
+	}
+	if (l_Background)
+	{
+		PictureBatch l_Batch;
+		l_Batch.center = l_Center;
+		l_Batch.zoom = l_Camera.zoom();
+		l_Batch.label = p_Pictures.size() == 1 && !p_Pictures.front().path.empty() ? pathToUtf8(p_Pictures.front().path.filename()) : tr("images.loadingCount", { std::to_string(p_Pictures.size()) });
+		l_Batch.work = std::async(std::launch::async, [l_Pictures = std::move(p_Pictures)]() mutable
+		{
+			std::vector<PreparedPicture> l_Prepared;
+			l_Prepared.reserve(l_Pictures.size());
+			for (platform::ClipboardPicture& l_Picture : l_Pictures)
+				l_Prepared.push_back(preparePicture(std::move(l_Picture)));
+			return l_Prepared;
+		});
+		m_PictureJobs.push_back(std::move(l_Batch));
+		requestRedraw();
+		return;
+	}
+
+	std::vector<PreparedPicture> l_Prepared;
+	l_Prepared.reserve(p_Pictures.size());
+	for (platform::ClipboardPicture& l_Picture : p_Pictures)
+		l_Prepared.push_back(preparePicture(std::move(l_Picture)));
+	finishPictureImport(std::move(l_Prepared), l_Center, l_Camera.zoom());
+}
+
+// Once per loop: puts the pictures a worker has finished reading on the board
+void App::pollPictureImport()
+{
+	while (!m_PictureJobs.empty())
+	{
+		PictureBatch& l_Front = m_PictureJobs.front();
+		if (l_Front.work.wait_for(std::chrono::seconds(0)) != std::future_status::ready || m_Editor.isBusy())
+		{
+			requestRedraw(1); // keeps the loop awake (and the spinner turning) so the result is noticed
+			return;
+		}
+		std::vector<PreparedPicture> l_Prepared = l_Front.work.get();
+		const DVec2 l_Center = l_Front.center;
+		const double l_Zoom = l_Front.zoom;
+		m_PictureJobs.pop_front();
+		finishPictureImport(std::move(l_Prepared), l_Center, l_Zoom);
+	}
+}
+
+// Puts what was read on the board (on the UI thread) and tells how it went
+void App::finishPictureImport(std::vector<PreparedPicture> p_Pictures, const DVec2 p_Center, const double p_Zoom)
+{
 	std::vector<ObjectId> l_Inserted;
 	int l_Rejected = 0;
 	int l_Unreadable = 0;
-	for (platform::ClipboardPicture& l_Picture : p_Pictures)
+	for (PreparedPicture& l_Picture : p_Pictures)
 	{
-		// A file on disk is opened, not read: a big one stays where it is and a video is played straight from it
-		if (l_Picture.bytes.empty() && !l_Picture.path.empty())
+		if (l_Picture.kind == PreparedPicture::Kind::Unreadable)
 		{
-			std::string l_Error;
-			const std::shared_ptr<FileSource> l_File = FileSource::open(l_Picture.path, l_Error);
-			if (!l_File || l_File->size() == 0)
-			{
-				++l_Unreadable;
-				continue;
-			}
-			if (l_Picture.name.empty())
-				l_Picture.name = pathToUtf8(l_Picture.path.filename());
-			if (l_File->size() > LARGE_ASSET_BYTES)
-			{
-				if (const std::optional<video::VideoInfo> l_Video = video::probe(*l_File))
-				{
-					ImageAsset l_Asset;
-					l_Asset.width = l_Video->width;
-					l_Asset.height = l_Video->height;
-					l_Asset.name = std::move(l_Picture.name);
-					l_Asset.stream = l_File;
-					const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
-					const ObjectId l_Id = m_Editor.insertVideo(std::move(l_Asset), l_Center + DVec2{ l_Shift });
-					if (l_Id != INVALID_OBJECT_ID)
-						l_Inserted.push_back(l_Id);
-					continue;
-				}
-				if (l_File->size() > MAX_PICTURE_BYTES)
-				{
-					++l_Rejected;
-					continue;
-				}
-			}
-			l_Picture.bytes = readAllBytes(*l_File, MAX_PICTURE_BYTES);
-			if (l_Picture.bytes.empty())
-			{
-				++l_Unreadable;
-				continue;
-			}
-		}
-		const std::optional<image::ImageInfo> l_Info = image::probe(l_Picture.bytes);
-		if (!l_Info)
-		{
-			// Not a picture: perhaps a video
-			const std::optional<video::VideoInfo> l_Video = video::probe(l_Picture.bytes);
-			if (!l_Video)
-			{
-				// Or a file made of text (.txt, .md, .cpp...), which becomes a block of text
-				std::optional<std::string> l_Content;
-				if (l_Picture.bytes.size() <= MAX_TEXT_BYTES)
-					l_Content = decodeTextFile(l_Picture.bytes);
-				if (l_Content)
-				{
-					const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
-					const ObjectId l_Id = m_Editor.insertText(std::move(*l_Content), l_Center + DVec2{ l_Shift });
-					if (l_Id != INVALID_OBJECT_ID)
-					{
-						l_Inserted.push_back(l_Id);
-						continue;
-					}
-				}
-				++l_Rejected;
-				continue;
-			}
-			ImageAsset l_Asset;
-			l_Asset.width = l_Video->width;
-			l_Asset.height = l_Video->height;
-			l_Asset.name = std::move(l_Picture.name);
-			l_Asset.bytes = std::move(l_Picture.bytes);
-			const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
-			const ObjectId l_Id = m_Editor.insertVideo(std::move(l_Asset), l_Center + DVec2{ l_Shift });
-			if (l_Id != INVALID_OBJECT_ID)
-				l_Inserted.push_back(l_Id);
+			++l_Unreadable;
 			continue;
 		}
-		ImageAsset l_Asset;
-		l_Asset.width = l_Info->width;
-		l_Asset.height = l_Info->height;
-		l_Asset.name = std::move(l_Picture.name);
-		l_Asset.bytes = std::move(l_Picture.bytes);
-		const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / l_Camera.zoom();
-		const ObjectId l_Id = m_Editor.insertPicture(std::move(l_Asset), l_Center + DVec2{ l_Shift });
+		const double l_Shift = CASCADE_POINTS * static_cast<double>(l_Inserted.size()) / p_Zoom;
+		const DVec2 l_At = p_Center + DVec2{ l_Shift };
+		ObjectId l_Id = INVALID_OBJECT_ID;
+		switch (l_Picture.kind)
+		{
+		case PreparedPicture::Kind::Picture:
+			l_Id = m_Editor.insertPicture(std::move(l_Picture.asset), l_At);
+			break;
+		case PreparedPicture::Kind::Video:
+			l_Id = m_Editor.insertVideo(std::move(l_Picture.asset), l_At);
+			break;
+		case PreparedPicture::Kind::Text:
+			l_Id = m_Editor.insertText(std::move(l_Picture.text), l_At);
+			break;
+		default:
+			break;
+		}
 		if (l_Id != INVALID_OBJECT_ID)
 			l_Inserted.push_back(l_Id);
+		else
+			++l_Rejected;
 	}
 
 	if (!l_Inserted.empty())
@@ -219,17 +296,17 @@ void App::importPictures(std::vector<platform::ClipboardPicture> p_Pictures, con
 		m_Editor.selection().set(l_Inserted);
 		m_Editor.setTool(tools::ToolKind::Select); // ready to move and resize it
 		if (l_Rejected > 0)
-			showToast(tr(l_Rejected == 1 ? "images.rejected.one" : "images.rejected.many", { std::to_string(l_Rejected) }));
+			showToast(tr(l_Rejected == 1 ? "images.rejected.one" : "images.rejected.many", { std::to_string(l_Rejected) }), true);
 		else if (l_Unreadable > 0)
-			showToast(tr(l_Unreadable == 1 ? "images.unreadable.one" : "images.unreadable.many", { std::to_string(l_Unreadable) }));
+			showToast(tr(l_Unreadable == 1 ? "images.unreadable.one" : "images.unreadable.many", { std::to_string(l_Unreadable) }), true);
 	}
 	else if (l_Unreadable > 0)
 	{
-		showToast(tr(l_Unreadable == 1 ? "images.thatUnreadable" : "images.thoseUnreadable"));
+		showToast(tr(l_Unreadable == 1 ? "images.thatUnreadable" : "images.thoseUnreadable"), true);
 	}
 	else if (l_Rejected > 0)
 	{
-		showToast(tr("images.unsupported"));
+		showToast(tr("images.unsupported"), true);
 	}
 	requestRedraw();
 }

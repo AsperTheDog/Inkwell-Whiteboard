@@ -114,6 +114,7 @@ void App::buildSelectionBar()
 	const bool l_CanGroup = m_Editor.canGroupSelection();
 	const bool l_HasGroup = m_Editor.selectionHasGroup();
 	l_Buttons += l_CanGroup || l_HasGroup ? 1 : 0;
+	l_Buttons += 1; // notes
 	const bool l_ShowColour = l_HasStrokes || l_HasText;
 	const float l_Width = l_Pad * 2.f + l_CountWidth + static_cast<float>(l_Buttons) * l_Button + static_cast<float>(l_Buttons - 1) * l_Gap + (l_ShowColour ? l_Separator + l_Button : 0.f);
 	const float l_Height = l_Button + l_Pad * 2.f;
@@ -160,6 +161,10 @@ void App::buildSelectionBar()
 		if (m_Ui.iconButton("selbar.group", l_Next(), ui::Icon::Layers, !l_CanGroup, l_Editable, tr(l_CanGroup ? "tip.group" : "tip.ungroup")))
 			m_Editor.toggleSelectionGroup();
 	}
+	const Editor::SelectionNote l_SelectionNote = m_Editor.selectionNote();
+	const Color l_NoteBadge = m_Ui.theme().accent;
+	if (m_Ui.iconButton("selbar.note", l_Next(), ui::Icon::Note, m_NotesOpen, true, tr("tip.note"), !l_SelectionNote.text.empty() || l_SelectionNote.mixed ? &l_NoteBadge : nullptr))
+		toggleNotesPanel();
 	if (l_Animated > 0)
 	{
 		const bool l_Playing = l_AnimatedPlaying == l_Animated;
